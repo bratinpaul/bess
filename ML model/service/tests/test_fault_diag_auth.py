@@ -210,6 +210,6 @@ def test_training_request_logged_with_request_id(client):
     assert r.status_code == 422 and r.headers["x-request-id"] == "pytest-ml-train1" and r.json()["request_id"] == "pytest-ml-train1"
     activity.flush()
     with engine.begin() as conn:
-        row = conn.execute(text("SELECT kind, operation, outcome, service FROM battery_ops.activity_log WHERE request_id = 'pytest-ml-train1'")).first()
-        conn.execute(text("DELETE FROM battery_ops.activity_log WHERE request_id LIKE 'pytest-%' OR user_email LIKE 'pytest.ml.%'"))
+        row = conn.execute(text("SELECT kind, operation, outcome, service FROM battery_itops.activity_log WHERE request_id = 'pytest-ml-train1'")).first()
+        conn.execute(text("DELETE FROM battery_itops.activity_log WHERE request_id LIKE 'pytest-%' OR user_email LIKE 'pytest.ml.%'"))
     assert row is not None and tuple(row) == ("TRAINING", "hvac-cop_training", "failed", "ml")

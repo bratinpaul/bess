@@ -32,7 +32,7 @@ def users():
     with SessionLocal() as db:
         db.execute(text("DELETE FROM battery_users.app_user WHERE email LIKE 'pytest.obs.%'"))
         db.execute(text("DELETE FROM battery_users.auth_audit WHERE email LIKE 'pytest.obs.%'"))
-        db.execute(text("DELETE FROM battery_ops.activity_log WHERE user_email LIKE 'pytest.obs.%' OR request_id LIKE 'pytest-%'"))
+        db.execute(text("DELETE FROM battery_itops.activity_log WHERE user_email LIKE 'pytest.obs.%' OR request_id LIKE 'pytest-%'"))
         db.commit()
 
 
@@ -62,7 +62,7 @@ def h(token, rid=None):
 def activity_rows(rid: str) -> list[dict]:
     activity.flush()
     with SessionLocal() as db:
-        return [dict(r) for r in db.execute(text("SELECT * FROM battery_ops.activity_log WHERE request_id = :r ORDER BY activity_id"),
+        return [dict(r) for r in db.execute(text("SELECT * FROM battery_itops.activity_log WHERE request_id = :r ORDER BY activity_id"),
                                             {"r": rid}).mappings()]
 
 

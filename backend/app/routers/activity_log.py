@@ -1,4 +1,4 @@
-"""Activity log viewer API (battery_ops.activity_log, written by bess_common.observability) - audit:read.
+"""Activity log viewer API (battery_itops.activity_log, written by bess_common.observability) - audit:read.
 
 GET /api/admin/activity          filtered, newest first, paged; with counts by kind / outcome for the filtered range
 GET /api/admin/activity/lookups  the services, kinds and operations present (filter options)
@@ -42,11 +42,11 @@ def list_activity(kind: Optional[Literal["REQUEST", "AUTH", "LOAD", "KPI", "TRAI
     if date_to:
         where.append("ts < :d1"); params["d1"] = date_to + timedelta(days=1)
     clause = " AND ".join(where)  # fixed fragments only; every value is a bound parameter
-    total = db.execute(text(f"SELECT count(*) FROM battery_ops.activity_log WHERE {clause}"), params).scalar()
-    rows = db.execute(text(f"""SELECT {COLUMNS} FROM battery_ops.activity_log WHERE {clause}
+    total = db.execute(text(f"SELECT count(*) FROM battery_itops.activity_log WHERE {clause}"), params).scalar()
+    rows = db.execute(text(f"""SELECT {COLUMNS} FROM battery_itops.activity_log WHERE {clause}
                                ORDER BY ts DESC, activity_id DESC LIMIT :lim OFFSET :off"""),
                       {**params, "lim": page_size, "off": (page - 1) * page_size}).mappings().all()
-    by = db.execute(text(f"""SELECT kind, outcome, count(*) AS n FROM battery_ops.activity_log WHERE {clause}
+    by = db.execute(text(f"""SELECT kind, outcome, count(*) AS n FROM battery_itops.activity_log WHERE {clause}
                              GROUP BY kind, outcome"""), params).mappings().all()
     return {"items": [dict(r) for r in rows], "total": total, "page": page, "page_size": page_size,
             "counts": [dict(r) for r in by]}
@@ -56,6 +56,6 @@ def list_activity(kind: Optional[Literal["REQUEST", "AUTH", "LOAD", "KPI", "TRAI
 def lookups(db: Session = Depends(get_db)):
     def distinct(col: str) -> list[str]:
         return [r[0] for r in db.execute(text(
-            f"SELECT DISTINCT {col} FROM battery_ops.activity_log WHERE {col} IS NOT NULL ORDER BY 1"))]
+            f"SELECT DISTINCT {col} FROM battery_itops.activity_log WHERE {col} IS NOT NULL ORDER BY 1"))]
     return {"services": distinct("service"), "kinds": ["REQUEST", "AUTH", "LOAD", "KPI", "TRAINING", "ERROR"],
             "operations": distinct("operation")}

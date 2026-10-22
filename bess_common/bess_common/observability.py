@@ -11,7 +11,7 @@
     RequestContextMiddleware    ASGI: accepts or creates X-Request-ID, returns it in the response header and in every
                                 4xx/5xx JSON body ("request_id"), logs one access line per request, logs start/end of
                                 loads / KPI runs / training recognised by path, and records changing or failed requests
-    activity log                battery_ops.activity_log, written by a background thread (never blocks a request);
+    activity log                battery_itops.activity_log, written by a background thread (never blocks a request);
                                 rows older than 90 days are purged once a day
 """
 import json
@@ -135,7 +135,7 @@ def setup_logging(service: str, level: Optional[str] = None, log_dir: Optional[P
     root._bess_configured = service
 
 
-# ------------------------------------------------------------------ activity log (battery_ops.activity_log)
+# ------------------------------------------------------------------ activity log (battery_itops.activity_log)
 class _ActivityWriter:
     COLUMNS = ("service", "kind", "event", "outcome", "request_id", "user_email", "role", "method", "path", "status_code",
                "duration_ms", "operation", "rows_total", "rows_inserted", "rows_updated", "rows_rejected", "ip", "detail")
@@ -169,7 +169,7 @@ class _ActivityWriter:
 
     def _run(self) -> None:
         from sqlalchemy import text
-        sql = text(f"""INSERT INTO battery_ops.activity_log ({', '.join(self.COLUMNS)})
+        sql = text(f"""INSERT INTO battery_itops.activity_log ({', '.join(self.COLUMNS)})
                        VALUES ({', '.join(':' + c for c in self.COLUMNS)})""")
         while True:
             batch = [self.q.get()]
@@ -184,7 +184,7 @@ class _ActivityWriter:
                 with self.engine.begin() as conn:
                     conn.execute(sql, rows)
                     if time.time() - self.last_purge > 86_400:
-                        conn.execute(text("DELETE FROM battery_ops.activity_log WHERE ts < now() - interval '90 days'"))
+                        conn.execute(text("DELETE FROM battery_itops.activity_log WHERE ts < now() - interval '90 days'"))
                         self.last_purge = time.time()
             except Exception as exc:  # noqa: BLE001 - logging must never take the service down
                 print(f"activity log write failed: {exc}", file=sys.stderr)

@@ -1,4 +1,4 @@
-"""pytest setup: remove the test users' rows from battery_ops.activity_log when the run ends."""
+"""pytest setup: remove the test users' rows from battery_itops.activity_log when the run ends."""
 import pytest
 
 
@@ -10,5 +10,5 @@ def _purge_test_activity():
     from core.db import engine
     activity.flush()
     with engine.begin() as conn:
-        conn.execute(text("""DELETE FROM battery_ops.activity_log
+        conn.execute(text("""DELETE FROM battery_itops.activity_log
                              WHERE user_email LIKE 'pytest.%' OR request_id LIKE 'pytest-%'"""))

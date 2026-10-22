@@ -3,7 +3,7 @@
     python 2026_10_21_activity_log.py            # rehearsal: run, verify, ROLLBACK
     python 2026_10_21_activity_log.py --commit   # run for real
 
-battery_ops.activity_log   written by bess_common.logging (backend, ML service, loaders) - one row per
+battery_itops.activity_log   written by bess_common.logging (backend, ML service, loaders) - one row per
                            changing request (POST/PUT/PATCH/DELETE), failed request (4xx/5xx), auth event, load,
                            KPI run and training run. Metadata only - never request bodies, passwords or tokens.
                            Kept 90 days (purged by the writer once a day). Full detail stays in the JSON log files.
@@ -17,9 +17,9 @@ from bess_common.db_settings import psycopg2_dsn  # noqa: E402  (DATABASE_URL fr
 DSN = psycopg2_dsn()
 
 SQL = """
-CREATE SCHEMA IF NOT EXISTS battery_ops;
+CREATE SCHEMA IF NOT EXISTS battery_itops;
 
-CREATE TABLE IF NOT EXISTS battery_ops.activity_log (
+CREATE TABLE IF NOT EXISTS battery_itops.activity_log (
     activity_id   bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     ts            timestamptz NOT NULL DEFAULT now(),
     service       text        NOT NULL,              -- backend | ml | loader-realtime | loader-static | loader-historical
@@ -41,10 +41,10 @@ CREATE TABLE IF NOT EXISTS battery_ops.activity_log (
     ip            text,
     detail        jsonb                              -- small, redacted extras (error class, run id, entity ...)
 );
-CREATE INDEX IF NOT EXISTS ix_activity_ts ON battery_ops.activity_log (ts DESC);
-CREATE INDEX IF NOT EXISTS ix_activity_request ON battery_ops.activity_log (request_id);
-CREATE INDEX IF NOT EXISTS ix_activity_kind ON battery_ops.activity_log (kind, ts DESC);
-CREATE INDEX IF NOT EXISTS ix_activity_user ON battery_ops.activity_log (user_email, ts DESC);
+CREATE INDEX IF NOT EXISTS ix_activity_ts ON battery_itops.activity_log (ts DESC);
+CREATE INDEX IF NOT EXISTS ix_activity_request ON battery_itops.activity_log (request_id);
+CREATE INDEX IF NOT EXISTS ix_activity_kind ON battery_itops.activity_log (kind, ts DESC);
+CREATE INDEX IF NOT EXISTS ix_activity_user ON battery_itops.activity_log (user_email, ts DESC);
 """
 
 
@@ -53,7 +53,7 @@ def main(commit: bool) -> None:
     try:
         with conn.cursor() as cur:
             cur.execute(SQL)
-            cur.execute("SELECT count(*) FROM battery_ops.activity_log")
+            cur.execute("SELECT count(*) FROM battery_itops.activity_log")
             print("activity_log rows:", cur.fetchone()[0])
         if commit:
             conn.commit()

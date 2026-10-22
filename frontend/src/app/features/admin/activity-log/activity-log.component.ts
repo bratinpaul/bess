@@ -40,7 +40,7 @@ interface ActivityPage {
 const KINDS = ['REQUEST', 'AUTH', 'LOAD', 'KPI', 'TRAINING', 'ERROR'];
 
 /** Administration -> Activity Log: user actions, failed requests, loads (with row counts), KPI runs, training and auth
- *  events from battery_ops.activity_log - searchable by the request id users see on error banners. */
+ *  events from battery_itops.activity_log - searchable by the request id users see on error banners. */
 @Component({
   selector: 'app-activity-log',
   standalone: true,

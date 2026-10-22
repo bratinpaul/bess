@@ -8,13 +8,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import pytest  # noqa: E402
 
-CLEANUP = """DELETE FROM battery_ops.activity_log
+CLEANUP = """DELETE FROM battery_itops.activity_log
              WHERE user_email LIKE 'pytest.%' OR request_id LIKE 'pytest-%' OR detail::text LIKE '%pytest.%'"""
 
 
 @pytest.fixture(scope="session", autouse=True)
 def _purge_test_activity():
-    """The test users' requests land in battery_ops.activity_log - remove them when the run ends."""
+    """The test users' requests land in battery_itops.activity_log - remove them when the run ends."""
     yield
     from sqlalchemy import text
     from app.database import SessionLocal
