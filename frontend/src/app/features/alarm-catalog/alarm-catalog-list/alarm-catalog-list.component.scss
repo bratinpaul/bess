@@ -1,0 +1,117 @@
+.catalog-card {
+  margin-top: 20px;
+}
+
+.upload-note {
+  margin: 10px 0 0;
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+
+.link-btn {
+  padding: 0;
+  border: none;
+  background: none;
+  color: #0e8f66;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+// ---- source tabs
+.source-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  // same inset as the toolbar below (the card itself has no padding)
+  padding: 16px 20px 0;
+}
+
+.source-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  background: #fff;
+  color: inherit;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.source-tab:hover {
+  border-color: #63f8ba;
+}
+
+.source-tab.active {
+  border-color: #63f8ba;
+  background: rgba(99, 248, 186, 0.22);
+  color: #0e6b4d;
+}
+
+.source-tab-count {
+  min-width: 20px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.06);
+  font-size: 11px;
+  text-align: center;
+}
+
+// filters sit together on the left, the count on the right
+.toolbar {
+  justify-content: flex-start;
+}
+
+.toolbar .search-box {
+  max-width: 420px;
+}
+
+.toolbar .result-count {
+  margin-left: auto;
+}
+
+// match the search box
+.severity-filter {
+  min-width: 160px;
+  height: 38px;
+  padding: 0 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  background: var(--color-bg);
+  color: var(--color-text);
+  font: inherit;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.severity-filter:focus {
+  outline: none;
+  border-color: #63f8ba;
+}
+
+// ---- table
+.catalog-table .code-cell {
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.catalog-table .description-cell {
+  min-width: 260px;
+  max-width: 420px;
+}
+
+.catalog-table .num {
+  text-align: right;
+  white-space: nowrap;
+}
+
+.catalog-table .unit {
+  color: var(--color-text-muted);
+  font-size: 12px;
+}

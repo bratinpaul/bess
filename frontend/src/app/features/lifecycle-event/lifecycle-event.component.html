@@ -1,0 +1,205 @@
+<div class="page-header">
+  <div>
+    <h2>Lifecycle Events</h2>
+    <p class="subtitle">Commissioning, augmentation, module replacement, end of life, failure and decommissioning of each fleet system — the
+      start and end points of the RUL / survival labels</p>
+  </div>
+</div>
+
+<div class="card">
+  @if (page) {
+    <div class="cal-summary">
+      <div class="cal-stat">
+        <span class="cal-stat-value">{{ systems.length }}</span>
+        <span class="cal-stat-label">Systems</span>
+      </div>
+      @for (t of countedTypes; track t) {
+        <button type="button" class="cal-stat type-stat" [class.on]="filterType === t" (click)="selectType(t)"
+          [title]="'Show only ' + label(t) + ' events'">
+          <span class="cal-dot" [attr.data-type]="t"></span>
+          <span class="cal-stat-value">{{ count(t) }}</span>
+          <span class="cal-stat-label">{{ label(t) }}</span>
+        </button>
+      }
+    </div>
+  }
+  @if (systems.length) {
+    <div class="system-strip">
+      @for (s of systems; track s.system_id) {
+        <button type="button" class="sys-pill" [class.on]="filterSystem === s.system_id"
+          [class.eol]="s.last_event_type === 'EOL_REACHED' || s.last_event_type === 'FAILURE' || s.last_event_type === 'DECOMMISSION'"
+          (click)="selectSystem(s.system_id)"
+          [title]="s.events + ' events · commissioned ' + (s.commissioned_on ?? '—')">
+          <strong>{{ s.system_code }}</strong>
+          <span>{{ label(s.last_event_type) }}</span>
+          <span class="sys-meta">{{ s.last_event_date ?? '—' }} · {{ s.events }} ev.</span>
+        </button>
+      }
+    </div>
+  }
+
+  <div class="toolbar telemetry-filters">
+    <div class="field">
+      <label for="fSys">System</label>
+      <select id="fSys" [(ngModel)]="filterSystem">
+        <option [ngValue]="null">All systems</option>
+        @for (s of systems; track s.system_id) {
+          <option [ngValue]="s.system_id">{{ s.system_code }}</option>
+        }
+      </select>
+    </div>
+    <div class="field">
+      <label for="fType">Event type</label>
+      <select id="fType" [(ngModel)]="filterType">
+        <option value="">All types</option>
+        @for (t of types; track t) {
+          <option [value]="t">{{ label(t) }}</option>
+        }
+      </select>
+    </div>
+    <div class="field">
+      <label for="fStart">From</label>
+      <input id="fStart" type="date" [(ngModel)]="filterStart" />
+    </div>
+    <div class="field">
+      <label for="fEnd">To</label>
+      <input id="fEnd" type="date" [(ngModel)]="filterEnd" />
+    </div>
+    <div class="field">
+      <label for="fSort">Sort by</label>
+      <select id="fSort" [(ngModel)]="sort">
+        @for (s of sorts; track s.key) {
+          <option [value]="s.key">{{ s.label }}</option>
+        }
+      </select>
+    </div>
+    <div class="telemetry-filter-actions">
+      <button type="button" class="btn btn-primary" (click)="applyFilters()">Apply</button>
+      <button type="button" class="btn btn-secondary" (click)="clearFilters()">Clear</button>
+    </div>
+  </div>
+
+  <div class="table-bar">
+    <span class="table-bar-info">
+      @if (!loading && !error) {
+        {{ total }} events ·
+        <button type="button" class="link-btn" (click)="toggleOrder()">{{ order === 'asc' ? 'ascending ↑' : 'descending ↓' }}</button>
+        · {{ visibleColumns.length }} of {{ allColumns.length }} columns
+      }
+    </span>
+    <app-column-picker
+      [columns]="allColumns"
+      [defaultKeys]="defaultColumnKeys"
+      storageKey="bess.lifecycleEventTable.columns"
+      (visibleChange)="visibleColumns = $event" />
+  </div>
+
+  @if (loading) {
+    <div class="empty-state">Loading lifecycle events…</div>
+  } @else if (error) {
+    <div class="empty-state error">{{ error }}</div>
+  } @else if (tableRows.length === 0) {
+    <div class="empty-state">No lifecycle events match the current filters.</div>
+  } @else {
+    <app-telemetry-table [columns]="visibleColumns" [rows]="tableRows" [actions]="true"
+      (editRow)="openEdit($event)" (deleteRow)="confirmDelete($event)" />
+
+    <div class="pagination">
+      <div class="page-size">
+        <label for="pageSize">Rows per page</label>
+        <select id="pageSize" [ngModel]="pageSize" (ngModelChange)="setPageSize($event)">
+          @for (size of pageSizeOptions; track size) {
+            <option [ngValue]="size">{{ size }}</option>
+          }
+        </select>
+      </div>
+      <div class="page-range">{{ rangeStart }}–{{ rangeEnd }} of {{ total }}</div>
+      <div class="page-controls">
+        <button class="btn btn-secondary btn-icon" [disabled]="currentPage === 1" (click)="goToPage(currentPage - 1)" title="Previous page">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+            <path d="M15 6l-6 6 6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+          </svg>
+        </button>
+        <span class="page-indicator">Page {{ currentPage }} of {{ totalPages }}</span>
+        <button class="btn btn-secondary btn-icon" [disabled]="currentPage === totalPages" (click)="goToPage(currentPage + 1)" title="Next page">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+            <path d="M9 6l6 6-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+          </svg>
+        </button>
+      </div>
+    </div>
+  }
+</div>
+
+<!-- edit -->
+@if (edit; as e) {
+  <div class="modal-backdrop" (click)="edit = null">
+    <div class="modal edit-modal aging-modal" (click)="$event.stopPropagation()">
+      <h3>Edit {{ e.row.system_code }} event #{{ e.row.event_id }}</h3>
+      <p class="derived-note">The system can't be changed. A system can have only one event of a type per date.</p>
+      <div class="form-grid aging-grid">
+        <div class="field">
+          <label for="eType">Event type</label>
+          <select id="eType" [(ngModel)]="e.values.event_type">
+            @for (t of types; track t) {
+              <option [value]="t">{{ label(t) }}</option>
+            }
+          </select>
+        </div>
+        <div class="field">
+          <label for="eDate">Event date</label>
+          <input id="eDate" type="date" [(ngModel)]="e.values.event_date" />
+        </div>
+        <div class="field">
+          <label for="eAge">Age (days)</label>
+          <input id="eAge" type="number" step="1" min="0" [(ngModel)]="e.values.age_days" />
+        </div>
+        <div class="field">
+          <label for="eSoh">SOH at event (%)</label>
+          <input id="eSoh" type="number" step="0.1" min="0" max="110" [(ngModel)]="e.values.soh_at_event" />
+        </div>
+        <div class="field method-field">
+          <label for="eFail">Failure mode</label>
+          <input id="eFail" type="text" maxlength="200" [(ngModel)]="e.values.failure_mode"
+            [placeholder]="e.values.event_type === 'FAILURE' ? 'e.g. Weak-cell knee' : 'only for failures'" />
+        </div>
+        <div class="field note-field">
+          <label for="eNote">Note</label>
+          <textarea id="eNote" rows="2" maxlength="1000" [(ngModel)]="e.values.note"></textarea>
+        </div>
+      </div>
+      @if (editError) {
+        <div class="form-error">{{ editError }}</div>
+      }
+      <div class="modal-actions">
+        @if (editProblem) {
+          <span class="problem-note">{{ editProblem }}</span>
+        }
+        <button class="btn btn-secondary" (click)="edit = null" [disabled]="saving">Cancel</button>
+        <button class="btn btn-primary" (click)="save()" [disabled]="saving || !!editProblem">{{ saving ? 'Saving…' : 'Save changes' }}</button>
+      </div>
+    </div>
+  </div>
+}
+
+<!-- delete -->
+@if (toDelete; as d) {
+  <div class="modal-backdrop" (click)="toDelete = null">
+    <div class="modal" (click)="$event.stopPropagation()">
+      <h3>Delete lifecycle event?</h3>
+      <p>
+        This permanently deletes the <strong>{{ d.system_code }}</strong> event <strong>{{ label(d.event_type) }}</strong> of
+        <strong>{{ d.event_date }}</strong>. RUL labels built from it (start of life, end of life or failure) won't see it. This cannot be undone.
+      </p>
+      @if (deleteError) {
+        <div class="form-error">{{ deleteError }}</div>
+      }
+      <div class="modal-actions">
+        <button class="btn btn-secondary" (click)="toDelete = null" [disabled]="deleting">{{ deleteError ? 'Close' : 'Cancel' }}</button>
+        @if (!deleteError) {
+          <button class="btn btn-danger-solid" (click)="deleteConfirmed()" [disabled]="deleting">{{ deleting ? 'Deleting…' : 'Delete' }}</button>
+        }
+      </div>
+    </div>
+  </div>
+}

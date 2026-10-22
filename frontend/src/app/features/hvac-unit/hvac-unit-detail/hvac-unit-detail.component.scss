@@ -1,0 +1,21 @@
+.card {
+  padding: 24px;
+}
+
+.detail-grid a {
+  color: #0e8f66;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.detail-grid a:hover {
+  text-decoration: underline;
+}
+
+.header-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+}

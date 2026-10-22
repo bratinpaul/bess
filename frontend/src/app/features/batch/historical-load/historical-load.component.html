@@ -1,0 +1,418 @@
+<div class="page-header">
+  <div>
+    <h2>Historical Load</h2>
+    <p class="subtitle">
+      Load a folder of historical telemetry files (BMS, PCS, EMS, HVAC, module, alarms, dispatch events) for any site
+      through the bulk-load APIs. Existing rows are updated, so a folder can be loaded again safely.
+    </p>
+    <ol class="steps">
+      <li>Select the site and parameters</li>
+      <li>Check the files</li>
+      <li>Include / exclude files</li>
+      <li>Start the load</li>
+      <li>Monitor it with <em>Refresh status</em></li>
+    </ol>
+  </div>
+</div>
+
+@if (optionsError) {
+  <div class="card empty-state error">{{ optionsError }}</div>
+}
+
+@if (options) {
+  <!-- inputs -->
+  <div class="card setup-card">
+    <div class="card-head">
+      <h3>1 · Site and parameters</h3>
+      <span class="muted small">from master data</span>
+    </div>
+    <div class="setup-grid">
+      <div class="field">
+        <label for="site">Site *</label>
+        <select id="site" [(ngModel)]="siteId" (ngModelChange)="onSiteChange()" [disabled]="running">
+          <option [ngValue]="null" disabled>Select a site</option>
+          @for (s of options.sites; track s.site_id) {
+            <option [ngValue]="s.site_id">{{ s.site_name }}</option>
+          }
+        </select>
+      </div>
+      <div class="field">
+        <label for="system">Battery system *</label>
+        <select id="system" [(ngModel)]="systemName" (ngModelChange)="onSystemChange()" [disabled]="!site || running">
+          <option value="" disabled>{{ site ? 'Select a battery system' : 'Select a site first' }}</option>
+          @for (b of site?.systems ?? []; track b.battery_system_id) {
+            <option [value]="b.system_name">{{ b.system_name }}</option>
+          }
+        </select>
+      </div>
+      <div class="field">
+        <label for="ems">EMS controller <span class="muted">(for EMS files)</span></label>
+        <select id="ems" [(ngModel)]="emsCode" (ngModelChange)="resetScan()" [disabled]="!system || running">
+          <option [ngValue]="null">{{ system?.ems_codes?.length ? 'Select' : 'None for this system' }}</option>
+          @for (c of system?.ems_codes ?? []; track c) {
+            <option [ngValue]="c">{{ c }}</option>
+          }
+        </select>
+      </div>
+      <div class="field">
+        <label for="hvac">HVAC unit <span class="muted">(for HVAC files)</span></label>
+        <select id="hvac" [(ngModel)]="hvacCode" (ngModelChange)="resetScan()" [disabled]="!system || running">
+          <option [ngValue]="null">{{ system?.hvac_codes?.length ? 'Select' : 'None for this system' }}</option>
+          @for (c of system?.hvac_codes ?? []; track c) {
+            <option [ngValue]="c">{{ c }}</option>
+          }
+        </select>
+      </div>
+      <div class="field wide">
+        <label for="folder">Folder * <span class="muted">(inside {{ options.input_root }})</span></label>
+        <input id="folder" list="folders" [(ngModel)]="folder" (ngModelChange)="resetScan()" [disabled]="running"
+          placeholder="e.g. historical\Bhadla BESS" />
+        <datalist id="folders">
+          @for (f of options.folders; track f.path) {
+            <option [value]="f.path">{{ f.files }} files</option>
+          }
+        </datalist>
+        <label class="check-inline">
+          <input type="checkbox" [(ngModel)]="recursive" (ngModelChange)="resetScan()" [disabled]="running" />
+          Include sub-folders
+        </label>
+      </div>
+      <div class="field wide">
+        <label>Feeds</label>
+        <div class="feed-chips">
+          @for (f of options.feeds; track f.key) {
+            <button type="button" class="feed-chip" [class.on]="feedSelected(f.key)" (click)="toggleFeed(f.key)"
+              [disabled]="running" [title]="f.endpoint">
+              {{ f.label }}
+            </button>
+          }
+        </div>
+      </div>
+    </div>
+    <div class="setup-actions">
+      @if (scanError) {
+        <span class="problem">{{ scanError }}</span>
+      }
+      <button data-perm="batch:execute" type="button" class="btn btn-secondary" [disabled]="!ready || scanning || running" (click)="runScan()">
+        {{ scanning ? 'Checking files…' : '2 · Check files' }}
+      </button>
+    </div>
+  </div>
+
+  <!-- scan -->
+  @if (scan; as sc) {
+    <div class="card inbox-card">
+      <div class="card-head">
+        <h3>3 · Include or exclude files</h3>
+        <span class="muted small">{{ sc.site_name }} · {{ sc.system_name }} · <span class="mono">{{ sc.folder }}</span></span>
+      </div>
+      <div class="select-bar">
+        <span class="small"><strong>{{ loadable }}</strong> of {{ checkable }} checked file(s) included</span>
+        <button type="button" class="link-btn" (click)="setAll(true)" [disabled]="running">Include all</button>
+        <button type="button" class="link-btn" (click)="setAll(false)" [disabled]="running">Exclude all</button>
+      </div>
+      @for (p of sc.problems; track p) {
+        <div class="form-error">{{ p }}</div>
+      }
+      <table class="data-table scan-table">
+        <thead>
+          <tr>
+            <th class="inc-col">Load</th>
+            <th>Feed</th>
+            <th>File</th>
+            <th class="num">Size</th>
+            <th>Check</th>
+          </tr>
+        </thead>
+        <tbody>
+          @for (f of sc.feeds; track f.key) {
+            @if (!f.files.length) {
+              <tr [class.dim]="!feedSelected(f.key)">
+                <td class="inc-col"></td>
+                <td>{{ f.label }}</td>
+                <td class="muted" colspan="3">No file in this folder</td>
+              </tr>
+            }
+            @if (f.files.length > 1 && feedSelected(f.key)) {
+              <tr class="feed-row">
+                <td class="inc-col"></td>
+                <td colspan="4">
+                  <strong>{{ f.label }}</strong>
+                  <span class="muted small">· {{ feedIncluded(f.key) }} of {{ f.files.length }} included ·</span>
+                  <button type="button" class="link-btn" (click)="setAll(true, f.key)" [disabled]="running">all</button>
+                  <span class="muted small">/</span>
+                  <button type="button" class="link-btn" (click)="setAll(false, f.key)" [disabled]="running">none</button>
+                </td>
+              </tr>
+            }
+            @for (file of f.files; track file.path) {
+              <tr [class.dim]="!file.selected || !isIncluded(file.name)">
+                <td class="inc-col">
+                  <input type="checkbox" [checked]="isIncluded(file.name)" (change)="toggleFile(file.name)"
+                    [disabled]="!file.selected || !file.ok || running" [attr.aria-label]="'Load ' + file.name"
+                    [title]="fileTitle(file)" />
+                </td>
+                <td>{{ f.label }}</td>
+                <td class="mono small">{{ file.name }}</td>
+                <td class="num">{{ size(file.size) }}</td>
+                <td>
+                  @if (!file.selected) {
+                    <span class="muted">Feed not selected</span>
+                  } @else if (file.ok) {
+                    <span class="check ok">✓</span> {{ file.message || 'Belongs to ' + sc.system_name }}
+                  } @else {
+                    <span class="check bad">✕</span> <span class="bad">{{ file.message }}</span>
+                  }
+                </td>
+              </tr>
+            }
+          }
+        </tbody>
+      </table>
+      @if (sc.ignored.length) {
+        <p class="muted small">Not a telemetry file (ignored): {{ sc.ignored.join(', ') }}</p>
+      }
+      <div class="setup-actions">
+        <span class="muted small">
+          {{ loadable }} file(s) will be loaded
+          @if (checkable - loadable > 0) {
+            · {{ checkable - loadable }} excluded
+          }
+          @if (blocked) {
+            · <span class="bad">{{ blocked }} can't be loaded (wrong system or unreadable)</span>
+          }
+          · alarms are matched to assets by code
+        </span>
+        <button data-perm="batch:execute" type="button" class="btn btn-primary run-btn" [disabled]="running || starting || !loadable || sc.problems.length"
+          (click)="start()">
+          {{ starting ? 'Starting…' : '4 · Run load (' + loadable + ' file' + (loadable === 1 ? '' : 's') + ')' }}
+        </button>
+      </div>
+    </div>
+  }
+  @if (runError) {
+    <div class="card run-card failed"><strong>The load didn't start.</strong> {{ runError }}</div>
+  }
+}
+
+<!-- 5 · monitor the current / last run (by hand) -->
+<div class="card monitor-bar">
+  <div>
+    <h3>5 · Monitor</h3>
+    <p class="muted small">
+      The load runs in the background; the page doesn't update by itself. Click <em>Refresh status</em> to see its
+      progress and the batch log.
+      @if (refreshedAt) {
+        Last refreshed {{ refreshedAt | date: 'HH:mm:ss' }}.
+      }
+    </p>
+  </div>
+  <button type="button" class="btn btn-secondary" [disabled]="refreshing" (click)="refresh()">
+    {{ refreshing ? 'Refreshing…' : 'Refresh status' }}
+  </button>
+</div>
+
+@if (status?.progress; as pr) {
+  <div class="card run-card" [class.failed]="pr.status === 'FAILED'">
+    <div class="card-head">
+      <h3>
+        @if (running) {
+          Load in progress · {{ pr.site || pr.system }}
+          <span class="batch-status running">RUNNING</span>
+        } @else {
+          Last load · {{ pr.site || pr.system }}
+          <span class="batch-status" [attr.data-status]="pr.status">{{ pr.status }}</span>
+        }
+      </h3>
+      <span class="muted small">
+        {{ plantTime(pr.started_at) }}{{ pr.finished_at ? ' → ' + plantTime(pr.finished_at) : '' }} ·
+        <span class="mono">{{ pr.folder }}</span>
+        @if (pr.batch_id) {
+          · batchlog #{{ pr.batch_id }}
+        }
+      </span>
+    </div>
+    @if (pr.error) {
+      <div class="form-error">{{ pr.error }}</div>
+    }
+    @if (total) {
+      <div class="progress-row">
+        <div class="progress-bar" role="progressbar" [attr.aria-valuenow]="percent" aria-valuemin="0" aria-valuemax="100">
+          <span [style.width.%]="percent"></span>
+        </div>
+        <span class="small">{{ done }} / {{ total }} files · {{ liveTotals.inserted }} inserted ·
+          {{ liveTotals.updated }} updated · <span [class.bad]="liveTotals.skipped > 0">{{ liveTotals.skipped }} skipped</span>
+          @if (excludedCount) {
+            · {{ excludedCount }} excluded
+          }
+          @if (running && pr.current) {
+            · now: <span class="mono">{{ pr.current }}</span>
+          }</span>
+      </div>
+      <div class="table-scroll progress-table">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>Feed</th>
+              <th>File</th>
+              <th>Status</th>
+              <th class="num">Rows</th>
+              <th class="num">Inserted</th>
+              <th class="num">Updated</th>
+              <th class="num">Skipped</th>
+              <th class="num">Time</th>
+              <th>Notes</th>
+            </tr>
+          </thead>
+          <tbody>
+            @for (f of pr.files; track f.file) {
+              <tr>
+                <td>{{ f.feed }}</td>
+                <td class="mono small">{{ f.file }}</td>
+                <td>
+                  <span class="file-status" [attr.data-status]="f.status">
+                    @if (f.status === 'LOADING') {
+                      <span class="spinner dark" aria-hidden="true"></span>
+                    }
+                    {{ f.status | titlecase }}
+                  </span>
+                </td>
+                <td class="num">{{ f.rows ?? '—' }}</td>
+                <td class="num">{{ f.inserted ?? '—' }}</td>
+                <td class="num">{{ f.updated ?? '—' }}</td>
+                <td class="num" [class.bad]="(f.skipped ?? 0) > 0">{{ f.skipped ?? '—' }}</td>
+                <td class="num">{{ f.seconds !== undefined ? f.seconds + ' s' : '' }}</td>
+                <td class="notes">
+                  @if (f.message) {
+                    <div [class.bad]="f.status !== 'LOADED' && f.status !== 'EXCLUDED'" [class.muted]="f.status === 'EXCLUDED'">{{ f.message }}</div>
+                  }
+                  @for (e of (f.errors ?? []).slice(0, 3); track e) {
+                    <div class="bad">{{ e }}</div>
+                  }
+                </td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      </div>
+    }
+  </div>
+}
+
+<!-- batch log -->
+<div class="card history-card">
+  <div class="card-head">
+    <h3>Batch log</h3>
+    <span class="muted small">battery_raw.batchlog · job historical_load · one row per run</span>
+  </div>
+  <div class="history-bar">
+    <div class="status-tabs" role="tablist" aria-label="Filter by status">
+      <button type="button" class="status-tab" [class.active]="!statusFilter" (click)="setStatusFilter('')">
+        All <span class="count">{{ allCount }}</span>
+      </button>
+      @for (s of statuses; track s) {
+        <button type="button" class="status-tab" [class.active]="statusFilter === s" (click)="setStatusFilter(s)">
+          <span class="swatch" [attr.data-status]="s"></span>{{ s | titlecase }}
+          <span class="count">{{ logs?.counts?.[s] ?? 0 }}</span>
+        </button>
+      }
+    </div>
+  </div>
+  @if (logsLoading && !logs) {
+    <div class="empty-state">Loading…</div>
+  } @else if (!logs || logs.items.length === 0) {
+    <div class="empty-state">No loads yet.</div>
+  } @else {
+    <div class="table-scroll">
+      <table class="data-table history-table" [class.refreshing]="logsLoading">
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>Site · folder</th>
+            <th>Status</th>
+            <th class="num">Files</th>
+            <th class="num">Rows</th>
+            <th class="num">Inserted</th>
+            <th class="num">Updated</th>
+            <th class="num">Skipped</th>
+            <th class="num">Duration</th>
+            <th>Started</th>
+          </tr>
+        </thead>
+        <tbody>
+          @for (log of logs.items; track log.batch_id) {
+            <tr class="log-row" [class.open]="expanded === log.batch_id" (click)="toggle(log)">
+              <td class="mono">{{ log.batch_id }}</td>
+              <td>{{ log.file_name }}</td>
+              <td><span class="batch-status" [attr.data-status]="log.status">{{ log.status }}</span></td>
+              <td class="num">{{ log.feeds_loaded }} / {{ log.feeds_total }}</td>
+              <td class="num">{{ log.rows_total }}</td>
+              <td class="num">{{ log.rows_inserted }}</td>
+              <td class="num">{{ log.rows_updated }}</td>
+              <td class="num" [class.bad]="log.rows_skipped > 0">{{ log.rows_skipped }}</td>
+              <td class="num">{{ duration(log.duration_ms) }}</td>
+              <td>{{ plantTime(log.started_at) }}</td>
+            </tr>
+            @if (expanded === log.batch_id) {
+              <tr class="detail-row">
+                <td colspan="10">
+                  <div class="log-detail">
+                    @if (log.error_message) {
+                      <div class="form-error">{{ log.error_message }}</div>
+                    }
+                    <table class="data-table feed-table">
+                      <thead>
+                        <tr>
+                          <th>Feed</th>
+                          <th>File</th>
+                          <th class="num">Rows</th>
+                          <th class="num">Inserted</th>
+                          <th class="num">Updated</th>
+                          <th class="num">Skipped</th>
+                          <th>Notes</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        @for (feed of log.feed_results; track $index) {
+                          <tr>
+                            <td>{{ feed.feed }}</td>
+                            <td class="mono small">{{ feed.csv }}</td>
+                            <td class="num">{{ feed.rows }}</td>
+                            <td class="num">{{ feed.inserted ?? '—' }}</td>
+                            <td class="num">{{ feed.updated ?? '—' }}</td>
+                            <td class="num" [class.bad]="(feed.skipped ?? 0) > 0">{{ feed.skipped ?? '—' }}</td>
+                            <td class="notes">
+                              @if (feed.result) {
+                                <div class="muted">{{ feed.result }}</div>
+                              }
+                              @for (e of (feed.errors ?? []).slice(0, 3); track e) {
+                                <div class="bad">{{ e }}</div>
+                              }
+                            </td>
+                          </tr>
+                        }
+                      </tbody>
+                    </table>
+                    <dl class="detail-list">
+                      <dt>Folder</dt>
+                      <dd class="mono small">{{ log.archive_path }}</dd>
+                      <dt>Run</dt>
+                      <dd class="mono small">{{ log.run_id }}</dd>
+                    </dl>
+                  </div>
+                </td>
+              </tr>
+            }
+          }
+        </tbody>
+      </table>
+    </div>
+    <div class="pagination">
+      <div class="page-range">{{ logs.total ? offset + 1 : 0 }}–{{ offset + logs.items.length }} of {{ logs.total }}</div>
+      <div class="page-controls">
+        <button class="btn btn-secondary btn-icon" [disabled]="offset === 0" (click)="page(-1)" title="Newer">‹</button>
+        <button class="btn btn-secondary btn-icon" [disabled]="offset + pageSize >= logs.total" (click)="page(1)" title="Older">›</button>
+      </div>
+    </div>
+  }
+</div>

@@ -1,0 +1,56 @@
+.field select,
+.field input {
+  width: 100%;
+}
+
+.fg-meta {
+  line-height: 1.35;
+}
+
+.mv-model-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+
+.mv-preview-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 12px;
+  margin: 8px 0 4px;
+  font-size: 13px;
+}
+
+.mv-kv {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 2px 0;
+  border-bottom: 1px dashed var(--color-border);
+}
+
+.mv-seg {
+  margin-bottom: 10px;
+}
+
+.mv-score-card {
+  margin-bottom: 20px;
+  padding: 16px 20px;
+
+  h3 {
+    margin: 0 0 10px;
+    font-size: 15px;
+  }
+}
+
+.mv-score-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 12px;
+
+  .field {
+    min-width: 160px;
+  }
+}

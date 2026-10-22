@@ -1,0 +1,260 @@
+@if (error) {
+  <div class="page-header">
+    <div>
+      <h2>Operations Dashboard</h2>
+      <p class="subtitle">Combined BMS + PCS operational overview</p>
+    </div>
+  </div>
+  <div class="card">
+    <div class="empty-state error">{{ error }}</div>
+  </div>
+} @else if (loading) {
+  <div class="page-header">
+    <div>
+      <h2>Operations Dashboard</h2>
+      <p class="subtitle">Combined BMS + PCS operational overview</p>
+    </div>
+  </div>
+  <div class="card">
+    <div class="empty-state">Loading operations overview…</div>
+  </div>
+} @else if (overview) {
+  <div class="card ops-header-card">
+    <div class="ops-header-main">
+      <div class="ops-icon-box">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+          <rect x="3" y="3" width="7" height="18" rx="1.5" stroke="currentColor" stroke-width="1.6" />
+          <rect x="14" y="3" width="7" height="18" rx="1.5" stroke="currentColor" stroke-width="1.6" />
+        </svg>
+      </div>
+      <div>
+        <h2>{{ overview.system_name }}</h2>
+        <p class="subtitle">
+          {{ overview.site_name || 'Unknown site' }}
+          @if (overview.rated_power_mw) { · {{ overview.rated_power_mw }} MW / {{ overview.rated_energy_mwh }} MWh {{ overview.chemistry_code }} }
+          @if (overview.pcs_codes.length > 0) { · {{ overview.pcs_codes.join(' + ') }} }
+        </p>
+      </div>
+    </div>
+    <div class="ops-header-status">
+      <span class="status-badge" [class.alarm]="!isHealthy">
+        {{ isHealthy ? 'Nominal' : 'Alert' }} · {{ overview.latest.mode_code || overview.latest.bms_mode_code || '—' }}
+      </span>
+      <span class="ops-latest-ts">Latest reading {{ overview.latest.ts | date: 'd MMM y · HH:mm' }}</span>
+    </div>
+  </div>
+
+  <div class="card analytics-filters-card">
+    <div class="toolbar telemetry-filters">
+      <div class="field">
+        <label for="opsSystem">System</label>
+        <select id="opsSystem" [(ngModel)]="selectedSystemId" (ngModelChange)="onFilterChange()">
+          @for (system of systems; track system.battery_system_id) {
+            <option [ngValue]="system.battery_system_id">{{ system.system_name }}</option>
+          }
+        </select>
+      </div>
+      <div class="field">
+        <label for="opsPeriod">Period</label>
+        <select id="opsPeriod" [(ngModel)]="selectedDays" (ngModelChange)="onFilterChange()">
+          @for (period of periodOptions; track period) {
+            <option [ngValue]="period">Last {{ period }} days</option>
+          }
+        </select>
+      </div>
+    </div>
+  </div>
+
+  <div class="ops-section-label">Latest Reading</div>
+  <div class="metric-grid ops-latest-grid">
+    <div class="metric-card">
+      <span class="metric-icon">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+          <rect x="2.5" y="7" width="16" height="10" rx="2" stroke="currentColor" stroke-width="1.6" />
+          <path d="M20.5 10.5v3" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
+        </svg>
+      </span>
+      <span class="metric-body">
+        <span class="metric-label">State of Charge</span>
+        <span class="metric-value">{{ overview.latest.soc_pct ?? '—' }}<span class="metric-unit">%</span></span>
+        <div class="soc-bar"><div class="soc-bar-fill" [style.width.%]="overview.latest.soc_pct ?? 0"></div></div>
+        <span class="metric-sub">
+          avg {{ overview.period.avg_soc ?? '—' }}% · range {{ overview.period.min_soc ?? '—' }}–{{ overview.period.max_soc ?? '—' }}%
+        </span>
+      </span>
+    </div>
+    <div class="metric-card">
+      <span class="metric-icon">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+          <path d="M13 2 4 14h6l-1 8 9-12h-6l1-8Z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" />
+        </svg>
+      </span>
+      <span class="metric-body">
+        <span class="metric-label">Power Now</span>
+        <span class="metric-value">{{ overview.latest.power_kw ?? '—' }}<span class="metric-unit">kW</span></span>
+        <span class="metric-sub">Mode {{ overview.latest.mode_code || '—' }}</span>
+      </span>
+    </div>
+    <div class="metric-card">
+      <span class="metric-icon">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+          <path d="M12 3 19 6v6c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6l7-3Z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" />
+          <path d="M9 12l2 2 4-4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
+        </svg>
+      </span>
+      <span class="metric-body">
+        <span class="metric-label">Availability</span>
+        <span class="metric-value">{{ overview.period.availability_pct ?? '—' }}<span class="metric-unit">%</span></span>
+        <span class="metric-sub">{{ overview.period.days }}-day energy availability</span>
+        <span class="status-badge availability-badge" [class.alarm]="availabilityBadge !== 'Healthy'">{{ availabilityBadge }}</span>
+      </span>
+    </div>
+    <div class="metric-card">
+      <span class="metric-icon">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+          <path d="M12 20s-7-4.4-9.3-9A5 5 0 0 1 12 6a5 5 0 0 1 9.3 5C19 15.6 12 20 12 20Z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" />
+        </svg>
+      </span>
+      <span class="metric-body">
+        <span class="metric-label">State of Health</span>
+        <span class="metric-value">{{ overview.latest.soh_pct ?? '—' }}<span class="metric-unit">%</span></span>
+        <span class="metric-sub">from {{ overview.period.soh_at_start ?? '—' }}% at start</span>
+      </span>
+    </div>
+    <div class="metric-card">
+      <span class="metric-icon">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+          <path d="M6 9a6 6 0 0 1 12 0v5l1.5 3h-15L6 14V9Z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" />
+          <path d="M10 20a2 2 0 0 0 4 0" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
+        </svg>
+      </span>
+      <span class="metric-body">
+        <span class="metric-label">Alarms ({{ overview.period.days }}d)</span>
+        <span class="metric-value">{{ overview.period.bms_alarm_samples + overview.period.pcs_alarm_samples }}<span class="metric-unit">events</span></span>
+        <span class="metric-sub">BMS {{ overview.period.bms_alarm_samples }} · PCS {{ overview.period.pcs_alarm_samples }}</span>
+      </span>
+    </div>
+  </div>
+
+  <div class="ops-section-label">{{ overview.period.days }}-Day Performance</div>
+  <div class="metric-grid ops-period-grid">
+    <div class="metric-card">
+      <span class="metric-icon">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+          <circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="1.6" />
+          <path d="M12 8v8M8.5 12.5 12 16l3.5-3.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
+        </svg>
+      </span>
+      <span class="metric-body">
+        <span class="metric-label">Energy Discharged</span>
+        <span class="metric-value">{{ overview.period.energy_discharged_mwh | number: '1.0-1' }}<span class="metric-unit">MWh</span></span>
+        <span class="metric-sub">charged {{ overview.period.energy_charged_mwh | number: '1.0-1' }} MWh</span>
+      </span>
+    </div>
+    <div class="metric-card">
+      <span class="metric-icon">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+          <path d="M4 12a8 8 0 0 1 14-5.3M20 12a8 8 0 0 1-14 5.3" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
+          <path d="M18 3v4h-4M6 21v-4h4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
+        </svg>
+      </span>
+      <span class="metric-body">
+        <span class="metric-label">Round-Trip Efficiency</span>
+        <span class="metric-value">{{ overview.period.ac_round_trip_eff_pct ?? '—' }}<span class="metric-unit">% AC</span></span>
+        <span class="metric-sub">DC-side {{ overview.period.dc_round_trip_eff_pct ?? '—' }}%</span>
+      </span>
+    </div>
+    <div class="metric-card">
+      <span class="metric-icon">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+          <path d="M20 11A8 8 0 1 0 18.5 16" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
+          <path d="M20 5v6h-6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
+        </svg>
+      </span>
+      <span class="metric-body">
+        <span class="metric-label">Equivalent Full Cycles</span>
+        <span class="metric-value">{{ overview.period.equiv_full_cycles ?? '—' }}<span class="metric-unit">EFC</span></span>
+        <span class="metric-sub">{{ overview.period.cycles_per_day ?? '—' }} cycles/day</span>
+      </span>
+    </div>
+    <div class="metric-card">
+      <span class="metric-icon">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+          <path d="M3 12c2-4 4-4 6 0s4 4 6 0 4-4 6 0" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
+        </svg>
+      </span>
+      <span class="metric-body">
+        <span class="metric-label">Energy Throughput</span>
+        <span class="metric-value">{{ overview.period.energy_throughput_mwh | number: '1.0-1' }}<span class="metric-unit">MWh</span></span>
+        <span class="metric-sub">charge + discharge</span>
+      </span>
+    </div>
+    <div class="metric-card">
+      <span class="metric-icon">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+          <path d="M13 2 4 14h6l-1 8 9-12h-6l1-8Z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" />
+        </svg>
+      </span>
+      <span class="metric-body">
+        <span class="metric-label">Peak Power</span>
+        <span class="metric-value">{{ peakPowerMagnitudeKw ?? '—' }}<span class="metric-unit">kW</span></span>
+        <span class="metric-sub">discharge · charge {{ overview.period.peak_charge_power_ac_kw ?? '—' }} kW</span>
+      </span>
+    </div>
+    <div class="metric-card">
+      <span class="metric-icon">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+          <path d="M4 12a8 8 0 0 1 14-5.3M20 12a8 8 0 0 1-14 5.3" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
+          <path d="M18 3v4h-4M6 21v-4h4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
+        </svg>
+      </span>
+      <span class="metric-body">
+        <span class="metric-label">Avg Conversion Eff.</span>
+        <span class="metric-value">{{ overview.period.avg_conversion_eff_pct ?? '—' }}<span class="metric-unit">%</span></span>
+        <span class="metric-sub">min PF {{ overview.period.min_power_factor ?? '—' }}</span>
+      </span>
+    </div>
+    <div class="metric-card">
+      <span class="metric-icon">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+          <path d="M12 14.5V5a2 2 0 1 0-4 0v9.5a4 4 0 1 0 4 0Z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" />
+        </svg>
+      </span>
+      <span class="metric-body">
+        <span class="metric-label">Max Cell Temp</span>
+        <span class="metric-value">{{ overview.period.max_cell_temp_c ?? '—' }}<span class="metric-unit">°C</span></span>
+      </span>
+    </div>
+    <div class="metric-card">
+      <span class="metric-icon">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+          <path d="M12 14.5V5a2 2 0 1 0-4 0v9.5a4 4 0 1 0 4 0Z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" />
+        </svg>
+      </span>
+      <span class="metric-body">
+        <span class="metric-label">Max IGBT Temp</span>
+        <span class="metric-value">{{ overview.period.max_igbt_temp_c ?? '—' }}<span class="metric-unit">°C</span></span>
+      </span>
+    </div>
+  </div>
+
+  <div class="ops-section-label">Trends</div>
+  <div class="analytics-charts-grid">
+    <div class="card chart-card">
+      <h3>Power Trend (kW)</h3>
+      <div class="chart-container"><canvas #powerChart></canvas></div>
+    </div>
+    <div class="card chart-card">
+      <h3>SOC / SOH Trend (%)</h3>
+      <div class="chart-container"><canvas #socSohChart></canvas></div>
+    </div>
+    <div class="card chart-card">
+      <h3>Alarms Trend</h3>
+      <div class="chart-container"><canvas #alarmsChart></canvas></div>
+    </div>
+  </div>
+
+  @if (loadingCharts) {
+    <div class="chart-loading-note">Loading charts…</div>
+  }
+}

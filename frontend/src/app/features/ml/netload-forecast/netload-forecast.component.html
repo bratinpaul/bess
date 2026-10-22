@@ -1,0 +1,227 @@
+<div class="page-header">
+  <div>
+    <h2>Demand / Peak Forecast</h2>
+    <p class="subtitle">Site net load (gross load − behind-the-meter PV) for the next 48 h with P10–P90 uncertainty, and each
+      day's billing-window peak against the threshold — to position the BESS for peak shaving.</p>
+  </div>
+  <a class="link training-link" routerLink="/ml/netload-forecast-model">Open Net-load Forecast Model →</a>
+</div>
+
+<div class="card picker-card">
+  <div class="picker-row">
+    <div class="field picker-field">
+      <label for="model">Model run</label>
+      <select id="model" [ngModel]="modelKey" (ngModelChange)="selectModel($event)" [disabled]="!models.length">
+        <option value="active">Default run</option>
+        @for (m of models; track m.run_id) {
+          <option [value]="'' + m.run_id">{{ optionLabel(m) }}</option>
+        }
+      </select>
+      @if (modelsError) {
+        <span class="field-error">{{ modelsError }}</span>
+      }
+    </div>
+    @if (run; as r) {
+      <div class="field picker-field">
+        <label for="mp">Metering point</label>
+        <select id="mp" [ngModel]="mpId" (ngModelChange)="selectMp($event)">
+          @for (m of r.mp_ids; track m) {
+            <option [ngValue]="m">{{ unitLabel(m) }}</option>
+          }
+        </select>
+      </div>
+      <div class="field threshold-field">
+        <label for="thr">Peak threshold (kW)</label>
+        <div class="thr-row">
+          <input id="thr" type="number" min="1" step="10" [(ngModel)]="threshold" (keyup.enter)="applyThreshold()" />
+          <button type="button" class="btn btn-secondary" (click)="applyThreshold()">Apply</button>
+          @if (forecast && threshold !== forecast.trained_threshold_kw) {
+            <button type="button" class="link-btn" (click)="resetThreshold()">Run's {{ num(forecast.trained_threshold_kw) }}</button>
+          }
+        </div>
+      </div>
+    }
+  </div>
+</div>
+
+@if (modelsLoaded && !models.length && !modelsError) {
+  <div class="card">
+    <div class="empty-state">No net-load forecast model yet. <a routerLink="/ml/netload-forecast-model">Train one on the Net-load Forecast Model page</a>.</div>
+  </div>
+}
+
+@if (run; as r) {
+  <div class="tab-row">
+    <button type="button" class="tab" [class.on]="tab === 'live'" (click)="setTab('live')">Next {{ r.horizon_hours }} h</button>
+    <button type="button" class="tab" [class.on]="tab === 'backtest'" (click)="setTab('backtest')">Backtest</button>
+  </div>
+
+  <div class="card view-card">
+    <div class="view-controls">
+      <div class="seg model-seg">
+        @for (k of runModels; track k) {
+          <button type="button" [class.on]="chartModel === k" (click)="setChartModel(k)">
+            <span class="swatch line" [style.background]="colors[k]"></span>{{ labels[k] }}
+            @if (r.best_model === k) { <small>best</small> }
+          </button>
+        }
+      </div>
+      <div class="toggles">
+        <label><input type="checkbox" [(ngModel)]="compareAll" (ngModelChange)="rebuild()" /> Other models' P50</label>
+        <label><input type="checkbox" [(ngModel)]="showGross" (ngModelChange)="rebuild()" /> Gross load &amp; PV (history)</label>
+      </div>
+    </div>
+
+    @if (tab === 'live') {
+      @if (loading && !forecast) {
+        <div class="empty-state">Forecasting…</div>
+      } @else if (error) {
+        <div class="empty-state error">{{ error }}</div>
+      } @else if (forecast) {
+        @if (forecast; as f) {
+        <p class="muted small">
+          Forecast from the newest reading ({{ originLabel(f.origin_ts) }}, plant time) with run #{{ f.run_id }} · shaded:
+          billing window {{ f.window[0] }}–{{ f.window[1] }} h · ▲ = forecast daily peak.
+        </p>
+        @if (stale) {
+          <div class="warn-line">The newest demand reading is {{ ageText(f.data_age_hours) }} old: this is the forecast that
+            was due then. Load newer demand and weather data (Live Feed) for a current one.</div>
+        }
+        @if (f.calendar_missing.length) {
+          <div class="warn-line">{{ f.calendar_missing.join(', ') }} not in the calendar (Core → Reference → Calendar):
+            Saturday / Sunday counted as weekend, no holidays.</div>
+        }
+        @if (inputsFromForecast < 0.99) {
+          <div class="warn-line">Weather forecast runs cover {{ pct(inputsFromForecast) }} of the horizon; beyond that the
+            models use the recent days' measured weather (dashed in the inputs below).</div>
+        }
+
+        <div class="peak-cards">
+          @for (c of cards; track c.date) {
+            <div class="peak-card" [attr.data-status]="c.status">
+              <div class="pc-head">
+                <span class="pc-day">{{ c.label }}</span>
+                <span class="pc-status">{{ c.status === 'breach' ? 'Likely breach' : c.status === 'watch' ? 'Watch' : 'Below threshold' }}</span>
+              </div>
+              <div class="pc-main">
+                <span class="pc-value">{{ num(c.peak.p50) }} <small>kW</small></span>
+                <span class="pc-note">expected peak at {{ hhmm(c.peak.peak_ts) }} · P10–P90 {{ num(c.peak.p10) }}–{{ num(c.peak.p90) }} kW</span>
+              </div>
+              <dl class="pc-facts">
+                <div><dt>vs threshold</dt><dd [class.over]="(c.margin ?? 0) > 0">{{ signed(c.margin) }} kW</dd></div>
+                <div><dt>P(peak &gt; {{ num(thresholdKw) }})</dt><dd>{{ pct(c.peak.prob_exceed) }}</dd></div>
+                <div title="Discharge power needed to hold the threshold if the peak comes in at P90">
+                  <dt>Shave to hold (P90)</dt><dd>{{ num(c.reserve) }} kW</dd></div>
+                @if (c.clf) {
+                  <div title="Peak-exceedance classifier; reference = training breach rate for this day class">
+                    <dt>Classifier</dt><dd>{{ pct(c.clf.prob_exceed) }} <small class="muted">ref {{ pct(c.clf.reference) }}</small></dd></div>
+                }
+              </dl>
+              <span class="pc-foot">{{ labels[chartModel] }} · {{ num(c.lead, 0) }} h ahead of the window{{ dayType(c.date) ? ' · ' + dayType(c.date) : '' }}</span>
+            </div>
+          } @empty {
+            <div class="empty-state small">No whole billing window lies inside the horizon.</div>
+          }
+          @if (modelScore; as m) {
+            <div class="peak-card muted-card">
+              <div class="pc-head"><span class="pc-day">{{ labels[chartModel] }} · backtest</span></div>
+              <div class="pc-main">
+                <span class="pc-value">{{ num(m.peak_mae_kw) }} <small>kW peak MAE</small></span>
+                <span class="pc-note">load MAE {{ num(m.mae) }} kW · P10–P90 covered {{ num(m.coverage_pct) }} % · skill vs naïve {{ num(m.skill_mae_pct, 1) }} %</span>
+              </div>
+              <span class="pc-foot">timing error {{ num(m.peak_time_mae_min) }} min · recent 14-day max peak {{ num(recentMax) }} kW</span>
+            </div>
+          }
+        </div>
+
+        @if (fan) {
+          <app-chart-canvas [config]="fan" [height]="380" />
+        }
+
+        <h4 class="sub-title">Weather inputs as the models saw them <span class="muted small">(the newest forecast run issued
+          before the origin; dashed = beyond the run, recent days' measured weather)</span></h4>
+        <div class="input-grid">
+          @if (tempChart) {
+            <div><app-chart-canvas [config]="tempChart" [height]="170" /></div>
+          }
+          @if (ghiChart) {
+            <div><app-chart-canvas [config]="ghiChart" [height]="170" /></div>
+          }
+        </div>
+        }
+      }
+    }
+
+    @if (tab === 'backtest') {
+      @if (!origins.length) {
+        <div class="empty-state">Loading backtest origins…</div>
+      } @else {
+        <div class="origin-row">
+          <button type="button" class="btn btn-secondary" [disabled]="originIdx === 0" (click)="stepOrigin(-1)">◀</button>
+          <select class="filter-select" [ngModel]="originIdx" (ngModelChange)="setOrigin($event)">
+            @for (o of origins; track o; let i = $index) {
+              <option [ngValue]="i">Forecast issued {{ originLabel(o) }}</option>
+            }
+          </select>
+          <button type="button" class="btn btn-secondary" [disabled]="originIdx >= origins.length - 1" (click)="stepOrigin(1)">▶</button>
+          <span class="muted small">{{ originIdx + 1 }} / {{ origins.length }} origins in the test period · threshold
+            {{ num(btThreshold) }} kW (the run's)</span>
+        </div>
+        @if (btError) {
+          <div class="empty-state error">{{ btError }}</div>
+        }
+        @if (btFan) {
+          <app-chart-canvas [config]="btFan" [height]="360" />
+        }
+        <div class="bt-grid">
+          @if (btScores.length) {
+            <div>
+              <h4 class="sub-title">This origin · {{ btScores[0].n }} readings</h4>
+              <table class="data-table bt-table">
+                <thead><tr><th>Model</th><th class="num">MAE (kW)</th><th class="num">Inside P10–P90</th></tr></thead>
+                <tbody>
+                  @for (s of btScores; track s.model; let first = $first) {
+                    <tr [class.best]="first">
+                      <td><span class="swatch line" [style.background]="colors[s.model]"></span> {{ labels[s.model] }}</td>
+                      <td class="num">{{ num(s.mae, 1) }}</td>
+                      <td class="num">{{ num(s.cover) }} %</td>
+                    </tr>
+                  }
+                </tbody>
+              </table>
+            </div>
+          }
+          @if (btPeaks.length) {
+            <div>
+              <h4 class="sub-title">Daily peaks from this origin</h4>
+              <table class="data-table bt-table">
+                <thead>
+                  <tr><th>Day</th><th>Model</th><th class="num">Forecast P50</th><th class="num">at</th><th class="num">P(breach)</th>
+                    <th class="num">Actual</th><th class="num">at</th><th>Call</th></tr>
+                </thead>
+                <tbody>
+                  @for (p of btPeaks; track p.date + p.model) {
+                    <tr>
+                      <td class="nowrap">{{ p.date.slice(5) }}</td>
+                      <td class="nowrap"><span class="swatch line" [style.background]="colors[p.model]"></span> {{ labels[p.model] }}</td>
+                      <td class="num">{{ num(p.p50) }}</td>
+                      <td class="num">{{ hhmm(p.peakTs) }}</td>
+                      <td class="num">{{ pct(p.prob) }}</td>
+                      <td class="num"><strong>{{ num(p.actual) }}</strong></td>
+                      <td class="num">{{ hhmm(p.actualTs) }}</td>
+                      <td>
+                        @if (p.hit === true) { <span class="call ok">✓ right</span> }
+                        @if (p.hit === false) { <span class="call bad">✗ wrong</span> }
+                      </td>
+                    </tr>
+                  }
+                </tbody>
+              </table>
+              <p class="muted small">Call = P(breach) ≥ 50 % vs the actual peak above the threshold.</p>
+            </div>
+          }
+        </div>
+      }
+    }
+  </div>
+}

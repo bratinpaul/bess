@@ -1,0 +1,110 @@
+<div class="page-header">
+  <div>
+    <h2>Activity Log</h2>
+    <p class="subtitle">User actions, failed requests, data loads with row counts, KPI runs, model training and sign-in events from the
+      backend, the ML service and the batch loaders. Search by the <strong>reference</strong> a user sees on an error banner to
+      find exactly what happened. Successful page views are only in the log files (logs/&lt;service&gt;/).</p>
+  </div>
+</div>
+
+<div class="metric-grid al-tiles">
+  @for (k of kinds; track k) {
+    <button type="button" class="metric-card al-tile" [class.active]="f.kind === k" (click)="f.kind = f.kind === k ? '' : k; load()">
+      <div class="metric-body">
+        <span class="metric-label">{{ k }}</span>
+        <span class="metric-value">{{ count(k) | number }}</span>
+        <span class="metric-sub">{{ count(k, 'failed') | number }} failed</span>
+      </div>
+    </button>
+  }
+</div>
+
+<form class="card al-filters" (ngSubmit)="load()">
+  <div class="field"><label for="rid">Reference (request id)</label><input id="rid" name="rid" [(ngModel)]="f.request_id" placeholder="e.g. 7f3c…" /></div>
+  <div class="field"><label for="user">User</label><input id="user" name="user" [(ngModel)]="f.user" placeholder="e-mail contains" /></div>
+  <div class="field">
+    <label for="outcome">Outcome</label>
+    <select id="outcome" name="outcome" [(ngModel)]="f.outcome">
+      <option value="">Any</option>
+      <option value="success">Success</option>
+      <option value="failed">Failed</option>
+    </select>
+  </div>
+  <div class="field">
+    <label for="svc">Service</label>
+    <select id="svc" name="svc" [(ngModel)]="f.service">
+      <option value="">Any</option>
+      @for (s of services; track s) {
+        <option [value]="s">{{ s }}</option>
+      }
+    </select>
+  </div>
+  <div class="field"><label for="q">Path / operation contains</label><input id="q" name="q" [(ngModel)]="f.q" /></div>
+  <div class="field"><label for="d0">From</label><input id="d0" name="d0" type="date" [(ngModel)]="f.date_from" /></div>
+  <div class="field"><label for="d1">To</label><input id="d1" name="d1" type="date" [(ngModel)]="f.date_to" /></div>
+  <div class="al-actions">
+    <button type="submit" class="btn btn-primary">Search</button>
+    <button type="button" class="btn btn-secondary" (click)="reset()">Reset</button>
+  </div>
+</form>
+
+@if (error) {
+  <div class="card empty-state error">{{ error }}</div>
+}
+
+@if (data; as d) {
+  <div class="card al-table-card">
+    <div class="al-head">
+      <span>{{ d.total | number }} entries{{ loading ? ' · loading…' : '' }}</span>
+      <span class="al-pager">
+        <button type="button" class="btn btn-secondary btn-sm" [disabled]="page <= 1" (click)="load(page - 1)">‹</button>
+        page {{ page }} / {{ pages }}
+        <button type="button" class="btn btn-secondary btn-sm" [disabled]="page >= pages" (click)="load(page + 1)">›</button>
+      </span>
+    </div>
+    @if (!d.items.length) {
+      <div class="empty-state">Nothing matches these filters.</div>
+    } @else {
+      <div class="table-scroll">
+        <table class="data-table al-table">
+          <thead>
+            <tr><th>Time</th><th>Kind</th><th>What</th><th>User</th><th class="num">Status</th><th class="num">Duration</th><th>Rows</th><th>Reference</th></tr>
+          </thead>
+          <tbody>
+            @for (r of d.items; track r.activity_id) {
+              <tr class="al-row" [class.failed]="r.outcome === 'failed'" (click)="open = open === r.activity_id ? null : r.activity_id">
+                <td class="mono">{{ r.ts | date: 'yyyy-MM-dd HH:mm:ss' }}<span class="al-sub">{{ r.service }}</span></td>
+                <td><span class="al-kind" [attr.data-kind]="r.kind">{{ r.kind }}</span></td>
+                <td>
+                  <span class="al-what">{{ r.operation || r.event }}</span>
+                  @if (r.method) { <span class="al-sub mono">{{ r.method }} {{ r.path }}</span> }
+                </td>
+                <td>{{ r.user_email || '—' }}<span class="al-sub">{{ r.role }}</span></td>
+                <td class="num"><span class="al-outcome" [class.bad]="r.outcome === 'failed'">{{ r.status_code ?? (r.outcome === 'failed' ? 'failed' : 'ok') }}</span></td>
+                <td class="num mono">{{ ms(r.duration_ms) }}</td>
+                <td class="mono al-rows">{{ rows(r) }}</td>
+                <td class="mono">
+                  @if (r.request_id) {
+                    <button type="button" class="link-btn" title="Show everything with this reference" (click)="$event.stopPropagation(); byRequest(r.request_id)">{{ r.request_id.slice(0, 12) }}…</button>
+                  }
+                </td>
+              </tr>
+              @if (open === r.activity_id) {
+                <tr class="al-detail-row">
+                  <td colspan="8">
+                    <div class="al-detail">
+                      <div><strong>Reference</strong> <code>{{ r.request_id }}</code> · <strong>IP</strong> {{ r.ip || '—' }} · <strong>Event</strong> {{ r.event }}</div>
+                      @if (r.detail) {
+                        <pre>{{ detail(r) }}</pre>
+                      }
+                    </div>
+                  </td>
+                </tr>
+              }
+            }
+          </tbody>
+        </table>
+      </div>
+    }
+  </div>
+}

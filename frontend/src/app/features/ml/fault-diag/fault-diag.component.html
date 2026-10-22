@@ -1,0 +1,561 @@
+<div class="page-header fd-header">
+  <div>
+    <h2>Fault Diagnosis</h2>
+    <p class="subtitle">
+      Where the fault burden sits (Pareto), why faults happen (fishbone across the 6M causes), and how the classifier diagnoses each episode -
+      ranked candidates with the signature evidence and feature contributions behind them. Train models on <a routerLink="/ml/fault-diag-model">Fault Classifier</a>.
+    </p>
+  </div>
+  <div class="fd-controls">
+    <div class="field">
+      <label for="run">Model run</label>
+      <select id="run" [ngModel]="runId" (ngModelChange)="selectRun($event)" [disabled]="!runs.length">
+        @if (!runs.length) {
+          <option [ngValue]="null">No trained run yet</option>
+        }
+        @for (r of runs; track r.run_id) {
+          <option [ngValue]="r.run_id">{{ runLabel(r) }}</option>
+        }
+      </select>
+    </div>
+    <div class="field"><label for="df">From</label><input id="df" type="date" [(ngModel)]="filter.date_from" (change)="loadAnalytics()" /></div>
+    <div class="field"><label for="dt">To</label><input id="dt" type="date" [(ngModel)]="filter.date_to" (change)="loadAnalytics()" /></div>
+  </div>
+</div>
+
+@if (error) {
+  <div class="card empty-state error">{{ error }}</div>
+}
+
+@if (overview; as o) {
+  <div class="metric-grid fd-tiles">
+    <div class="metric-card"><div class="metric-body"><span class="metric-label">Confirmed episodes</span><span class="metric-value">{{ o.episodes }}</span><span class="metric-sub">{{ o.classes }} of {{ o.catalog_classes }} fault classes · {{ o.ongoing }} ongoing</span></div></div>
+    <div class="metric-card" [class.fd-warn]="o.safety_critical > 0"><div class="metric-body"><span class="metric-label">Safety-critical</span><span class="metric-value">{{ o.safety_critical }}</span><span class="metric-sub">episodes of safety-critical classes</span></div></div>
+    <div class="metric-card"><div class="metric-body"><span class="metric-label">Downtime</span><span class="metric-value">{{ num(o.downtime_min / 60, 1) }}<span class="metric-unit">h</span></span><span class="metric-sub">{{ num(o.energy_lost_kwh / 1000, 2) }} MWh energy lost</span></div></div>
+    <div class="metric-card"><div class="metric-body"><span class="metric-label">Repairs</span><span class="metric-value">${{ num(o.repair_cost_usd) }}</span><span class="metric-sub">{{ o.work_orders }} work orders · {{ o.confirmed_by_repair }} confirmed the diagnosis</span></div></div>
+    <div class="metric-card"><div class="metric-body"><span class="metric-label">Mean time to resolve</span><span class="metric-value">{{ num(o.mttr_h, 2) }}<span class="metric-unit">h</span></span><span class="metric-sub">detected → resolved</span></div></div>
+    <div class="metric-card"><div class="metric-body"><span class="metric-label">Detection lag</span><span class="metric-value">{{ num(o.median_lead_min) }}<span class="metric-unit">min</span></span><span class="metric-sub">median onset → detected (mean {{ num(o.mean_lead_min) }})</span></div></div>
+  </div>
+}
+
+<div class="view-tabs" role="tablist" aria-label="Fault view">
+  <button type="button" role="tab" class="view-tab" [class.active]="tab === 'pareto'" (click)="setTab('pareto')">Pareto</button>
+  <button type="button" role="tab" class="view-tab" [class.active]="tab === 'fishbone'" (click)="setTab('fishbone')">Fishbone (root cause)</button>
+  <button type="button" role="tab" class="view-tab" [class.active]="tab === 'diagnosis'" (click)="setTab('diagnosis')">Diagnosis</button>
+  <button type="button" role="tab" class="view-tab" [class.active]="tab === 'performance'" (click)="setTab('performance')">Model performance</button>
+</div>
+
+<!-- ================================================================ PARETO -->
+@if (tab === 'pareto') {
+  <div class="card chart-card">
+    <div class="fd-card-head">
+      <h3>Pareto - {{ pareto?.measure_label }} by {{ pareto?.group_label?.toLowerCase() }}</h3>
+      <div class="fd-inline">
+        <div class="field">
+          <label for="pm">Measure</label>
+          <select id="pm" [(ngModel)]="measure" (ngModelChange)="loadPareto()">
+            <option value="count">Episodes</option>
+            <option value="downtime_min">Downtime (min)</option>
+            <option value="energy_lost_kwh">Energy lost (kWh)</option>
+            <option value="cost_usd">Repair cost ($)</option>
+            <option value="labor_hours">Labour (h)</option>
+            <option value="alarms">Linked alarms</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="pg">Group by</label>
+          <select id="pg" [(ngModel)]="groupBy" (ngModelChange)="loadPareto()">
+            <option value="fault">Fault class</option>
+            <option value="subsystem">Subsystem</option>
+            <option value="category">Category</option>
+            <option value="root_cause">Confirmed root cause</option>
+            <option value="component">Serviced component</option>
+            <option value="asset">Asset</option>
+            <option value="alarm_code">Alarm code</option>
+            <option value="context">Operating context</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="pc">Cut-off</label>
+          <select id="pc" [(ngModel)]="cutoff" (ngModelChange)="loadPareto()">
+            <option [ngValue]="0.7">70 %</option>
+            <option [ngValue]="0.8">80 %</option>
+            <option [ngValue]="0.9">90 %</option>
+          </select>
+        </div>
+      </div>
+    </div>
+    @if (paretoChart) {
+      <app-chart-canvas [config]="paretoChart" [height]="380" />
+    }
+    @if (pareto; as p) {
+      <p class="fd-note">
+        <strong>{{ p.vital_few }}</strong> of {{ p.n_groups }} groups ({{ p.group_label.toLowerCase() }}) carry {{ Math.round(p.cutoff * 100) }} % of the
+        {{ p.measure_label.toLowerCase() }} (total {{ num(p.total) }}{{ p.unit ? ' ' + p.unit : '' }}). Blue = the vital few, red = vital few that are
+        safety-critical, grey = the useful many.
+      </p>
+    }
+  </div>
+
+  <div class="fd-two">
+    <div class="card chart-card">
+      <h3>The vital few</h3>
+      @if (vitalFew.length) {
+        <table class="data-table">
+          <thead><tr><th>#</th><th>{{ pareto?.group_label }}</th><th class="num">{{ pareto?.measure_label }}</th><th class="num">Share</th><th class="num">Cum.</th><th class="num">Episodes</th><th></th></tr></thead>
+          <tbody>
+            @for (i of vitalFew; track i.key; let k = $index) {
+              <tr>
+                <td class="mono">{{ k + 1 }}</td>
+                <td>{{ i.label }}{{ i.safety_critical ? ' ⚠' : '' }}
+                  @if (groupBy !== 'fault' && i.faults.length) {
+                    <span class="fd-sub">{{ i.faults.join(', ') }}</span>
+                  }
+                </td>
+                <td class="num mono">{{ num(i.value, pareto?.unit === '' ? 0 : 1) }}</td>
+                <td class="num mono">{{ pct(i.share, 0) }} %</td>
+                <td class="num mono">{{ pct(i.cum_share, 0) }} %</td>
+                <td class="num mono">{{ i.episodes }}</td>
+                <td>
+                  @if (groupBy === 'fault' || groupBy === 'subsystem') {
+                    <button type="button" class="btn btn-secondary btn-sm" (click)="fishFromPareto(i.key)">Fishbone</button>
+                  }
+                </td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      } @else {
+        <div class="empty-state">Nothing in this window.</div>
+      }
+    </div>
+    <div class="card chart-card">
+      <h3>Episodes per day by subsystem</h3>
+      @if (dailyChart) {
+        <app-chart-canvas [config]="dailyChart" [height]="300" />
+      }
+      @if (overview; as o) {
+        <table class="data-table fd-subtable">
+          <thead><tr><th>Subsystem</th><th class="num">Episodes</th><th class="num">Classes</th><th class="num">Downtime (h)</th><th class="num">Energy lost (kWh)</th><th class="num">Safety</th></tr></thead>
+          <tbody>
+            @for (s of o.by_subsystem; track s.subsystem) {
+              <tr><td><span class="fd-dot" [style.background]="subsystemColor(s.subsystem)"></span>{{ s.subsystem }}</td>
+                <td class="num mono">{{ s.episodes }}</td><td class="num mono">{{ s.classes }}</td><td class="num mono">{{ num(s.downtime_min / 60, 1) }}</td>
+                <td class="num mono">{{ num(s.energy_lost_kwh) }}</td><td class="num mono">{{ s.safety_critical }}</td></tr>
+            }
+          </tbody>
+        </table>
+      }
+    </div>
+  </div>
+}
+
+<!-- ================================================================ FISHBONE -->
+@if (tab === 'fishbone') {
+  <div class="card chart-card">
+    <div class="fd-card-head">
+      <div>
+        <h3>Ishikawa / fishbone - {{ fish?.title }}</h3>
+        @if (fish; as f) {
+          <span class="fd-sub">{{ f.subtitle }} · {{ f.stats.episodes }} confirmed episodes · {{ num(f.stats.downtime_min / 60, 1) }} h downtime ·
+            {{ num(f.stats.energy_lost_kwh) }} kWh lost · ${{ num(f.stats.repair_cost_usd) }} repairs</span>
+        }
+      </div>
+      <div class="fd-inline">
+        <div class="field">
+          <label for="ef">Effect</label>
+          <select id="ef" [(ngModel)]="effect" (ngModelChange)="loadFishbone()">
+            @for (e of effects; track e.key) {
+              <option [ngValue]="e.key">{{ e.label }} ({{ e.episodes }})</option>
+            }
+          </select>
+        </div>
+      </div>
+    </div>
+
+    @if (fish; as f) {
+      <div class="fd-fish-wrap">
+        <svg class="fd-fish" [attr.viewBox]="'0 0 ' + fishW + ' ' + fishH" preserveAspectRatio="xMidYMid meet" role="img" [attr.aria-label]="'Fishbone diagram for ' + f.title">
+          <!-- spine -->
+          <line x1="30" [attr.y1]="fishH / 2" x2="1040" [attr.y2]="fishH / 2" class="fd-spine" />
+          <polygon [attr.points]="'1040,' + (fishH / 2 - 9) + ' 1056,' + (fishH / 2) + ' 1040,' + (fishH / 2 + 9)" class="fd-arrow" />
+          <!-- head (effect) -->
+          <rect x="1060" [attr.y]="fishH / 2 - 52" width="170" height="104" rx="10" class="fd-head" />
+          <foreignObject x="1066" [attr.y]="fishH / 2 - 48" width="158" height="96">
+            <div class="fd-head-text">
+              <strong>{{ f.title }}</strong>
+              <span>{{ f.stats.episodes }} episodes</span>
+            </div>
+          </foreignObject>
+          @for (b of bones; track b.bone) {
+            <g class="fd-bone" [class.dim]="focusBone && focusBone !== b.bone" (mouseenter)="focusBone = b.bone" (mouseleave)="focusBone = null">
+              <line [attr.x1]="b.x0" [attr.y1]="b.y0" [attr.x2]="b.x1" [attr.y2]="b.y1" class="fd-bone-line" />
+              <rect [attr.x]="b.x0 - 92" [attr.y]="b.top ? b.y0 - 40 : b.y0 + 6" width="184" height="34" rx="7" class="fd-bone-box" />
+              <text [attr.x]="b.x0" [attr.y]="b.top ? b.y0 - 24 : b.y0 + 22" text-anchor="middle" class="fd-bone-name">{{ b.bone }}</text>
+              <text [attr.x]="b.x0" [attr.y]="b.top ? b.y0 - 11 : b.y0 + 35" text-anchor="middle" class="fd-bone-hint">{{ b.episodes ? b.episodes + ' confirmed cause mentions' : b.hint }}</text>
+              @for (c of b.causes; track c.i) {
+                <line [attr.x1]="c.x - 12" [attr.y1]="c.y" [attr.x2]="c.x" [attr.y2]="c.y" class="fd-twig" [class.fd-twig-strong]="c.n > 0" />
+                <text [attr.x]="c.x - 16" [attr.y]="c.y + 4" text-anchor="end" class="fd-cause" [class.fd-cause-prior]="c.n === 0">
+                  <title>{{ c.full }} - {{ c.sources.join(', ') }}</title>{{ c.text }}{{ c.n ? ' (' + c.n + ')' : '' }}
+                </text>
+              }
+              @if (b.more) {
+                <text [attr.x]="b.x1 - 6" [attr.y]="b.top ? b.y1 - 10 : b.y1 + 18" text-anchor="end" class="fd-more">+{{ b.more }} more</text>
+              }
+            </g>
+          }
+        </svg>
+      </div>
+      <p class="fd-note">Causes come from the confirmed root causes of the episodes (count = episodes), the serviced components, the operating context, maintenance
+        patterns (repeat faults, ineffective repairs) and - in grey - the catalog's a-priori causes with no confirmed episode yet. Hover a bone to focus it.</p>
+    }
+  </div>
+
+  @if (fish; as f) {
+    <div class="fd-two">
+      <div class="card chart-card">
+        <h3>Causes by category</h3>
+        <div class="fd-bone-list">
+          @for (b of f.bones; track b.bone) {
+            <div class="fd-bone-group">
+              <h4>{{ b.bone }} <span class="fd-sub">{{ b.hint }}</span></h4>
+              @if (!b.causes.length) {
+                <div class="fd-sub">No cause recorded in this category.</div>
+              }
+              @for (c of b.causes; track c.cause) {
+                <div class="fd-cause-row">
+                  <span class="fd-count" [class.zero]="!c.episodes">{{ c.episodes }}</span>
+                  <span>{{ c.cause }}
+                    <span class="fd-sub">{{ c.sources.map(sourceLabel).join(' · ') }}{{ effect === 'ALL' || effect.startsWith('SUB:') ? ' · ' + c.faults.join(', ') : '' }}{{ c.downtime_min ? ' · ' + num(c.downtime_min) + ' min down' : '' }}</span></span>
+                </div>
+              }
+            </div>
+          }
+        </div>
+      </div>
+      <div>
+        <div class="card chart-card">
+          <h3>Symptoms the diagnosis looks for</h3>
+          <table class="data-table">
+            <thead><tr><th>Fault</th><th>Signal</th><th>Rule</th><th class="num">Weight</th></tr></thead>
+            <tbody>
+              @for (s of f.symptoms; track $index) {
+                <tr [class.lm-muted]="!s.available">
+                  <td class="mono">{{ s.fault_code }}</td>
+                  <td>{{ s.signal }} <span class="fd-sub">{{ s.kind?.toLowerCase() }}{{ s.available ? '' : ' · not logged here' }}</span></td>
+                  <td class="mono">{{ s.operator === 'PRESENT' ? 'present' : s.operator + ' ' + (s.threshold ?? '') + ' ' + (s.unit ?? '') }}</td>
+                  <td class="num mono">{{ s.weight }}</td>
+                </tr>
+              }
+            </tbody>
+          </table>
+          @if (f.model; as m) {
+            <h4 class="fd-h4">What the trained model (run #{{ m.run_id }}) used on these faults</h4>
+            @if (m.n) {
+              <p class="fd-sub">{{ m.n }} out-of-fold windows · {{ pct(m.recall, 0) }} % named correctly</p>
+              @for (x of m.features; track x.label) {
+                <div class="fd-bar-row">
+                  <span class="fd-bar-label" [title]="x.label">{{ x.label }}</span>
+                  <span class="fd-bar"><span [style.width.%]="(x.mean_abs / (m.features[0].mean_abs || 1)) * 100"></span></span>
+                </div>
+              }
+            } @else {
+              <p class="fd-sub">No training windows for these faults.</p>
+            }
+          }
+        </div>
+        <div class="card chart-card">
+          <h3>Recommended actions</h3>
+          @for (a of f.actions; track a.fault_code) {
+            <div class="fd-action">
+              <span class="mono">{{ a.fault_code }}</span>{{ a.safety_critical ? ' ⚠' : '' }} <strong>{{ a.fault_name }}</strong>
+              <div>{{ a.action }}</div>
+              <div class="fd-sub">Symptoms: {{ a.symptoms }}{{ a.standard ? ' · ' + a.standard : '' }}</div>
+            </div>
+          }
+        </div>
+      </div>
+    </div>
+  }
+}
+
+<!-- ================================================================ DIAGNOSIS -->
+@if (tab === 'diagnosis') {
+  @if (!run) {
+    <div class="card empty-state">No trained run yet - train one on <a routerLink="/ml/fault-diag-model">Fault Classifier</a>.</div>
+  } @else {
+    <div class="fd-diag">
+      <div class="card chart-card fd-list">
+        <div class="fd-card-head">
+          <h3>Episodes &amp; healthy windows <span class="fd-sub">out-of-fold diagnosis, run #{{ run.run_id }}</span></h3>
+          <select [(ngModel)]="exFilter" aria-label="Filter">
+            <option value="all">All ({{ examples.length }})</option>
+            <option value="wrong">Misdiagnosed</option>
+            <option value="episode">Fault episodes</option>
+            <option value="none">Healthy (F-NONE)</option>
+          </select>
+        </div>
+        <div class="table-scroll fd-list-scroll">
+          <table class="data-table fd-ex-table">
+            <thead><tr><th>Window</th><th>Confirmed</th><th>Diagnosed</th><th class="num">p</th></tr></thead>
+            <tbody>
+              @for (e of shownExamples; track e.example_key) {
+                <tr class="fd-click" [class.lm-selected]="exKey === e.example_key" (click)="openExample(e)">
+                  <td class="mono">{{ e.episode_id ?? e.group_key }}<span class="fd-sub">{{ e.window_end | date: 'MM-dd HH:mm' }}{{ e.asset_code ? ' · ' + e.asset_code : '' }}</span></td>
+                  <td><span class="fd-dot" [style.background]="subColor(e.label)"></span><span class="mono">{{ e.label }}</span></td>
+                  <td [class.lm-bad]="!e.correct"><span class="mono">{{ e.predicted }}</span>{{ e.correct ? '' : ' ✕' }}</td>
+                  <td class="num mono">{{ pct(e.probability, 0) }}</td>
+                </tr>
+              }
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="card chart-card fd-detail">
+        @if (!detail) {
+          <div class="empty-state">Pick an episode to see its ranked diagnosis, the signature evidence and the features that drove it.</div>
+        } @else {
+          <div class="fd-card-head">
+            <div>
+              <h3>{{ detail.episode_id ?? detail.group_key }} · confirmed <span class="mono">{{ detail.label }}</span>
+                @if (detail.correct) { <span class="fd-ok">✓ diagnosed</span> } @else { <span class="fd-badge-bad">✕ misdiagnosed</span> }</h3>
+              <span class="fd-sub">window {{ detail.window_start | date: 'yyyy-MM-dd HH:mm' }} → {{ detail.window_end | date: 'HH:mm' }} · fold {{ detail.fold + 1 }} (never seen in training)</span>
+            </div>
+          </div>
+          @if (detail.episode; as ep) {
+            <div class="fd-ep">
+              <div><span class="fd-k">Asset</span>{{ ep.asset_type }} {{ ep.asset_code }}</div>
+              <div><span class="fd-k">Onset → detected</span>{{ ep.onset_ts | date: 'MM-dd HH:mm' }} → {{ ep.detected_ts | date: 'HH:mm' }}</div>
+              <div><span class="fd-k">Alarms</span>{{ ep.alarms.join(', ') || '—' }}</div>
+              <div><span class="fd-k">Root cause</span>{{ ep.root_cause_confirmed }}</div>
+              <div><span class="fd-k">Context</span>{{ ep.operating_context }}</div>
+              <div><span class="fd-k">Label confidence</span>{{ ep.label_confidence ?? '—' }}{{ ep.fault_confirmed ? ' · repair confirmed (' + ep.component + ')' : '' }}</div>
+            </div>
+          }
+          <div class="fd-tops">
+            @for (block of [{ k: 'Fused (calibrated)', v: detail.detail.top3 }, { k: 'ML classifier', v: detail.detail.top3_ml }, { k: 'Signature engine', v: detail.detail.top3_engine }]; track block.k) {
+              <div class="fd-top">
+                <h4>{{ block.k }}</h4>
+                @for (t of block.v; track t.fault_code) {
+                  <div class="fd-top-row" [class.fd-true]="t.fault_code === detail.label">
+                    <span class="mono fd-top-code">{{ t.fault_code }}</span>
+                    <span class="fd-bar"><span [style.width.%]="topWidth(t)" [style.background]="subColor(t.fault_code)"></span></span>
+                    <span class="mono fd-bar-val">{{ pct(t.p, 0) }} %</span>
+                  </div>
+                }
+              </div>
+            }
+          </div>
+
+          <div class="fd-two fd-two-tight">
+            <div>
+              <h4 class="fd-h4">Signature evidence</h4>
+              @for (g of evidenceByFault; track g.fault) {
+                <div class="fd-ev-group">
+                  <div class="fd-ev-head"><span class="mono">{{ g.fault }}</span> <span class="fd-sub">{{ cls(g.fault)?.fault_name }}</span></div>
+                  @for (e of g.rows; track e.signature_id) {
+                    <div class="fd-ev" [class.hit]="(e.match ?? 0) >= 0.5">
+                      <span class="fd-ev-mark">{{ (e.match ?? 0) >= 0.5 ? '●' : '○' }}</span>
+                      <span>{{ e.signal }} <span class="mono fd-sub">{{ e.operator === 'PRESENT' ? 'present' : e.operator + ' ' + e.threshold + ' ' + (e.unit ?? '') }}</span></span>
+                      <span class="mono fd-sub">{{ e.kind === 'ALARM' ? (e.value ? 'fired' : 'absent') : 'saw ' + num(e.value, 2) }} · w {{ e.weight }} · m {{ num(e.match, 2) }}</span>
+                    </div>
+                  }
+                </div>
+              }
+              @if (!evidenceByFault.length) {
+                <p class="fd-sub">No signature matched in this window.</p>
+              }
+            </div>
+            <div>
+              <h4 class="fd-h4">Feature contributions toward {{ detail.predicted }}</h4>
+              @for (c of detail.detail.contributions; track c.feature) {
+                <div class="fd-contrib">
+                  <span class="fd-contrib-label" [title]="c.label">{{ c.label }}<span class="fd-sub"> = {{ num(c.value, 2) }}</span></span>
+                  <span class="fd-contrib-bar">
+                    <span class="neg">@if (c.contribution < 0) { <span [style.width.%]="(-c.contribution / maxContribution) * 100"></span> }</span>
+                    <span class="pos">@if (c.contribution > 0) { <span [style.width.%]="(c.contribution / maxContribution) * 100"></span> }</span>
+                  </span>
+                </div>
+              }
+              <p class="fd-sub">SHAP-style contributions to the classifier's raw score (green pushes toward the diagnosed fault, red away).</p>
+            </div>
+          </div>
+        }
+      </div>
+    </div>
+
+    <div class="card chart-card">
+      <div class="fd-card-head">
+        <h3>Scan candidates <span class="fd-sub">sliding-window inference with run #{{ run.run_id }} - review to close the learning loop</span></h3>
+        <div class="fd-inline">
+          @if (scans.length) {
+            <div class="field">
+              <label for="sys">System</label>
+              <select id="sys" [(ngModel)]="scanSystem" (ngModelChange)="onScanSystem()">
+                @for (s of scans; track s.system_id) {
+                  <option [ngValue]="s.system_id">{{ s.system_name }} ({{ s.date_from }} → {{ s.date_to }})</option>
+                }
+              </select>
+            </div>
+            <div class="field"><label for="tf">From</label><input id="tf" type="date" [(ngModel)]="scanDay.from" (change)="loadTimeline()" /></div>
+            <div class="field"><label for="tt">To</label><input id="tt" type="date" [(ngModel)]="scanDay.to" (change)="loadTimeline()" /></div>
+          }
+        </div>
+      </div>
+      @if (!scans.length) {
+        <div class="empty-state">No scan for this run yet - run one from <a routerLink="/ml/fault-diag-model">Fault Classifier</a> → Use the model.</div>
+      } @else {
+        @if (timelineChart) {
+          <app-chart-canvas [config]="timelineChart" [height]="240" />
+        }
+        <div class="fd-cand-stats">
+          <span><strong>{{ candStats.n }}</strong> candidates</span>
+          <span><strong>{{ candStats.critical }}</strong> safety-critical</span>
+          <span><strong>{{ candStats.matched }}</strong> overlap a confirmed episode, <strong>{{ candStats.agree }}</strong> with the same class</span>
+          <span><strong>{{ candStats.reviewed }}</strong> reviewed</span>
+          <select [(ngModel)]="candFilter" aria-label="Status filter">
+            <option value="all">All</option>
+            <option value="NEW">To review</option>
+            <option value="CONFIRMED">Confirmed</option>
+            <option value="REJECTED">Rejected</option>
+          </select>
+        </div>
+        <div class="table-scroll fd-cand-scroll">
+          <table class="data-table">
+            <thead><tr><th>Peak</th><th>Candidate</th><th class="num">p</th><th>Top-3</th><th>Alarms</th><th>Episode</th><th>Review</th></tr></thead>
+            <tbody>
+              @for (c of shownCandidates; track c.candidate_id) {
+                <tr [class.fd-crit]="c.is_safety_critical">
+                  <td class="mono">{{ c.peak_ts | date: 'MM-dd HH:mm' }}<span class="fd-sub">{{ c.n_windows }} window(s){{ c.asset_code ? ' · ' + c.asset_code : '' }}</span></td>
+                  <td><span class="fd-dot" [style.background]="subColor(c.fault_code)"></span><span class="mono">{{ c.fault_code }}</span>{{ c.is_safety_critical ? ' ⚠' : '' }}
+                    <button type="button" class="link-btn fd-sub" (click)="openCand = openCand === c.candidate_id ? null : c.candidate_id">{{ c.fault_name }} {{ openCand === c.candidate_id ? '▴' : '▾' }}</button>
+                    @if (openCand === c.candidate_id) {
+                      <div class="fd-cand-detail">
+                        <div><strong>Symptoms:</strong> {{ c.evidence.length ? '' : 'none matched' }}
+                          @for (e of c.evidence; track e.signature_id) { <span class="fd-chip">{{ e.signal }} → {{ e.fault_code }}</span> }</div>
+                        <div><strong>Drivers:</strong> @for (x of c.contributions.slice(0, 5); track x.feature) { <span class="fd-chip" [class.neg]="x.contribution < 0">{{ x.label }}</span> }</div>
+                        <div><strong>Action:</strong> {{ c.recommended_action }}</div>
+                      </div>
+                    }
+                  </td>
+                  <td class="num mono">{{ pct(c.probability, 0) }}</td>
+                  <td class="fd-sub">@for (t of c.top3; track t.fault_code) { <span class="mono">{{ t.fault_code.replace('F-', '') }} {{ pct(t.p, 0) }}</span>{{ $last ? '' : ' · ' }} }</td>
+                  <td class="fd-sub">{{ c.alarms.join(', ') || '—' }}</td>
+                  <td>{{ c.episode_id ?? '—' }}@if (c.episode_id) { <span class="fd-sub" [class.lm-bad]="c.actual_fault_code !== c.fault_code && c.status === 'NEW'">{{ c.actual_fault_code }}</span> }</td>
+                  <td class="fd-review">
+                    @if (!auth.hasPermission('fault.review:write')) {
+                      <span class="fd-sub">{{ c.status === 'NEW' ? 'Awaiting review' : c.status + ' · ' + (c.actual_fault_code ?? '') }}</span>
+                    } @else if (c.status === 'NEW') {
+                      <select [(ngModel)]="correct[c.candidate_id]" aria-label="Actual class">
+                        <option [ngValue]="undefined">as diagnosed</option>
+                        @for (k of classes; track k.fault_code) {
+                          <option [ngValue]="k.fault_code">{{ k.fault_code }}</option>
+                        }
+                      </select>
+                      <button type="button" class="btn btn-primary btn-sm" (click)="review(c, 'CONFIRMED')">Confirm</button>
+                      <button type="button" class="btn btn-secondary btn-sm" title="Not a fault (F-NONE)" (click)="review(c, 'REJECTED')">Reject</button>
+                    } @else {
+                      <span class="lm-status" [attr.data-status]="c.status">{{ c.status }}</span> <span class="mono fd-sub">{{ c.actual_fault_code }}</span>
+                      <button type="button" class="link-btn fd-sub" (click)="review(c, 'NEW')">undo</button>
+                    }
+                  </td>
+                </tr>
+              }
+            </tbody>
+          </table>
+        </div>
+        <p class="fd-note">Confirming writes the actual class to <code>fault_prediction.actual_fault_code</code> (rejecting writes F-NONE) - the high-trust labels the next
+          retrain learns from. The classifier is advisory: protection trips stay rule-based.</p>
+      }
+    </div>
+  }
+}
+
+<!-- ================================================================ PERFORMANCE -->
+@if (tab === 'performance') {
+  @if (!run || !run.metrics) {
+    <div class="card empty-state">No trained run yet - train one on <a routerLink="/ml/fault-diag-model">Fault Classifier</a>.</div>
+  } @else {
+    <div class="fd-two">
+      <div class="card chart-card">
+        <div class="fd-card-head">
+          <h3>Confusion matrix <span class="fd-sub">out-of-fold, rows = confirmed, columns = diagnosed</span></h3>
+          <select [(ngModel)]="perfModel" aria-label="Model">
+            <option value="fused">Fused</option>
+            <option value="ml">ML</option>
+            <option value="engine">Signature engine</option>
+          </select>
+        </div>
+        @if (card; as c) {
+          <div class="table-scroll">
+            <table class="fd-confusion">
+              <thead>
+                <tr><th></th>
+                  @for (l of c.confusion.labels; track l) {
+                    <th class="fd-col"><span>{{ l.replace('F-', '') }}</span></th>
+                  }
+                </tr>
+              </thead>
+              <tbody>
+                @for (row of c.confusion.matrix; track $index; let i = $index) {
+                  <tr>
+                    <th class="mono">{{ c.confusion.labels[i].replace('F-', '') }}</th>
+                    @for (v of row; track $index; let j = $index) {
+                      <td [ngStyle]="cellStyle(v, rowTotal(row), i === j)" [title]="c.confusion.labels[i] + ' → ' + c.confusion.labels[j] + ': ' + v">{{ v || '' }}</td>
+                    }
+                  </tr>
+                }
+              </tbody>
+            </table>
+          </div>
+          <p class="fd-note">Green diagonal = correct; red off-diagonal = confusions. Expect symptom-sharing pairs (BMS-COMM ↔ PCS-COMM, cell imbalance ↔ thermal)
+            to be where errors concentrate.</p>
+        }
+      </div>
+      <div class="card chart-card">
+        <h3>Scorecard <span class="fd-sub">out-of-fold</span></h3>
+        <table class="data-table">
+          <thead><tr><th>Metric</th><th class="num">Engine</th><th class="num">ML</th><th class="num">Fused</th>@if (compare?.logged) { <th class="num">{{ compare?.logged?.model_version }}</th> }</tr></thead>
+          <tbody>
+            @for (m of [
+              { k: 'macro_f1', l: 'Macro-F1' }, { k: 'accuracy', l: 'Accuracy (top-1)' }, { k: 'top3_accuracy', l: 'Top-3 accuracy' },
+              { k: 'subsystem_accuracy', l: 'Subsystem accuracy' }, { k: 'safety_recall', l: 'Safety-critical recall' },
+              { k: 'none_fpr', l: 'F-NONE false-positive rate' }, { k: 'fault_miss_rate', l: 'Faults missed (→ F-NONE)' },
+              { k: 'cost_weighted_error', l: 'Cost-weighted error' }, { k: 'ece', l: 'Calibration error (ECE)' }
+            ]; track m.k) {
+              <tr>
+                <td>{{ m.l }}</td>
+                <td class="num mono">{{ pct($any(run.metrics.oof.engine)[m.k]) }}</td>
+                <td class="num mono">{{ pct($any(run.metrics.oof.ml)[m.k]) }}</td>
+                <td class="num mono fd-strong">{{ pct($any(run.metrics.oof.fused)[m.k]) }}</td>
+                @if (compare?.logged; as lg) { <td class="num mono">{{ pct($any(lg.card)[m.k]) }}</td> }
+              </tr>
+            }
+          </tbody>
+        </table>
+        <p class="fd-note">Percentages. The logged column re-scores an existing model in <code>fault_prediction</code> on its own confirmed rows (top-3 from its stored shortlist) -
+          a different evaluation set, shown for orientation.</p>
+        @if (compare?.scoring?.length) {
+          <h4 class="fd-h4">v_fault_scoring - every model in the log</h4>
+          <table class="data-table">
+            <thead><tr><th>model_version</th><th class="num">Confirmed rows</th><th class="num">Accuracy</th><th class="num">Avg confidence</th></tr></thead>
+            <tbody>
+              @for (s of compare!.scoring; track s.model_version) {
+                <tr><td class="mono">{{ s.model_version }}</td><td class="num mono">{{ s.n }}</td><td class="num mono">{{ pct(s.accuracy) }} %</td><td class="num mono">{{ pct(s.avg_confidence) }} %</td></tr>
+              }
+            </tbody>
+          </table>
+        }
+      </div>
+    </div>
+    <div class="card chart-card">
+      <h3>Per-class recall - signature engine vs ML vs fused</h3>
+      @if (recallChart) {
+        <app-chart-canvas [config]="recallChart" [height]="320" />
+      }
+      <p class="fd-note">The engine carries classes the ML has barely seen; the ML sharpens the separable ones; the fusion keeps the better of both and degrades
+        to the engine on classes with no training episodes.</p>
+    </div>
+  }
+}

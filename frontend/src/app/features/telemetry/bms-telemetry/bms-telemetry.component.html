@@ -1,0 +1,210 @@
+<div class="page-header">
+  <div>
+    <h2>Battery Management System(BMS) Telemetry</h2>
+    <p class="subtitle">View and upload BMS telemetry per Battery System</p>
+  </div>
+  <div class="header-actions">
+    <label class="toggle-switch" title="Show the Upload Telemetry File section">
+      <input data-perm="write" type="checkbox" [(ngModel)]="showUpload" [ngModelOptions]="{ standalone: true }" />
+      <span class="track" aria-hidden="true"><span class="thumb"></span></span>
+      Upload file
+    </label>
+  </div>
+</div>
+
+@if (showUpload) {
+  <div class="card telemetry-upload-card">
+    <div class="telemetry-section-header">
+      <h3>Upload Telemetry File</h3>
+      <p class="subtitle">Excel or CSV only</p>
+    </div>
+
+    <div class="upload-row">
+      <input type="file" accept=".xlsx,.xls,.csv" (change)="onFileSelected($event)" #fileInput />
+      <button type="button" class="btn btn-primary" [disabled]="!selectedFile || uploading" (click)="upload()">
+        {{ uploading ? 'Uploading…' : 'Upload' }}
+      </button>
+    </div>
+
+    @if (uploadError) {
+      <div class="form-error">{{ uploadError }}</div>
+    }
+
+    @if (uploadResult) {
+      <div class="upload-summary">
+        <div class="upload-stat">
+          <span class="upload-stat-value">{{ uploadResult.total_rows }}</span>
+          <span class="upload-stat-label">Rows in file</span>
+        </div>
+        <div class="upload-stat">
+          <span class="upload-stat-value">{{ uploadResult.inserted }}</span>
+          <span class="upload-stat-label">Inserted</span>
+        </div>
+        <div class="upload-stat">
+          <span class="upload-stat-value">{{ uploadResult.updated }}</span>
+          <span class="upload-stat-label">Updated</span>
+        </div>
+        <div class="upload-stat" [class.upload-stat-error]="uploadResult.error_count > 0">
+          <span class="upload-stat-value">{{ uploadResult.error_count }}</span>
+          <span class="upload-stat-label">Rows skipped</span>
+        </div>
+      </div>
+
+      @if (uploadResult.errors.length > 0) {
+        <div class="upload-errors">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Row</th>
+                <th>Errors</th>
+              </tr>
+            </thead>
+            <tbody>
+              @for (rowError of visibleUploadErrors; track rowError.row) {
+                <tr>
+                  <td class="mono">{{ rowError.row }}</td>
+                  <td>{{ rowError.errors.join('; ') }}</td>
+                </tr>
+              }
+            </tbody>
+          </table>
+          @if (uploadResult.errors.length > 10) {
+            <button type="button" class="btn btn-secondary" (click)="showAllUploadErrors = !showAllUploadErrors">
+              {{ showAllUploadErrors ? 'Show fewer' : 'Show all ' + uploadResult.errors.length + ' skipped rows' }}
+            </button>
+          }
+        </div>
+      }
+    }
+  </div>
+}
+
+<div class="view-tabs" role="tablist" aria-label="Telemetry view">
+  <button
+    type="button"
+    role="tab"
+    class="view-tab"
+    [class.active]="activeTab === 'tabular'"
+    [attr.aria-selected]="activeTab === 'tabular'"
+    (click)="setTab('tabular')">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+      <rect x="3.5" y="4.5" width="17" height="15" rx="1.5" stroke="currentColor" stroke-width="1.6" />
+      <path d="M3.5 9.5h17M3.5 14.5h17M9.5 9.5v10" stroke="currentColor" stroke-width="1.6" />
+    </svg>
+    Tabular
+  </button>
+  <button
+    type="button"
+    role="tab"
+    class="view-tab"
+    [class.active]="activeTab === 'graphical'"
+    [attr.aria-selected]="activeTab === 'graphical'"
+    (click)="setTab('graphical')">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+      <path d="M3 19.5h18" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
+      <path d="M4 16l5-6 4 3 7-8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
+    </svg>
+    Graphical
+  </button>
+  <button
+    type="button"
+    role="tab"
+    class="view-tab"
+    [class.active]="activeTab === 'analytics'"
+    [attr.aria-selected]="activeTab === 'analytics'"
+    (click)="setTab('analytics')">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+      <path d="M4 20V11M10 20V5M16 20v-6M22 20H2" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
+    </svg>
+    Analytics
+  </button>
+</div>
+
+@if (activeTab === 'analytics') {
+  <app-kpi-analytics [domain]="kpiDomain" [initialEntityId]="filterSystemId" />
+} @else if (activeTab === 'graphical') {
+  <app-telemetry-graphs
+    [charts]="graphCharts"
+    [timelines]="graphTimelines"
+    [loader]="loadGraphSeries"
+    prefsKey="bess.bmsGraphs.v2"
+    entityLabel="System"
+    [entities]="graphEntities"
+    [initialEntityId]="filterSystemId"
+    [initialStart]="filterStart"
+    [initialEnd]="filterEnd" />
+} @else {
+  <div class="card">
+    <div class="toolbar telemetry-filters">
+      <div class="field">
+        <label for="filterSystem">System</label>
+        <select id="filterSystem" [(ngModel)]="filterSystemId">
+          <option value="">All systems</option>
+          @for (system of systems; track system.battery_system_id) {
+            <option [value]="system.battery_system_id">{{ system.system_name }}</option>
+          }
+        </select>
+      </div>
+      <div class="field">
+        <label for="filterStart">From</label>
+        <input id="filterStart" type="datetime-local" [(ngModel)]="filterStart" />
+      </div>
+      <div class="field">
+        <label for="filterEnd">To</label>
+        <input id="filterEnd" type="datetime-local" [(ngModel)]="filterEnd" />
+      </div>
+      <div class="telemetry-filter-actions">
+        <button type="button" class="btn btn-primary" (click)="applyFilters()">Apply</button>
+        <button type="button" class="btn btn-secondary" (click)="clearFilters()">Clear</button>
+      </div>
+    </div>
+
+    <div class="table-bar">
+      <span class="table-bar-info">
+        @if (!loading && !error) {
+          {{ total }} records · {{ visibleColumns.length }} of {{ allColumns.length }} columns
+        }
+      </span>
+      <app-column-picker
+        [columns]="allColumns"
+        [defaultKeys]="defaultColumnKeys"
+        storageKey="bess.bmsTable.columns.v2"
+        (visibleChange)="visibleColumns = $event" />
+    </div>
+
+    @if (loading) {
+      <div class="empty-state">Loading telemetry…</div>
+    } @else if (error) {
+      <div class="empty-state error">{{ error }}</div>
+    } @else if (rows.length === 0) {
+      <div class="empty-state">No telemetry records match the current filters.</div>
+    } @else {
+      <app-telemetry-table [columns]="visibleColumns" [rows]="tableRows" />
+
+    <div class="pagination">
+        <div class="page-size">
+          <label for="pageSize">Rows per page</label>
+          <select id="pageSize" [ngModel]="pageSize" (ngModelChange)="setPageSize($event)">
+            @for (size of pageSizeOptions; track size) {
+              <option [ngValue]="size">{{ size }}</option>
+            }
+          </select>
+        </div>
+        <div class="page-range">{{ rangeStart }}–{{ rangeEnd }} of {{ total }}</div>
+        <div class="page-controls">
+          <button class="btn btn-secondary btn-icon" [disabled]="currentPage === 1" (click)="goToPage(currentPage - 1)" title="Previous page">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+              <path d="M15 6l-6 6 6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+            </svg>
+          </button>
+          <span class="page-indicator">Page {{ currentPage }} of {{ totalPages }}</span>
+          <button class="btn btn-secondary btn-icon" [disabled]="currentPage === totalPages" (click)="goToPage(currentPage + 1)" title="Next page">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+              <path d="M9 6l6 6-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+            </svg>
+          </button>
+        </div>
+      </div>
+    }
+  </div>
+}

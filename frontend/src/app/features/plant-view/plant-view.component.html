@@ -1,0 +1,142 @@
+<div class="page-header">
+  <div>
+    <h2>Plant 3D View</h2>
+    <p class="subtitle">Engineering cutaway of the battery system's containers — racks, modules, BMS, PCS, EMS, HVAC and fire
+      suppression drawn from master data</p>
+  </div>
+</div>
+
+<div class="card analytics-filters-card">
+  <div class="toolbar telemetry-filters">
+    <div class="field">
+      <label for="plantSite">Site</label>
+      <select id="plantSite" [(ngModel)]="selectedSiteId" (ngModelChange)="onSiteChange()">
+        @for (s of sites; track s.site_id) {
+          <option [ngValue]="s.site_id">{{ s.site_name }}</option>
+        }
+      </select>
+    </div>
+    @if (siteSystems.length > 1) {
+      <div class="field">
+        <label for="plantSystem">Battery system</label>
+        <select id="plantSystem" [(ngModel)]="selectedSystemId" (ngModelChange)="onSystemChange()">
+          @for (s of siteSystems; track s.battery_system_id) {
+            <option [ngValue]="s.battery_system_id">{{ s.system_name }}</option>
+          }
+        </select>
+      </div>
+    }
+  </div>
+</div>
+
+@if (error) {
+  <div class="card">
+    <div class="empty-state error">{{ error }}</div>
+  </div>
+}
+
+@if (site && !error) {
+  <div class="card ops-header-card">
+    <div class="ops-header-main">
+      <div class="ops-icon-box">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+          <path d="M9 4 3 6.5v13.5l6-2.5 6 2.5 6-2.5V4l-6 2.5L9 4Z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" />
+        </svg>
+      </div>
+      <div>
+        <h2>{{ site.site_name }}</h2>
+        <p class="subtitle">{{ site.address || 'No address on file' }}</p>
+      </div>
+    </div>
+    <div class="ops-header-status">
+      <span class="status-badge">{{ site.rated_power_mw ?? '—' }} MW / {{ site.rated_energy_mwh ?? '—' }} MWh</span>
+      <span class="ops-latest-ts">{{ batterySystem ? batterySystem.system_name + ' · ' + (batterySystem.manufacturer || '') + ' ' + (batterySystem.model || '') : 'No battery system on this site' }}</span>
+    </div>
+  </div>
+}
+
+<div class="card plant-view-card" [hidden]="!!error">
+  <div class="plant-body">
+    <div class="plant-canvas-wrap cutaway">
+      <div #canvasHost class="plant-canvas-host"></div>
+      <div #labelHost class="cut-labels"></div>
+
+      @if (loading) {
+        <div class="cut-loading">Loading plant model…</div>
+      }
+
+      <!-- subsystem panel -->
+      <div class="cut-panel">
+        <div class="cut-title">{{ batterySystem?.system_name || 'Battery system' }}</div>
+        <div class="cut-sub">Drag to orbit · scroll to zoom · right-drag to pan · click a part</div>
+        <div class="cut-sec">Subsystems</div>
+        @for (l of layerList; track l.key) {
+          <button type="button" class="cut-row" [class.on]="layers[l.key]" [style.color]="layerCss[l.key]" (click)="toggleLayer(l.key)">
+            <span class="sw"></span><span class="nm">{{ l.label }}</span><span class="ct">{{ counts[l.key] }}</span>
+          </button>
+        }
+        <div class="cut-sec">View</div>
+        <label class="cut-ctl">
+          <span>Explode</span>
+          <input type="range" min="0" max="100" [ngModel]="explode" (ngModelChange)="setExplode($event)" />
+        </label>
+        <button type="button" class="cut-row" [class.on]="showLabels" style="color: #8aa0ab" (click)="showLabels = !showLabels">
+          <span class="sw"></span><span class="nm">Labels</span>
+        </button>
+        <div class="cut-seg" role="group" aria-label="Module colour">
+          <span>Modules</span>
+          <button type="button" [class.on]="moduleColor === 'type'" (click)="setModuleColor('type')">Type</button>
+          <button type="button" [class.on]="moduleColor === 'soh'" [disabled]="!sohRange" (click)="setModuleColor('soh')"
+            [title]="sohRange ? 'Colour by battery_module.soh_pct' : 'No module SOH in master data'">SOH</button>
+        </div>
+        @if (moduleColor === 'soh' && sohRange) {
+          <div class="soh-legend">
+            <span>{{ sohRange[0].toFixed(2) }} %</span><span class="ramp"></span><span>{{ sohRange[1].toFixed(2) }} %</span>
+          </div>
+        }
+        <button type="button" class="cut-btn" (click)="resetView()">⟳ Reset view</button>
+      </div>
+
+      <div class="cut-badge">
+        {{ badge.size }}<br /><b>{{ badge.energy }}</b><br />{{ badge.chemistry }}
+      </div>
+
+      @if (layoutNotes.length) {
+        <div class="cut-notes">
+          @for (n of layoutNotes; track n) {
+            <div>{{ n }}</div>
+          }
+        </div>
+      }
+
+      @if (selected) {
+        <div class="plant-detail-panel cut-detail">
+          <div class="plant-detail-header">
+            <h3><span class="dot" [style.background]="layerCss[layerOf(selected.type)]"></span>{{ selected.title }}</h3>
+            <button type="button" class="btn btn-secondary btn-icon" (click)="closeDetail()" title="Close">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
+                <path d="M6 6l12 12M18 6 6 18" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+              </svg>
+            </button>
+          </div>
+          <dl class="plant-detail-fields">
+            @for (field of selected.fields; track field.label) {
+              <div class="plant-detail-row">
+                <dt>{{ field.label }}</dt>
+                <dd>{{ field.value }}</dd>
+              </div>
+            }
+          </dl>
+          @if (selected.link) {
+            <a class="btn btn-primary plant-detail-link" [routerLink]="selected.link.route" [queryParams]="selected.link.queryParams">
+              {{ selected.link.label }}
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path d="M5 12h14M13 6l6 6-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+              </svg>
+            </a>
+          }
+        </div>
+      }
+    </div>
+  </div>
+</div>

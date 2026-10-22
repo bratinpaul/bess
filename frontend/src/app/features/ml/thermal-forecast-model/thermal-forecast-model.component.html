@@ -1,0 +1,366 @@
+<div class="page-header">
+  <div>
+    <h2>Temperature Forecast Model</h2>
+    <p class="subtitle">
+      Forecast cell, coolant, IGBT and enclosure temperature 5–60 min ahead (P10 / P50 / P90): an RC grey-box per asset plus
+      LightGBM quantile models on its residual. View forecasts on <a routerLink="/ml/thermal-forecast">Temperature Forecast</a>.
+    </p>
+  </div>
+</div>
+
+@if (optionsError) {
+  <div class="card empty-state error">{{ optionsError }}</div>
+}
+
+@if (options) {
+  <div class="train-grid">
+    <section class="card panel">
+      <h3 class="panel-title">Data</h3>
+      <h4 class="group-head">Battery systems <span class="muted small">(with their PCS and HVAC unit · from v_thermal_features)</span></h4>
+      <div class="unit-list">
+        @for (s of options.systems; track s.battery_system_id) {
+          <label class="feature-group" [class.on]="systemIds.has(s.battery_system_id)" [class.dim]="!s.readings">
+            <input type="checkbox" [checked]="systemIds.has(s.battery_system_id)" [disabled]="!s.readings" (change)="toggleSystem(s)" />
+            <span class="fg-text">
+              <span class="fg-title">{{ systemLabel(s) }}</span>
+              <span class="fg-meta">
+                @if (s.readings) {
+                  {{ s.readings | number }} readings · {{ s.date_from }} → {{ s.date_to }} · PCS {{ s.pcs_id ?? '—' }} · HVAC {{ s.hvac_id ?? '—' }}
+                } @else {
+                  no readings
+                }
+              </span>
+            </span>
+          </label>
+        }
+      </div>
+      <div class="form-grid three">
+        <div class="field">
+          <label for="from">From</label>
+          <input id="from" type="date" [(ngModel)]="dateFrom" />
+        </div>
+        <div class="field">
+          <label for="to">To</label>
+          <input id="to" type="date" [(ngModel)]="dateTo" />
+        </div>
+        <div class="field">
+          <label for="plan">Planned load</label>
+          <select id="plan" [(ngModel)]="planSource">
+            <option value="scheduled">Dispatch schedule</option>
+            <option value="typical">Typical day</option>
+          </select>
+        </div>
+      </div>
+
+      <h4 class="group-head">Targets &amp; thresholds <span class="muted small">(recall is measured on crossing the threshold)</span></h4>
+      <div class="target-list">
+        @for (t of options.targets; track t.key) {
+          <div class="target-row" [class.on]="targets.has(t.key)">
+            <label class="model-check">
+              <input type="checkbox" [checked]="targets.has(t.key)" (change)="toggleTarget(t.key)" />
+              <span>
+                <strong>{{ t.label }}</strong>
+                <span class="fam">{{ familyLabel(t.family) }} · per {{ t.asset_type.replace('_', ' ') }} · heat sink: {{ t.ref }}</span>
+              </span>
+            </label>
+            <div class="thr">
+              <input type="number" step="1" [(ngModel)]="thresholds[t.key]" [disabled]="!targets.has(t.key)" />
+              <span class="muted small">°C @if (catalog(t.key); as c) { · catalog alarm {{ c }} °C }</span>
+            </div>
+          </div>
+        }
+      </div>
+      <p class="param-help">The catalog alarm limits are never reached in the sample data, so the defaults are pre-alarm levels it
+        does reach — otherwise exceedance recall could not be measured.</p>
+
+      <h4 class="group-head">Horizons (min)</h4>
+      <div class="chips">
+        @for (h of horizonChoices; track h) {
+          <button type="button" class="chip" [class.on]="horizons.has(h)" (click)="toggleHorizon(h)">{{ h }}</button>
+        }
+      </div>
+    </section>
+
+    <section class="card panel">
+      <div class="panel-subhead" style="margin-top: 0">
+        <h3 class="panel-title" style="margin: 0">Methods &amp; backtest</h3>
+      </div>
+      <div class="model-list">
+        @for (m of methods; track m) {
+          <div class="model-row on">
+            <span class="model-check">
+              <span class="swatch line" [style.background]="colors[m]"></span>
+              <span><strong>{{ labels[m] }}</strong>
+                <span class="fam">
+                  @switch (m) {
+                    @case ('persistence') { baseline: the temperature stays where it is }
+                    @case ('seasonal') { baseline: the temperature 24 h earlier }
+                    @case ('rc') { steady state (heat sink + I² / |I| losses + ambient) approached with a fitted time constant }
+                    @case ('hybrid') { RC + LightGBM quantile models of its residual (P10 / P50 / P90) }
+                  }
+                </span>
+              </span>
+            </span>
+          </div>
+        }
+      </div>
+      <button type="button" class="link-btn" (click)="showGbm = !showGbm">{{ showGbm ? 'Hide' : 'LightGBM parameters' }}</button>
+      @if (showGbm) {
+        <div class="param-grid">
+          @for (p of options.gbm_params; track p.name) {
+            <div class="field">
+              <label [for]="'g' + p.name">{{ p.label }}</label>
+              <input [id]="'g' + p.name" type="number" [(ngModel)]="gbm[p.name]" [min]="p.min" [max]="p.max" [step]="p.step" />
+            </div>
+          }
+        </div>
+      }
+      <div class="param-grid">
+        <div class="field">
+          <label for="tp">Test share of each system (%)</label>
+          <input id="tp" type="number" min="10" max="50" step="5" [(ngModel)]="testPct" />
+        </div>
+        <div class="field" title="Every n-th 5-min origin in the training rows (1 = every reading, slower)">
+          <label for="ts">Training origin every (× 5 min)</label>
+          <input id="ts" type="number" min="1" max="24" step="1" [(ngModel)]="trainStep" />
+        </div>
+        <div class="field">
+          <label for="name">Run name</label>
+          <input id="name" type="text" [(ngModel)]="runName" placeholder="optional" maxlength="120" />
+        </div>
+        <div class="field check-field">
+          <label><input data-perm="ml.model:approve" type="checkbox" [(ngModel)]="makeDefault" /> Make it the viewer's default</label>
+        </div>
+      </div>
+      <p class="param-help">Time split per system (training before, test after — no leakage). Inputs are guarded: implausible
+        readings are dropped, gaps up to 15 min interpolated, and the minutes since the last real reading are a feature.</p>
+
+      @if (trainError) {
+        <div class="form-error">{{ trainError }}</div>
+      }
+      <div class="form-actions">
+        @if (problem) {
+          <span class="problem">{{ problem }}</span>
+        }
+        <button type="button" class="btn btn-primary train-btn" [disabled]="!!problem || training" (click)="train()">
+          @if (training) {
+            <span class="spinner" aria-hidden="true"></span> Building… {{ elapsed }} s
+          } @else {
+            Build &amp; backtest
+          }
+        </button>
+      </div>
+    </section>
+  </div>
+}
+
+@if (run; as r) {
+  <section class="card run-card" [class.refreshing]="runLoading">
+    <div class="run-head">
+      <div>
+        <h3>
+          Run #{{ r.run_id }}{{ r.run_name ? ' · ' + r.run_name : '' }}
+          <span class="status-chip" [attr.data-status]="r.status">{{ r.status }}</span>
+          @if (r.is_default) {
+            <span class="status-chip" data-status="ACTIVE">Viewer default</span>
+          }
+        </h3>
+        <p class="muted small">
+          {{ r.system_ids.length }} systems ({{ r.system_ids.map(shortSystem, this).join(', ') }}) · {{ window(r) }} ·
+          horizons {{ r.horizons_min.join(' / ') }} min · {{ r.n_train_rows | number }} training rows · {{ r.n_test_rows | number }} test rows ·
+          {{ duration(r.duration_ms) }}
+        </p>
+      </div>
+      <div class="run-actions">
+        @if (r.status === 'COMPLETED' && !r.is_default) {
+          <button data-perm="ml.model:approve" type="button" class="btn btn-primary" (click)="makeDefaultRun(r)">Make viewer default</button>
+        }
+        @if (r.status === 'COMPLETED') {
+          <a class="btn btn-secondary" routerLink="/ml/thermal-forecast" [queryParams]="{ model: r.run_id }">Open in Temperature Forecast</a>
+        }
+        <button type="button" class="btn btn-secondary" (click)="reuse(r)">Train a variant</button>
+      </div>
+    </div>
+    @if (r.error_message) {
+      <div class="form-error">{{ r.error_message }}</div>
+    }
+    @for (w of r.warnings; track w) {
+      <div class="warn-line">{{ w }}</div>
+    }
+
+    @if (r.status === 'COMPLETED' && r.metrics && r.results; as res) {
+      <div class="target-tabs">
+        @for (t of r.targets; track t) {
+          <button type="button" class="target-tab" [class.on]="target === t" (click)="setTarget(t)">
+            {{ targetLabel(t) }}
+            <small>hybrid {{ headlineMae(r, t, 'hybrid') }} vs persist. {{ headlineMae(r, t, 'persistence') }} °C</small>
+          </button>
+        }
+      </div>
+
+      <h4 class="section-title">Accuracy · {{ targetLabel(target) }} · test period</h4>
+      <div class="table-scroll">
+        <table class="data-table compare-table score-table">
+          <thead>
+            <tr>
+              <th>Horizon</th>
+              @for (m of methods; track m) {
+                <th class="num" [attr.colspan]="1">{{ labels[m] }}<br /><small>MAE · RMSE</small></th>
+              }
+              @for (m of methods; track m) {
+                <th class="num">{{ labels[m] }}<br /><small>pinball · cover</small></th>
+              }
+            </tr>
+          </thead>
+          <tbody>
+            @for (h of runHorizons; track h) {
+              <tr>
+                <td>{{ h }} min</td>
+                @for (m of methods; track m) {
+                  <td class="num" [class.best]="bestMae(h, m)">{{ num(s(h, m)?.mae) }} · {{ num(s(h, m)?.rmse) }}</td>
+                }
+                @for (m of methods; track m) {
+                  <td class="num" [class.best]="bestPinball(h, m)">{{ num(s(h, m)?.pinball, 3) }} · {{ num(s(h, m)?.coverage_pct, 0) }} %</td>
+                }
+              </tr>
+            }
+          </tbody>
+        </table>
+      </div>
+      <p class="muted small">°C. Green = best in its column for that horizon. Coverage is the share of readings inside P10–P90 (80 % is right).
+        Stored per target, horizon and method in battery_ml.thermal_forecast_score.</p>
+
+      <h4 class="section-title">Threshold exceedance · {{ targetLabel(target) }} ≥ {{ res.thresholds[target] }} °C</h4>
+      <div class="table-scroll">
+        <table class="data-table compare-table score-table">
+          <thead>
+            <tr>
+              <th>Horizon</th>
+              <th class="num">Events</th>
+              @for (m of methods; track m) {
+                <th class="num">{{ labels[m] }}<br /><small>recall P50 · P90</small></th>
+              }
+              <th class="num">Hybrid precision<br /><small>P50 · P90</small></th>
+            </tr>
+          </thead>
+          <tbody>
+            @for (h of runHorizons; track h) {
+              <tr>
+                <td>{{ h }} min</td>
+                <td class="num">{{ s(h, 'hybrid')?.events ?? '—' }}</td>
+                @for (m of methods; track m) {
+                  <td class="num" [class.best]="bestRecall(h, m)">{{ pct(s(h, m)?.recall_p50) }} · {{ pct(s(h, m)?.recall_p90) }}</td>
+                }
+                <td class="num">{{ pct(s(h, 'hybrid')?.precision_p50) }} · {{ pct(s(h, 'hybrid')?.precision_p90) }}</td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      </div>
+      <p class="muted small">An event: the reading h minutes later is at or above the threshold while it was below at the origin (a
+        crossing control must anticipate). Recall: share of events where the forecast's P50 (or the cautious P90) already reached the
+        threshold. Green = best P90 recall for that horizon. Persistence can't foresee a crossing (its recall is 0 at P50). Catalog alarm limit:
+        {{ res.catalog_thresholds[target] ?? '—' }} °C.</p>
+
+      <div class="chart-grid">
+        <div class="chart-box">
+          <h4>MAE by horizon</h4>
+          @if (maeChart) {
+            <app-chart-canvas [config]="maeChart" [height]="260" />
+          }
+        </div>
+        <div class="chart-box">
+          <h4>Residual model inputs</h4>
+          <p class="muted small">Share of the P50 residual model's split gain.</p>
+          @if (importanceChart) {
+            <app-chart-canvas [config]="importanceChart" [height]="importanceHeight" />
+          }
+        </div>
+        <div class="chart-box wide">
+          <h4>RC grey-box per asset · {{ targetLabel(target) }}</h4>
+          <table class="data-table compare-table">
+            <thead>
+              <tr><th>System</th><th class="num">Time constant τ</th><th class="num">Steady-state R²</th><th>Coefficients (T_ss = w_ref·T_sink + w_amb·T_amb + Σ b·q + c)</th></tr>
+            </thead>
+            <tbody>
+              @for (x of rcRows; track x.system) {
+                <tr>
+                  <td>{{ shortSystem(x.system) }}</td>
+                  <td class="num">{{ num(x.rc.tau_min, 0) }} min</td>
+                  <td class="num">{{ num(x.rc.r2_steady, 2) }}</td>
+                  <td class="mono small">{{ coefEntries(x.rc) }}</td>
+                </tr>
+              }
+            </tbody>
+          </table>
+          <p class="muted small">τ = C / (k + k_amb): how fast the temperature settles after a load change; b = heating per unit of
+            the loss driver (current |I| and I² per unit of rating).</p>
+        </div>
+      </div>
+    }
+  </section>
+}
+
+<div class="card history-card">
+  <div class="history-head">
+    <div>
+      <h3>Runs</h3>
+      <p class="muted small">battery_ml.thermal_forecast_run · click a run to open it · MAE at the longest horizon</p>
+    </div>
+  </div>
+  @if (runsLoading && !runs.length) {
+    <div class="empty-state">Loading…</div>
+  } @else if (!runs.length) {
+    <div class="empty-state">No runs yet — build the model above.</div>
+  } @else {
+    <div class="table-scroll">
+      <table class="data-table runs-table">
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>Name</th>
+            <th>Systems</th>
+            <th>Targets</th>
+            <th>Horizons</th>
+            <th class="num">Cell (hybrid)</th>
+            <th class="num">IGBT (hybrid)</th>
+            <th>Status</th>
+            <th class="num">Time</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          @for (x of runs; track x.run_id) {
+            <tr (click)="openRun(x.run_id)" [class.selected]="run?.run_id === x.run_id">
+              <td class="mono">{{ x.run_id }}</td>
+              <td>
+                {{ x.run_name || '—' }}
+                @if (x.is_default) {
+                  <span class="status-chip" data-status="ACTIVE">default</span>
+                }
+              </td>
+              <td class="small">{{ x.system_ids.map(shortSystem, this).join(', ') }}</td>
+              <td class="small">{{ x.targets.length }}</td>
+              <td class="small">{{ x.horizons_min.join('/') }}</td>
+              <td class="num">{{ headlineMae(x, 'cell_temp_max_c', 'hybrid') }}</td>
+              <td class="num">{{ headlineMae(x, 'igbt_temp_c', 'hybrid') }}</td>
+              <td>
+                <span class="status-chip" [attr.data-status]="x.status">{{ x.status }}</span>
+                @if (x.error_message) {
+                  <div class="problem small">{{ x.error_message }}</div>
+                }
+              </td>
+              <td class="num">{{ duration(x.duration_ms) }}</td>
+              <td class="nowrap">
+                @if (x.status === 'COMPLETED' && !x.is_default) {
+                  <button data-perm="ml.model:approve" type="button" class="link-btn" (click)="makeDefaultRun(x, $event)">Default</button> ·
+                }
+                <button type="button" class="link-btn" (click)="deleteRun(x, $event)">Delete</button>
+              </td>
+            </tr>
+          }
+        </tbody>
+      </table>
+    </div>
+  }
+</div>

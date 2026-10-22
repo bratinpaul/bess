@@ -1,0 +1,288 @@
+<div class="page-header">
+  <div>
+    <h2>Demand</h2>
+    <p class="subtitle">Site load at the metering points: gross load, behind-the-meter generation, net load and reactive power</p>
+  </div>
+  <div class="header-actions">
+    <label class="toggle-switch" title="Show the upload section">
+      <input data-perm="write" type="checkbox" [(ngModel)]="showUpload" [ngModelOptions]="{ standalone: true }" />
+      <span class="track" aria-hidden="true"><span class="thumb"></span></span>
+      Upload file
+    </label>
+    <button type="button" class="btn btn-primary" [disabled]="!points.length" (click)="openAdd()">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+        <path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+      </svg>
+      Add Reading
+    </button>
+  </div>
+</div>
+
+@if (showUpload) {
+  <div class="card telemetry-upload-card">
+    <div class="telemetry-section-header">
+      <h3>Upload Demand File</h3>
+      <p class="subtitle">CSV or Excel · columns ts, metering_point_code, gross_load_kw, behind_meter_gen_kw, net_load_kw,
+        load_reactive_kvar · existing readings (same metering point and time) are updated</p>
+    </div>
+
+    <div class="upload-row">
+      <div class="field mp-field">
+        <label for="uploadMp">Metering point</label>
+        <select id="uploadMp" [(ngModel)]="uploadCode">
+          <option value="">From the file's metering_point_code column</option>
+          @for (p of points; track p.metering_point_id) {
+            <option [value]="p.mp_code">All rows → {{ p.mp_code }}</option>
+          }
+        </select>
+      </div>
+      <input type="file" accept=".csv,.xlsx,.xlsm" (change)="onFileSelected($event)" #fileInput />
+      <button type="button" class="btn btn-primary" [disabled]="!selectedFile || uploading" (click)="upload()">
+        {{ uploading ? 'Uploading…' : 'Upload' }}
+      </button>
+    </div>
+    <p class="upload-note">Checks per row: valid time (plant time when no zone is given), known metering point, numbers,
+      load and generation ≥ 0, and net = gross − generation (within 1 kW; filled in when the net column is empty).</p>
+
+    @if (points.length === 0) {
+      <div class="form-error">No metering points exist yet (battery_master.metering_point).</div>
+    }
+    @if (uploadError) {
+      <div class="form-error">{{ uploadError }}</div>
+    }
+
+    @if (uploadResult) {
+      <div class="upload-summary">
+        <div class="upload-stat">
+          <span class="upload-stat-value">{{ uploadResult.total_rows }}</span>
+          <span class="upload-stat-label">Rows in file</span>
+        </div>
+        <div class="upload-stat">
+          <span class="upload-stat-value">{{ uploadResult.inserted }}</span>
+          <span class="upload-stat-label">Inserted</span>
+        </div>
+        <div class="upload-stat">
+          <span class="upload-stat-value">{{ uploadResult.updated }}</span>
+          <span class="upload-stat-label">Updated</span>
+        </div>
+        <div class="upload-stat" [class.upload-stat-error]="uploadResult.error_count > 0">
+          <span class="upload-stat-value">{{ uploadResult.error_count }}</span>
+          <span class="upload-stat-label">Rows skipped</span>
+        </div>
+      </div>
+      @if (uploadResult.metering_points.length) {
+        <p class="upload-note">Metering points in the file: {{ uploadResult.metering_points.join(', ') }}</p>
+      }
+      @if (uploadResult.errors.length > 0) {
+        <div class="upload-errors">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Row</th>
+                <th>Errors</th>
+              </tr>
+            </thead>
+            <tbody>
+              @for (rowError of visibleUploadErrors; track $index) {
+                <tr>
+                  <td class="mono">{{ rowError.row }}</td>
+                  <td>{{ rowError.errors.join('; ') }}</td>
+                </tr>
+              }
+            </tbody>
+          </table>
+          @if (uploadResult.errors.length > 10) {
+            <button type="button" class="btn btn-secondary" (click)="showAllUploadErrors = !showAllUploadErrors">
+              {{ showAllUploadErrors ? 'Show fewer' : 'Show all ' + uploadResult.errors.length + ' messages' }}
+            </button>
+          }
+        </div>
+      }
+    }
+  </div>
+}
+
+<div class="view-tabs" role="tablist" aria-label="Telemetry view">
+  <button type="button" role="tab" class="view-tab" [class.active]="activeTab === 'tabular'"
+    [attr.aria-selected]="activeTab === 'tabular'" (click)="setTab('tabular')">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+      <rect x="3.5" y="4.5" width="17" height="15" rx="1.5" stroke="currentColor" stroke-width="1.6" />
+      <path d="M3.5 9.5h17M3.5 14.5h17M9.5 9.5v10" stroke="currentColor" stroke-width="1.6" />
+    </svg>
+    Tabular
+  </button>
+  <button type="button" role="tab" class="view-tab" [class.active]="activeTab === 'graphical'"
+    [attr.aria-selected]="activeTab === 'graphical'" (click)="setTab('graphical')">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+      <path d="M3 19.5h18" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
+      <path d="M4 16l5-6 4 3 7-8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
+    </svg>
+    Graphical
+  </button>
+</div>
+
+@if (activeTab === 'graphical') {
+  <app-telemetry-graphs
+    [charts]="graphCharts"
+    [timelines]="graphTimelines"
+    [loader]="loadGraphSeries"
+    prefsKey="bess.demandGraphs.v1"
+    entityLabel="Metering point"
+    [entities]="graphEntities"
+    [initialEntityId]="filterPointId"
+    [initialStart]="filterStart"
+    [initialEnd]="filterEnd" />
+} @else {
+  <div class="card">
+    <div class="toolbar telemetry-filters">
+      <div class="field">
+        <label for="filterMp">Metering point</label>
+        <select id="filterMp" [(ngModel)]="filterPointId">
+          <option value="">All metering points</option>
+          @for (p of points; track p.metering_point_id) {
+            <option [value]="p.metering_point_id">{{ p.mp_code }}</option>
+          }
+        </select>
+      </div>
+      <div class="field">
+        <label for="filterStart">From</label>
+        <input id="filterStart" type="datetime-local" [(ngModel)]="filterStart" />
+      </div>
+      <div class="field">
+        <label for="filterEnd">To</label>
+        <input id="filterEnd" type="datetime-local" [(ngModel)]="filterEnd" />
+      </div>
+      <div class="telemetry-filter-actions">
+        <button type="button" class="btn btn-primary" (click)="applyFilters()">Apply</button>
+        <button type="button" class="btn btn-secondary" (click)="clearFilters()">Clear</button>
+      </div>
+    </div>
+
+    <div class="table-bar">
+      <span class="table-bar-info">
+        @if (!loading && !error) {
+          {{ total }} records · {{ visibleColumns.length }} of {{ allColumns.length }} columns
+        }
+      </span>
+      <app-column-picker
+        [columns]="allColumns"
+        [defaultKeys]="defaultColumnKeys"
+        storageKey="bess.demandTable.columns"
+        (visibleChange)="visibleColumns = $event" />
+    </div>
+
+    @if (loading) {
+      <div class="empty-state">Loading readings…</div>
+    } @else if (error) {
+      <div class="empty-state error">{{ error }}</div>
+    } @else if (rows.length === 0) {
+      <div class="empty-state">No demand readings match the current filters. Turn on <strong>Upload file</strong> to load demand_data.csv.</div>
+    } @else {
+      <app-telemetry-table [columns]="visibleColumns" [rows]="tableRows" [actions]="true"
+        (editRow)="openEdit($event)" (deleteRow)="confirmDelete($event)" />
+
+      <div class="pagination">
+        <div class="page-size">
+          <label for="pageSize">Rows per page</label>
+          <select id="pageSize" [ngModel]="pageSize" (ngModelChange)="setPageSize($event)">
+            @for (size of pageSizeOptions; track size) {
+              <option [ngValue]="size">{{ size }}</option>
+            }
+          </select>
+        </div>
+        <div class="page-range">{{ rangeStart }}–{{ rangeEnd }} of {{ total }}</div>
+        <div class="page-controls">
+          <button class="btn btn-secondary btn-icon" [disabled]="currentPage === 1" (click)="goToPage(currentPage - 1)" title="Previous page">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+              <path d="M15 6l-6 6 6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+            </svg>
+          </button>
+          <span class="page-indicator">Page {{ currentPage }} of {{ totalPages }}</span>
+          <button class="btn btn-secondary btn-icon" [disabled]="currentPage === totalPages" (click)="goToPage(currentPage + 1)" title="Next page">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+              <path d="M9 6l6 6-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+            </svg>
+          </button>
+        </div>
+      </div>
+    }
+  </div>
+}
+
+<!-- add / edit -->
+@if (edit; as e) {
+  <div class="modal-backdrop" (click)="edit = null">
+    <div class="modal edit-modal" (click)="$event.stopPropagation()">
+      <h3>{{ e.mode === 'add' ? 'Add demand reading' : 'Edit demand reading' }}</h3>
+      <div class="form-grid">
+        <div class="field">
+          <label for="eMp">Metering point</label>
+          <select id="eMp" [(ngModel)]="e.metering_point_id" [disabled]="e.mode === 'edit'">
+            @for (p of points; track p.metering_point_id) {
+              <option [ngValue]="p.metering_point_id">{{ pointLabel(p) }}</option>
+            }
+          </select>
+        </div>
+        <div class="field">
+          <label for="eTs">Time (plant time)</label>
+          @if (e.mode === 'add') {
+            <input id="eTs" type="datetime-local" step="300" [(ngModel)]="e.ts" />
+          } @else {
+            <input id="eTs" type="text" [value]="e.ts.replace('T', ' ').slice(0, 16)" disabled />
+          }
+        </div>
+        <div class="field">
+          <label for="eGross">Gross load (kW)</label>
+          <input id="eGross" type="number" min="0" step="0.1" [(ngModel)]="e.gross_load_kw" (ngModelChange)="syncNet()" />
+        </div>
+        <div class="field">
+          <label for="eGen">Behind-the-meter generation (kW)</label>
+          <input id="eGen" type="number" min="0" step="0.1" [(ngModel)]="e.behind_meter_gen_kw" (ngModelChange)="syncNet()" />
+        </div>
+        <div class="field">
+          <label for="eNet">Net load (kW)</label>
+          <input id="eNet" type="number" step="0.1" [(ngModel)]="e.net_load_kw" />
+          <span class="field-hint">= gross − generation (filled in; must match within 1 kW)</span>
+        </div>
+        <div class="field">
+          <label for="eQ">Reactive power (kvar)</label>
+          <input id="eQ" type="number" step="0.1" [(ngModel)]="e.load_reactive_kvar" />
+        </div>
+      </div>
+      @if (editError) {
+        <div class="form-error">{{ editError }}</div>
+      }
+      <div class="modal-actions">
+        @if (editProblem) {
+          <span class="problem-note">{{ editProblem }}</span>
+        }
+        <button class="btn btn-secondary" (click)="edit = null" [disabled]="saving">Cancel</button>
+        <button class="btn btn-primary" (click)="save()" [disabled]="saving || !!editProblem">
+          {{ saving ? 'Saving…' : e.mode === 'add' ? 'Add reading' : 'Save changes' }}
+        </button>
+      </div>
+    </div>
+  </div>
+}
+
+<!-- delete -->
+@if (toDelete; as d) {
+  <div class="modal-backdrop" (click)="toDelete = null">
+    <div class="modal" (click)="$event.stopPropagation()">
+      <h3>Delete reading?</h3>
+      <p>
+        This permanently deletes the <strong>{{ d.mp_code }}</strong> reading at
+        <strong>{{ d.ts | date: 'yyyy-MM-dd HH:mm' }}</strong> (net {{ d.net_load_kw }} kW). This cannot be undone.
+      </p>
+      @if (deleteError) {
+        <div class="form-error">{{ deleteError }}</div>
+      }
+      <div class="modal-actions">
+        <button class="btn btn-secondary" (click)="toDelete = null" [disabled]="deleting">{{ deleteError ? 'Close' : 'Cancel' }}</button>
+        @if (!deleteError) {
+          <button class="btn btn-danger-solid" (click)="deleteConfirmed()" [disabled]="deleting">{{ deleting ? 'Deleting…' : 'Delete' }}</button>
+        }
+      </div>
+    </div>
+  </div>
+}

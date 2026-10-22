@@ -1,0 +1,166 @@
+@use 'chart-selector';
+
+:host {
+  display: block;
+}
+
+// one chart per row so every time axis lines up vertically
+.graph-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  margin-top: 16px;
+}
+
+.graph-card {
+  padding: 16px 20px 12px;
+}
+
+.graph-card-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 16px;
+  margin-bottom: 8px;
+}
+
+.graph-card-header h3 {
+  margin: 0;
+  font-size: 15px;
+}
+
+// ---- line selector on each chart
+.line-options {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px 18px;
+}
+
+.line-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
+  color: var(--color-text);
+  cursor: pointer;
+  user-select: none;
+}
+
+.line-option:not(.on) {
+  color: var(--color-text-muted);
+}
+
+.line-glyph {
+  display: inline-block;
+  width: 14px;
+}
+
+.line-glyph.dashed {
+  border-top: 2px dashed var(--box);
+}
+
+.line-glyph.bar {
+  width: 9px;
+  height: 9px;
+  border-radius: 2px;
+  background: var(--box);
+  opacity: 0.6;
+}
+
+/* bars coloured by sign: top half positive colour, bottom half negative colour */
+.line-glyph.bar.signed {
+  background: linear-gradient(var(--box) 50%, var(--neg) 50%);
+}
+
+.line-glyph.area {
+  width: 12px;
+  height: 8px;
+  border: 1px solid var(--box);
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--box) 18%, transparent);
+}
+
+.line-glyph.band {
+  width: 14px;
+  height: 8px;
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--box) 18%, transparent);
+}
+
+.ref-legend {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--color-text-muted);
+}
+
+.axis-tag {
+  padding: 0 4px;
+  border: 1px solid var(--color-border);
+  border-radius: 3px;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 13px;
+  color: var(--color-text-muted);
+}
+
+.option-meta {
+  font-size: 11px;
+  color: var(--color-text-muted);
+}
+
+.graph-canvas-wrap {
+  position: relative;
+  height: 240px;
+}
+
+.graph-canvas-wrap.timeline {
+  height: 88px;
+}
+
+.timeline-lane-label {
+  position: absolute;
+  top: 18px;
+  left: 0;
+  width: 60px;
+  font-size: 10px;
+  line-height: 1.2;
+  color: var(--color-text-muted);
+  font-weight: 600;
+}
+
+.graph-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-text-muted);
+  font-size: 13px;
+  background: rgba(255, 255, 255, 0.7);
+}
+
+.graph-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px 6px;
+  padding: 10px 20px;
+  border-bottom: 1px solid var(--color-border);
+  background: rgba(99, 248, 186, 0.08);
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+
+.graph-status strong {
+  color: var(--color-text);
+}
+
+.graph-status .sep {
+  color: #b9bec5;
+}

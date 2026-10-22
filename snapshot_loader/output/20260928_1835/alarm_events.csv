@@ -1,0 +1,2 @@
+alarm_id,source_system,asset_type,asset_code,alarm_code,severity,severity_level,start_time,end_time,trigger_value,threshold_value,unit,status
+ALM-00073,EMS,Site Controller,EMS-01,SETPOINT_DEVIATION,Warning,1,2026-09-28T18:35:00,2026-09-28T19:00:00,21.572,20.0,kW,Cleared

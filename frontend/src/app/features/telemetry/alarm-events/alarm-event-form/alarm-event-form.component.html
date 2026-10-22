@@ -1,0 +1,164 @@
+<div class="page-header">
+  <div>
+    <a class="back-link" routerLink="/telemetry/alarms">← Back to alarms</a>
+    <h2>{{ isEditMode ? 'Edit Alarm ' + alarmId : 'Add Alarm' }}</h2>
+  </div>
+</div>
+
+<div class="card">
+  @if (loading) {
+    <div class="empty-state">Loading…</div>
+  } @else {
+    <form [formGroup]="form" (ngSubmit)="submit()">
+      @if (error) {
+        <div class="form-error">{{ error }}</div>
+      }
+
+      <h3 class="form-section-title">Alarm</h3>
+      <div class="form-grid">
+        <div class="field">
+          <label for="alarm_id">Alarm ID *</label>
+          <input id="alarm_id" type="text" formControlName="alarm_id" />
+          @if (invalid('alarm_id')) {
+            <span class="field-error">Alarm ID is required.</span>
+          } @else if (!isEditMode) {
+            <span class="field-hint">Next free ID suggested; must be unique.</span>
+          }
+        </div>
+
+        <div class="field">
+          <label for="source">Source *</label>
+          <select id="source" formControlName="source" (change)="onSourceChange()">
+            <option [ngValue]="null" disabled>Select a source</option>
+            @for (s of sources; track s) {
+              <option [ngValue]="s">{{ s }}</option>
+            }
+          </select>
+          @if (invalid('source')) {
+            <span class="field-error">Source is required.</span>
+          }
+        </div>
+
+        <div class="field">
+          <label for="alarm_catalog_id">Alarm Code *</label>
+          <select id="alarm_catalog_id" formControlName="alarm_catalog_id" (change)="onAlarmChange()">
+            <option [ngValue]="null" disabled>{{ form.value.source ? 'Select an alarm' : 'Select a source first' }}</option>
+            @for (c of catalogOptions; track c.alarm_catalog_id) {
+              <option [ngValue]="c.alarm_catalog_id">{{ c.alarm_code }} · {{ c.alarm_type }}</option>
+            }
+          </select>
+          @if (invalid('alarm_catalog_id')) {
+            <span class="field-error">Choose an alarm from the catalog.</span>
+          } @else {
+            <span class="field-hint">From the <a routerLink="/alarm-catalog">Alarm Catalog</a>.</span>
+          }
+        </div>
+
+        <div class="field">
+          <label for="severity_level">Severity *</label>
+          <select id="severity_level" formControlName="severity_level">
+            <option [ngValue]="null" disabled>Select a severity</option>
+            @for (s of lookups?.severities ?? []; track s.severity_level) {
+              <option [ngValue]="s.severity_level">{{ s.severity_level }} · {{ s.severity_name }}</option>
+            }
+          </select>
+          @if (invalid('severity_level')) {
+            <span class="field-error">Severity is required.</span>
+          } @else if (selectedCatalog && form.value.severity_level !== selectedCatalog.severity_level) {
+            <span class="field-hint warn-hint">Differs from the catalog's default.</span>
+          }
+        </div>
+      </div>
+
+      <h3 class="form-section-title">Timing</h3>
+      <div class="form-grid">
+        <div class="field">
+          <label for="start_time">Start *</label>
+          <input id="start_time" type="datetime-local" formControlName="start_time" />
+          @if (invalid('start_time')) {
+            <span class="field-error">Start time is required.</span>
+          } @else {
+            <span class="field-hint">Plant local time.</span>
+          }
+        </div>
+
+        <div class="field">
+          <label for="end_time">Cleared</label>
+          <input id="end_time" type="datetime-local" formControlName="end_time" />
+          @if (groupError('endBeforeStart')) {
+            <span class="field-error">Can't be before the start.</span>
+          } @else {
+            <span class="field-hint">Leave empty while the alarm is active.</span>
+          }
+        </div>
+
+        <div class="field">
+          <label for="acknowledged_by">Acknowledged By</label>
+          <input id="acknowledged_by" type="text" formControlName="acknowledged_by" placeholder="e.g. control-room" />
+        </div>
+
+        <div class="field">
+          <label for="acknowledged_at">Acknowledged At</label>
+          <div class="input-with-action">
+            <input id="acknowledged_at" type="datetime-local" formControlName="acknowledged_at" />
+            <button type="button" class="btn btn-secondary" (click)="acknowledgeNow()">Now</button>
+          </div>
+          @if (groupError('ackPair')) {
+            <span class="field-error">Give both who acknowledged and when, or neither.</span>
+          } @else if (groupError('ackBeforeStart')) {
+            <span class="field-error">Can't be before the start.</span>
+          }
+        </div>
+      </div>
+
+      <h3 class="form-section-title">Asset</h3>
+      <div class="form-grid">
+        <div class="field">
+          <label for="linked_asset_type">Asset Type</label>
+          <select id="linked_asset_type" formControlName="linked_asset_type" (change)="onAssetTypeChange()">
+            <option [ngValue]="null">Not linked</option>
+            @for (t of assetTypes; track t) {
+              <option [ngValue]="t">{{ assetLabels[t] }}</option>
+            }
+          </select>
+        </div>
+
+        <div class="field">
+          <label for="linked_asset_id">Asset</label>
+          <select id="linked_asset_id" formControlName="linked_asset_id">
+            <option [ngValue]="null" disabled>{{ form.value.linked_asset_type ? 'Select an asset' : 'Choose a type first' }}</option>
+            @for (a of assetOptions; track a.asset_id) {
+              <option [ngValue]="a.asset_id">{{ a.name }}</option>
+            }
+          </select>
+          @if (invalid('linked_asset_id')) {
+            <span class="field-error">Choose the asset, or set the type to "Not linked".</span>
+          }
+        </div>
+      </div>
+
+      <h3 class="form-section-title">Measurement</h3>
+      <div class="form-grid three">
+        <div class="field">
+          <label for="trigger_value">Trigger Value</label>
+          <input id="trigger_value" type="number" step="any" formControlName="trigger_value" />
+        </div>
+        <div class="field">
+          <label for="threshold_value">Threshold</label>
+          <input id="threshold_value" type="number" step="any" formControlName="threshold_value" />
+        </div>
+        <div class="field">
+          <label for="unit">Unit</label>
+          <input id="unit" type="text" formControlName="unit" placeholder="e.g. degC" />
+        </div>
+      </div>
+
+      <div class="form-actions">
+        <a class="btn btn-secondary" [routerLink]="isEditMode ? ['/telemetry/alarms', alarmId] : ['/telemetry/alarms']">Cancel</a>
+        <button type="submit" class="btn btn-primary" [disabled]="saving">
+          {{ saving ? 'Saving…' : 'Save Alarm' }}
+        </button>
+      </div>
+    </form>
+  }
+</div>

@@ -1,0 +1,116 @@
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.upload-row {
+  align-items: flex-end;
+}
+
+.inline-field {
+  min-width: 220px;
+}
+
+.upload-note {
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+
+.field.narrow input {
+  width: 110px;
+}
+
+.dp-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 12px 20px 4px;
+}
+
+.dp-stat {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 8px 12px;
+  border: 1px solid var(--color-border, #e3e6ea);
+  border-radius: 8px;
+  background: #fafbfc;
+}
+
+.dp-stat-value {
+  font-size: 18px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.dp-stat-label {
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+
+.link-btn {
+  border: none;
+  background: none;
+  padding: 0;
+  color: inherit;
+  font: inherit;
+  text-decoration: underline dotted;
+  cursor: pointer;
+}
+
+.edit-modal {
+  width: min(640px, calc(100vw - 32px));
+}
+
+.derived-note {
+  margin: 12px 0 0;
+  font-size: 13px;
+  color: var(--color-text-muted);
+}
+
+.problem-note {
+  margin-right: auto;
+  font-size: 13px;
+  color: #875800;
+}
+
+.dp-stat-value {
+  &.pos { color: #b4560b; }
+  &.neg { color: #1f6f43; }
+}
+
+.dp-stat-warn {
+  border-color: #f2c94c;
+  background: #fff8e1;
+}
+
+.edit-modal {
+  width: min(760px, calc(100vw - 32px));
+  max-height: calc(100vh - 48px);
+  overflow-y: auto;
+}
+
+.field-hint {
+  margin-top: 3px;
+  font-size: 11px;
+  color: var(--color-text-muted);
+}
+
+.upload-warning {
+  margin-top: 8px;
+  padding: 8px 12px;
+  border: 1px solid #f2c94c;
+  border-radius: 8px;
+  background: #fff8e1;
+  font-size: 13px;
+  color: #6b4e00;
+}
+
+// key fields are disabled on edit; show it like the disabled selects
+.edit-modal input:disabled {
+  background: rgb(243, 244, 245);
+  color: var(--color-text-muted);
+  cursor: not-allowed;
+}

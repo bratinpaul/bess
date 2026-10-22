@@ -1,0 +1,184 @@
+<div class="page-header">
+  <div>
+    <h2>Tariff Bands</h2>
+    <p class="subtitle">Time-of-use price bands of the market, per EMS or shared · used by the price forecast model</p>
+  </div>
+  <a class="btn btn-primary" [routerLink]="addLink()" [queryParams]="addParams()">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+      <path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+    </svg>
+    Add Band
+  </a>
+</div>
+
+@if (loading) {
+  <div class="card"><div class="empty-state">Loading…</div></div>
+} @else if (error) {
+  <div class="card"><div class="empty-state error">{{ error }}</div></div>
+} @else {
+  <div class="card scope-card">
+    <div class="scope-tabs">
+      @for (s of scopes; track s.id) {
+        <button type="button" class="scope-tab" [class.active]="scope === s.id" (click)="setScope(s.id)">
+          {{ s.label }} <span class="scope-count">{{ s.count }}</span>
+        </button>
+      }
+    </div>
+    <p class="scope-note">
+      @if (scope === null) {
+        Shared bands apply to every EMS without bands of its own@if (sharedUsers) {: {{ sharedUsers }}}.
+        To give one EMS a different tariff, add a band and pick that EMS — it then uses only its own bands.
+      } @else {
+        {{ emsLabel(scope) }} uses only these bands; the shared ones no longer apply to it.
+      }
+    </p>
+
+    <!-- 24 h timeline -->
+    <div class="timeline-head">
+      <h3>Day profile</h3>
+      <div class="season-pick">
+        <label for="season">Season</label>
+        <select id="season" [(ngModel)]="season">
+          @for (s of seasons; track s) {
+            <option [value]="s">{{ s === 'ALL' ? 'All seasons' : s }}</option>
+          }
+        </select>
+      </div>
+    </div>
+    @for (day of ['WEEKDAY', 'WEEKEND']; track day) {
+      <div class="timeline-row">
+        <span class="timeline-label">{{ day === 'WEEKDAY' ? 'Weekdays' : 'Weekends' }}</span>
+        <div class="timeline">
+          @for (seg of segments($any(day)); track seg.start) {
+            @if (seg.band; as b) {
+              <button type="button" class="seg" [style.flex]="seg.end - seg.start"
+                [style.background]="levelColors[b.price_level].bg" [style.color]="levelColors[b.price_level].ink"
+                [title]="b.band_name + ' · ' + levelLabels[b.price_level] + ' · ' + hourLabel(b.start_hour) + '–' + hourLabel(b.end_hour) + ' · click to edit'"
+                (click)="edit(b)">
+                <strong>{{ b.band_code }}</strong>
+                @if (seg.end - seg.start >= 3) {
+                  <small>{{ price(b) }}</small>
+                }
+              </button>
+            } @else {
+              <span class="seg gap" [style.flex]="seg.end - seg.start" [title]="'No band ' + hourLabel(seg.start) + '–' + hourLabel(seg.end)">
+                @if (seg.end - seg.start >= 2) { <small>no band</small> }
+              </span>
+            }
+          }
+        </div>
+        @if (gapHours($any(day)); as g) {
+          <span class="gap-note">{{ g }} h uncovered</span>
+        }
+      </div>
+    }
+    <div class="axis">
+      <span class="timeline-label"></span>
+      <div class="axis-ticks">
+        @for (h of [0, 3, 6, 9, 12, 15, 18, 21, 24]; track h) {
+          <span [style.left.%]="(h / 24) * 100">{{ h }}</span>
+        }
+      </div>
+    </div>
+    <div class="legend">
+      @for (lv of levels; track lv) {
+        <span><i [style.background]="levelColors[lv].bg"></i>{{ levelLabels[lv] }}</span>
+      }
+      <span><i class="gap-swatch"></i>No band</span>
+      <span class="muted">· numbers = reference price $/MWh · bands valid today</span>
+    </div>
+  </div>
+
+  <div class="card table-card">
+    <div class="toolbar">
+      <div class="search-box">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+          <circle cx="11" cy="11" r="7" stroke="currentColor" stroke-width="1.8" />
+          <path d="M20 20l-3.5-3.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
+        </svg>
+        <input type="text" placeholder="Search code, name, level, season…" [(ngModel)]="searchTerm" />
+      </div>
+      <div class="result-count">{{ rows.length }} band{{ rows.length === 1 ? '' : 's' }}</div>
+    </div>
+
+    @if (!rows.length) {
+      <div class="empty-state">No bands in this scope{{ searchTerm ? ' match the search' : '' }}.</div>
+    } @else {
+      <div class="table-scroll">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>Code</th>
+              <th>Name</th>
+              <th>Level</th>
+              <th>Hours</th>
+              <th>Days</th>
+              <th>Season</th>
+              <th class="num">Ref. price ($/MWh)</th>
+              <th>Valid</th>
+              <th>Note</th>
+              <th class="actions-col"></th>
+            </tr>
+          </thead>
+          <tbody>
+            @for (b of rows; track b.tariff_period_id) {
+              <tr (click)="edit(b)">
+                <td class="mono"><strong>{{ b.band_code }}</strong></td>
+                <td>{{ b.band_name }}</td>
+                <td>
+                  <span class="level-chip" [style.background]="levelColors[b.price_level].bg" [style.color]="levelColors[b.price_level].ink">
+                    {{ levelLabels[b.price_level] }}
+                  </span>
+                </td>
+                <td class="nowrap mono">{{ hourLabel(b.start_hour) }}–{{ hourLabel(b.end_hour) }}</td>
+                <td>{{ dayLabel(b.day_type) }}</td>
+                <td>{{ b.season === 'ALL' ? 'All' : b.season }}</td>
+                <td class="num">{{ price(b) }}</td>
+                <td class="nowrap">{{ validity(b) }}</td>
+                <td class="note-cell" [title]="b.note ?? ''">{{ b.note || '—' }}</td>
+                <td class="actions-col">
+                  <button class="btn btn-secondary btn-icon" title="Edit" (click)="edit(b, $event)">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+                      <path d="M4 20h4l10.5-10.5a2.1 2.1 0 0 0-3-3L5 17v3Z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" />
+                    </svg>
+                  </button>
+                  <button class="btn btn-danger btn-icon" title="Delete" (click)="confirmDelete(b, $event)">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+                      <path
+                        d="M5 7h14M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2m2 0-1 13a1 1 0 0 1-1 1H8a1 1 0 0 1-1-1L6 7"
+                        stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
+                    </svg>
+                  </button>
+                </td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      </div>
+    }
+  </div>
+}
+
+@if (itemToDelete) {
+  <div class="modal-backdrop" (click)="cancelDelete()">
+    <div class="modal" (click)="$event.stopPropagation()">
+      <h3>Delete band?</h3>
+      <p>
+        This will permanently delete <strong>{{ itemToDelete.band_code }}</strong> ({{ hourLabel(itemToDelete.start_hour) }}–{{ hourLabel(itemToDelete.end_hour) }},
+        {{ emsLabel(itemToDelete.ems_id) }}). Those hours will have no band until you add one. Price forecast runs already trained keep
+        the bands they were trained with.
+      </p>
+      @if (deleteError) {
+        <div class="form-error">{{ deleteError }}</div>
+      }
+      <div class="modal-actions">
+        <button class="btn btn-secondary" (click)="cancelDelete()" [disabled]="deleting">{{ deleteError ? 'Close' : 'Cancel' }}</button>
+        @if (!deleteError) {
+          <button class="btn btn-danger-solid" (click)="deleteConfirmed()" [disabled]="deleting">
+            {{ deleting ? 'Deleting…' : 'Delete' }}
+          </button>
+        }
+      </div>
+    </div>
+  </div>
+}

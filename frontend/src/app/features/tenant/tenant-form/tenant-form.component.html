@@ -1,0 +1,195 @@
+<div class="page-header">
+  <div>
+    <a class="back-link" routerLink="/tenants">← Back to tenants</a>
+    <h2>{{ isEditMode ? 'Edit Tenant' : 'Add Tenant' }}</h2>
+  </div>
+</div>
+
+<div class="card">
+  @if (loading) {
+    <div class="empty-state">Loading…</div>
+  } @else {
+    <form [formGroup]="form" (ngSubmit)="submit()">
+      @if (error) {
+        <div class="form-error">{{ error }}</div>
+      }
+
+      <h3 class="form-section-title">Organisation</h3>
+      <div class="form-grid">
+        <div class="field">
+          <label for="name">Name *</label>
+          <input id="name" type="text" formControlName="name" />
+          @if (invalid('name')) {
+            <span class="field-error">Name is required (max 200 characters).</span>
+          }
+        </div>
+
+        <div class="field">
+          <label for="legal_name">Legal Name</label>
+          <input id="legal_name" type="text" formControlName="legal_name" />
+          @if (invalid('legal_name')) {
+            <span class="field-error">Max 200 characters.</span>
+          }
+        </div>
+
+        <div class="field">
+          <label for="tenant_type">Type</label>
+          <select id="tenant_type" formControlName="tenant_type">
+            <option [ngValue]="null">— Not specified —</option>
+            @for (t of types; track t) {
+              <option [ngValue]="t">{{ typeLabel(t) }}</option>
+            }
+          </select>
+          @if (typesError) {
+            <span class="field-error">Could not load the tenant types.</span>
+          }
+        </div>
+
+        <div class="field">
+          <label for="status">Status *</label>
+          <select id="status" formControlName="status">
+            @for (s of statuses; track s) {
+              <option [value]="s">{{ s | titlecase }}</option>
+            }
+          </select>
+        </div>
+      </div>
+
+      <h3 class="form-section-title">Address</h3>
+      <div class="form-grid">
+        <div class="field span-2">
+          <label for="address_line1">Address Line 1</label>
+          <input id="address_line1" type="text" formControlName="address_line1" />
+        </div>
+
+        <div class="field span-2">
+          <label for="address_line2">Address Line 2</label>
+          <input id="address_line2" type="text" formControlName="address_line2" />
+        </div>
+
+        <div class="field">
+          <label for="city">City</label>
+          <input id="city" type="text" formControlName="city" />
+        </div>
+
+        <div class="field">
+          <label for="state_province">State / Province</label>
+          <input id="state_province" type="text" formControlName="state_province" />
+        </div>
+
+        <div class="field">
+          <label for="postal_code">Postal Code</label>
+          <input id="postal_code" type="text" formControlName="postal_code" />
+          @if (invalid('postal_code')) {
+            <span class="field-error">Max 20 characters.</span>
+          }
+        </div>
+
+        <div class="field">
+          <label for="country">Country</label>
+          <input id="country" type="text" formControlName="country" />
+        </div>
+      </div>
+
+      <h3 class="form-section-title">Organisation Phone &amp; Email</h3>
+      <div class="form-grid">
+        <div class="field">
+          <label for="phone">Phone</label>
+          <input id="phone" type="tel" formControlName="phone" placeholder="+91 33 4000 1234" />
+          @if (invalid('phone')) {
+            <span class="field-error">Digits, spaces and + ( ) - . only, 5–30 characters.</span>
+          }
+        </div>
+
+        <div class="field">
+          <label for="email">Email</label>
+          <input id="email" type="email" formControlName="email" placeholder="ops@example.com" />
+          @if (invalid('email')) {
+            <span class="field-error">Enter a valid email address.</span>
+          } @else {
+            <span class="field-hint">Must be unique across tenants.</span>
+          }
+        </div>
+      </div>
+
+      <h3 class="form-section-title">Primary Contact</h3>
+      <div class="contact-card primary" formGroupName="primaryContact">
+        <ng-container *ngTemplateOutlet="contactFields; context: { group: primaryContact, key: 'primary' }"></ng-container>
+        @if (primaryContact.hasError('nameRequired') && primaryContact.touched) {
+          <span class="field-error">Enter the contact's name, or clear the other fields.</span>
+        } @else {
+          <span class="field-hint">Optional. Leave empty if the tenant has no primary contact.</span>
+        }
+      </div>
+
+      <div class="additional-head">
+        <h3 class="form-section-title">Additional Contacts ({{ additionalContacts.length }})</h3>
+        <button type="button" class="btn btn-secondary" (click)="addContact()">+ Add additional contact</button>
+      </div>
+      @if (additionalContacts.length === 0) {
+        <p class="contacts-empty">No additional contacts.</p>
+      }
+      <div formArrayName="additionalContacts">
+        @for (row of additionalContacts.controls; track row; let i = $index) {
+          <div class="contact-card" [formGroupName]="i">
+            <div class="contact-card-head">
+              <span class="contact-card-title">Contact {{ i + 1 }}</span>
+              <div class="contact-card-actions">
+                <button type="button" class="link-btn" (click)="makePrimary(i)">Make primary</button>
+                <button type="button" class="btn btn-danger btn-icon" title="Remove contact" (click)="removeContact(i)">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+                    <path
+                      d="M5 7h14M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2m2 0-1 13a1 1 0 0 1-1 1H8a1 1 0 0 1-1-1L6 7"
+                      stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
+                  </svg>
+                </button>
+              </div>
+            </div>
+            <ng-container *ngTemplateOutlet="contactFields; context: { group: row, key: 'c' + i }"></ng-container>
+          </div>
+        }
+      </div>
+
+      <div class="form-actions">
+        <a class="btn btn-secondary" routerLink="/tenants">Cancel</a>
+        <button type="submit" class="btn btn-primary" [disabled]="saving">
+          {{ saving ? 'Saving…' : 'Save Tenant' }}
+        </button>
+      </div>
+    </form>
+  }
+</div>
+
+<!-- name / role / phone / email for one contact; rendered inside its formGroupName -->
+<ng-template #contactFields let-group="group" let-key="key">
+  <div class="form-grid" [formGroup]="group">
+    <div class="field">
+      <label [for]="key + '_name'">Name{{ key === 'primary' ? '' : ' *' }}</label>
+      <input [id]="key + '_name'" type="text" formControlName="contact_name" />
+      @if (contactInvalid(group, 'contact_name')) {
+        <span class="field-error">Name is required (max 200 characters).</span>
+      }
+    </div>
+    <div class="field">
+      <label [for]="key + '_role'">Role</label>
+      <input [id]="key + '_role'" type="text" formControlName="role" placeholder="e.g. Site manager, Billing" />
+      @if (contactInvalid(group, 'role')) {
+        <span class="field-error">Max 50 characters.</span>
+      }
+    </div>
+    <div class="field">
+      <label [for]="key + '_phone'">Phone</label>
+      <input [id]="key + '_phone'" type="tel" formControlName="phone" />
+      @if (contactInvalid(group, 'phone')) {
+        <span class="field-error">Digits, spaces and + ( ) - . only, 5–30 characters.</span>
+      }
+    </div>
+    <div class="field">
+      <label [for]="key + '_email'">Email</label>
+      <input [id]="key + '_email'" type="email" formControlName="email" />
+      @if (contactInvalid(group, 'email')) {
+        <span class="field-error">Enter a valid email address.</span>
+      }
+    </div>
+  </div>
+</ng-template>

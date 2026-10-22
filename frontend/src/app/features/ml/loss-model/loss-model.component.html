@@ -1,0 +1,391 @@
+<div class="page-header">
+  <div>
+    <h2>Loss Model</h2>
+    <p class="subtitle">
+      Loss decomposition and performance benchmarking: a per-interval energy balance along battery → DC bus → PCS → transformer → POI
+      (minus auxiliaries and standby), and a grey-box expected loss per stage fitted on a baseline window. Results go to the
+      <a routerLink="/ml/loss-decomposition">Loss Decomposition</a> viewer.
+    </p>
+  </div>
+</div>
+
+@if (optionsError) {
+  <div class="card empty-state error">{{ optionsError }}</div>
+}
+
+@if (options && form) {
+  <div class="lm-grid">
+    <section class="card lm-panel">
+      <h3 class="lm-title">New run</h3>
+
+      <h4 class="lm-group">Battery systems</h4>
+      <div class="lm-systems">
+        @for (s of options.systems; track s.system_id) {
+          <label class="lm-system" [class.on]="selectedSystems.has(s.system_id)">
+            <input type="checkbox" [checked]="selectedSystems.has(s.system_id)" (change)="toggleSystem(s.system_id)" />
+            <span>
+              <strong>{{ s.system_name }}</strong> · {{ s.site_name }}
+              <span class="lm-sub">{{ s.first_day }} → {{ s.last_day }} · {{ s.intervals | number }} intervals</span>
+            </span>
+          </label>
+        }
+      </div>
+
+      <div class="form-grid three">
+        <div class="field">
+          <label for="from">From</label>
+          <input id="from" type="date" [(ngModel)]="form.date_from" [min]="span?.first ?? ''" [max]="span?.last ?? ''" />
+        </div>
+        <div class="field">
+          <label for="to">To</label>
+          <input id="to" type="date" [(ngModel)]="form.date_to" [min]="span?.first ?? ''" [max]="span?.last ?? ''" />
+        </div>
+        <div class="field">
+          <label for="name">Name (optional)</label>
+          <input id="name" type="text" maxlength="120" [(ngModel)]="form.run_name" placeholder="e.g. Aug–Sep fleet" />
+        </div>
+      </div>
+
+      <h4 class="lm-group">Benchmark (expected loss)</h4>
+      <div class="form-grid three">
+        <div class="field" title="The expected-loss models are fitted on the first N days of each system's window (0 = the whole window)">
+          <label for="base">Baseline window (days)</label>
+          <input id="base" type="number" min="0" max="365" [(ngModel)]="form.baseline_days" />
+        </div>
+        <div class="field" title="Battery resistance growth per SOH point lost, so the benchmark ages with the battery (3.3 % = R doubles at SOH 70 %)">
+          <label for="rg">Resistance growth (% / SOH pt)</label>
+          <input id="rg" type="number" min="0" max="20" step="0.1" [(ngModel)]="form.resistance_growth_pct_per_soh" />
+        </div>
+        <div class="field" title="Blank = battery_opt_param.self_discharge_pct_day, else 0.03 %/day">
+          <label for="sd">Self-discharge (% / day)</label>
+          <input id="sd" type="number" min="0" max="5" step="0.01" [(ngModel)]="ui.selfDischarge" placeholder="master data" />
+        </div>
+        <div class="field" title="Reference conditions for the normalized efficiency trend">
+          <label for="rl">Reference load (%)</label>
+          <input id="rl" type="number" min="1" max="120" [(ngModel)]="ui.refLoadPct" />
+        </div>
+        <div class="field">
+          <label for="rt">Reference temperature (°C)</label>
+          <input id="rt" type="number" min="-20" max="60" [(ngModel)]="form.ref_temp_c" />
+        </div>
+        <div class="field">
+          <label for="ra">Reference ambient (°C)</label>
+          <input id="ra" type="number" min="-20" max="60" [(ngModel)]="form.ref_ambient_c" />
+        </div>
+      </div>
+
+      <h4 class="lm-group">Transformer</h4>
+      <div class="lm-choices">
+        <label class="lm-choice" [class.on]="form.transformer_mode === 'metered'">
+          <input type="radio" name="xm" value="metered" [(ngModel)]="form.transformer_mode" />
+          <span>Metered residual: POI − aux − PCS AC <span class="lm-sub">the identity closes by construction</span></span>
+        </label>
+        <label class="lm-choice" [class.on]="form.transformer_mode === 'model'">
+          <input type="radio" name="xm" value="model" [(ngModel)]="form.transformer_mode" />
+          <span>Nameplate model: core + copper·(S/S<sub>rated</sub>)² <span class="lm-sub">the closure error shows it against the meters</span></span>
+        </label>
+      </div>
+      <div class="form-grid three">
+        <div class="field" title="Blank = the site's transformer (battery_master.transformer), else the PCS rated kVA">
+          <label for="xk">Rating (kVA)</label>
+          <input id="xk" type="number" min="1" [(ngModel)]="ui.xfmrKva" placeholder="master data" />
+        </div>
+        <div class="field" title="No-load (core) loss as % of the rating, whenever energized">
+          <label for="xc">Core loss (% of rating)</label>
+          <input id="xc" type="number" min="0" max="5" step="0.05" [(ngModel)]="form.xfmr_core_pct" />
+        </div>
+        <div class="field" title="Load (copper) loss at rated kVA, % of the rating">
+          <label for="xu">Copper loss at rated (%)</label>
+          <input id="xu" type="number" min="0" max="5" step="0.1" [(ngModel)]="form.xfmr_cu_pct" />
+        </div>
+      </div>
+
+      <h4 class="lm-group">Guarantee and scorecard</h4>
+      <div class="form-grid three">
+        <div class="field" title="Blank = battery_opt_param.rte_ac when the system has one, else 85 %">
+          <label for="g">Guaranteed RTE (%)</label>
+          <input id="g" type="number" min="1" max="100" step="0.1" [(ngModel)]="ui.guarantee" placeholder="master data" />
+        </div>
+        <div class="field">
+          <label for="gb">Guarantee basis</label>
+          <select id="gb" [(ngModel)]="form.guarantee_basis">
+            @for (b of options.guarantee_bases; track b.key) {
+              <option [ngValue]="b.key">{{ b.label }}</option>
+            }
+          </select>
+        </div>
+        <div class="field" title="A day needs at least this share of the usable energy charged and discharged to get a round trip">
+          <label for="mc">Min cycle for an RTE (% usable)</label>
+          <input id="mc" type="number" min="0" max="100" [(ngModel)]="ui.minCyclePct" />
+        </div>
+      </div>
+
+      <h4 class="lm-group">Control charts (daily excess %)</h4>
+      <div class="form-grid four">
+        <div class="field"><label for="el">EWMA λ</label><input id="el" type="number" min="0.01" max="1" step="0.05" [(ngModel)]="form.ewma_lambda" /></div>
+        <div class="field"><label for="eL">EWMA limit (σ)</label><input id="eL" type="number" min="0.5" max="10" step="0.5" [(ngModel)]="form.ewma_l" /></div>
+        <div class="field"><label for="ck">CUSUM k (σ)</label><input id="ck" type="number" min="0" max="5" step="0.1" [(ngModel)]="form.cusum_k" /></div>
+        <div class="field"><label for="ch">CUSUM h (σ)</label><input id="ch" type="number" min="0.5" max="50" step="0.5" [(ngModel)]="form.cusum_h" /></div>
+      </div>
+
+      <h4 class="lm-group">Ledger</h4>
+      <div class="form-grid three">
+        <div class="field" title="|P_ac| at or below this share of rated power counts as idle">
+          <label for="idle">Idle threshold (% rated)</label>
+          <input id="idle" type="number" min="0" max="20" step="0.5" [(ngModel)]="ui.idlePct" />
+        </div>
+        <div class="field" title="Rest periods shorter than this are ignored for self-discharge">
+          <label for="mr">Min rest for standby (h)</label>
+          <input id="mr" type="number" min="0.25" max="48" step="0.25" [(ngModel)]="form.standby_min_rest_h" />
+        </div>
+        <div class="field" title="An SOC step larger than this at rest is a recalibration, not self-discharge">
+          <label for="rj">Recalibration step (% SOC)</label>
+          <input id="rj" type="number" min="0.01" max="10" step="0.1" [(ngModel)]="form.standby_max_drop_pct_h" />
+        </div>
+      </div>
+
+      <div class="lm-actions">
+        <span class="lm-note">{{ selectedSystems.size }} system(s) · about 2–3 s per system</span>
+        <button type="button" class="btn btn-primary" [disabled]="running || !selectedSystems.size" (click)="run()">
+          {{ running ? 'Computing…' : 'Compute run' }}
+        </button>
+      </div>
+      @if (runError) {
+        <div class="form-error">{{ runError }}</div>
+      }
+    </section>
+
+    <section class="card lm-panel">
+      <div class="lm-head">
+        <h3 class="lm-title">Runs</h3>
+        <button type="button" class="btn btn-secondary" (click)="loadRuns()">Refresh</button>
+      </div>
+      @if (runs.length === 0) {
+        <div class="empty-state">No runs yet - compute one.</div>
+      } @else {
+        <div class="table-scroll">
+          <table class="data-table lm-runs">
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Run</th>
+                <th>Range</th>
+                <th class="num">Plant RTE</th>
+                <th class="num">PR</th>
+                <th>Status</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              @for (r of runs; track r.run_id) {
+                <tr [class.lm-selected]="selected?.run_id === r.run_id">
+                  <td class="mono">{{ r.run_id }}</td>
+                  <td>
+                    <button type="button" class="link-btn" (click)="open(r.run_id)">{{ r.run_name || 'Loss run' }}</button>
+                    <div class="lm-sub">{{ r.system_ids.length }} system(s) · baseline {{ r.params.baseline_days }} d · xfmr {{ r.params.transformer_mode }}</div>
+                  </td>
+                  <td class="mono">{{ r.date_from }} → {{ r.date_to }}</td>
+                  <td class="num mono">{{ pct(fleetAvg(r, 'rte_plant'), 1) }} %</td>
+                  <td class="num mono">{{ pct(fleetAvg(r, 'performance_ratio'), 1) }} %</td>
+                  <td><span class="lm-status" [attr.data-status]="r.status">{{ r.status }}</span></td>
+                  <td class="lm-row-actions">
+                    @if (r.status === 'COMPLETED') {
+                      <a class="btn btn-secondary btn-sm" routerLink="/ml/loss-decomposition" [queryParams]="{ run: r.run_id }">View</a>
+                    }
+                    <button type="button" class="btn btn-danger btn-icon" title="Delete" (click)="confirmDelete(r)">✕</button>
+                  </td>
+                </tr>
+              }
+            </tbody>
+          </table>
+        </div>
+      }
+    </section>
+  </div>
+
+  @if (selected) {
+    <section class="card lm-result">
+      <div class="lm-head">
+        <h3 class="lm-title">
+          Run #{{ selected.run_id }} {{ selected.run_name ? '· ' + selected.run_name : '' }}
+          <span class="lm-sub">{{ selected.date_from }} → {{ selected.date_to }} · {{ selected.system_ids.length }} system(s) ·
+            {{ num((selected.duration_ms ?? 0) / 1000, 1) }} s</span>
+        </h3>
+        @if (selected.status === 'COMPLETED') {
+          <a class="btn btn-primary" routerLink="/ml/loss-decomposition" [queryParams]="{ run: selected.run_id }">Open in Loss Decomposition</a>
+        }
+      </div>
+
+      @if (selected.status === 'FAILED') {
+        <div class="form-error">{{ selected.error_message }}</div>
+      } @else if (selected.summary) {
+        <h4 class="lm-group">Fleet scorecard</h4>
+        <div class="table-scroll">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>System</th>
+                <th class="num">Battery RTE</th>
+                <th class="num">PCS AC RTE</th>
+                <th class="num">POI excl. aux</th>
+                <th class="num">Plant RTE</th>
+                <th class="num">PR</th>
+                <th class="num">vs guarantee</th>
+                <th class="num">Aux % thr.</th>
+                <th class="num">Losses (MWh)</th>
+                <th class="num">Loss value</th>
+                <th class="num">Excess value</th>
+                <th class="num">Alarms</th>
+              </tr>
+            </thead>
+            <tbody>
+              @for (f of selected.summary.fleet; track f.system_id) {
+                <tr>
+                  <td>{{ f.system_name }}<div class="lm-sub">{{ f.site_name }}</div></td>
+                  <td class="num mono">{{ pct(f.rte_term, 2) }} %</td>
+                  <td class="num mono">{{ pct(f.rte_ac, 2) }} %</td>
+                  <td class="num mono">{{ pct(f.rte_poi_excl_aux, 2) }} %</td>
+                  <td class="num mono"><strong>{{ pct(f.rte_plant, 2) }} %</strong></td>
+                  <td class="num mono">{{ pct(f.performance_ratio, 1) }} %</td>
+                  <td class="num mono" [class.lm-bad]="(f.guarantee_gap_pts ?? -1) > 0">{{ f.guarantee_gap_pts === null ? '—' : ((f.guarantee_gap_pts > 0 ? '−' : '+') + num(Math.abs(f.guarantee_gap_pts), 2) + ' pts') }}</td>
+                  <td class="num mono">{{ num(f.aux_pct_of_throughput, 2) }} %</td>
+                  <td class="num mono">{{ num(f.total_loss_kwh / 1000, 2) }}</td>
+                  <td class="num mono">{{ num(f.loss_usd, 0) }} USD</td>
+                  <td class="num mono">{{ num(f.excess_usd, 0) }} USD</td>
+                  <td class="num mono" [class.lm-bad]="alarmCount(f) > 0">{{ alarmCount(f) }}</td>
+                </tr>
+              }
+            </tbody>
+          </table>
+        </div>
+
+        @if (selected.warnings.length) {
+          <div class="lm-warning">
+            <button type="button" class="link-btn" (click)="showWarnings = !showWarnings">⚠ {{ selected.warnings.length }} data note(s) {{ showWarnings ? '▴' : '▾' }}</button>
+            @if (showWarnings) {
+              <ul class="lm-notes">
+                @for (w of selected.warnings; track $index) {
+                  <li>{{ w }}</li>
+                }
+              </ul>
+            }
+          </div>
+        }
+
+        <div class="lm-system-pick">
+          <label for="sys">Battery system</label>
+          <select id="sys" [(ngModel)]="systemKey">
+            @for (id of selected.system_ids; track id) {
+              <option [ngValue]="'' + id">{{ systemName(id) }}</option>
+            }
+          </select>
+        </div>
+
+        @if (models && summary) {
+          <div class="lm-two">
+            <div>
+              <h4 class="lm-group">Expected-loss models · baseline {{ models.baseline.from | date: 'yyyy-MM-dd' }} → {{ models.baseline.to | date: 'yyyy-MM-dd' }} ({{ models.baseline.rows | number }} intervals)</h4>
+              <div class="table-scroll">
+                <table class="data-table lm-models">
+                  <thead>
+                    <tr><th>Stage</th><th>Model</th><th class="num">Fit R²</th><th class="num">Fit MAE</th><th class="num">Out-of-baseline R²</th><th class="num">MAE</th></tr>
+                  </thead>
+                  <tbody>
+                    @for (d of dirs(models.battery.directions); track d.key) {
+                      <tr>
+                        <td>Battery · {{ d.key.toLowerCase() }}</td>
+                        <td class="mono lm-formula">dV = {{ num(d.v.r0_v * 1000, 1) }} mV + {{ num(d.v.r_mohm_cell_equiv, 3) }} mΩ·|I|
+                          {{ d.v.temperature_term ? (d.v.kt_per_c >= 0 ? '+ ' : '− ') + num(Math.abs(d.v.kt_per_c * 1e6), 2) + ' µV/A·°C·|I|·(25−T)' : '' }} + SOC ({{ num(d.v.soc_lin_v * 1000, 1) }}, {{ num(d.v.soc_quad_v * 1000, 1) }}) mV
+                          <span class="lm-sub">pack R ≈ {{ num(d.v.r_ohm_pack, 3) }} Ω · {{ models.battery.cells_series }} cells · +{{ models.battery.soh_growth_pct_per_pt }} %/SOH pt</span></td>
+                        <td class="num mono">{{ num(d.v.fit.r2, 2) }}</td>
+                        <td class="num mono">{{ num(d.v.fit.mae_kw, 2) }} kW</td>
+                        <td class="num mono" [class.lm-bad]="(d.v.out_of_baseline.r2 ?? 1) < 0.5">{{ num(d.v.out_of_baseline.r2, 2) }}</td>
+                        <td class="num mono">{{ num(d.v.out_of_baseline.mae_kw, 2) }} kW</td>
+                      </tr>
+                    }
+                    @for (d of dirs(models.pcs.directions); track d.key) {
+                      <tr>
+                        <td>PCS · {{ d.key.toLowerCase() }}</td>
+                        <td class="mono lm-formula">P_loss = {{ num(d.v.a_kw, 2) }} + {{ num(d.v.b_kw, 2) }}·s + {{ num(d.v.c_kw, 2) }}·s²
+                          {{ d.v.temperature_term ? (d.v.d_kw_per_c >= 0 ? '+ ' : '− ') + num(Math.abs(d.v.d_kw_per_c), 3) + '·s·(T−25)' : '' }} kW
+                          <span class="lm-sub">s = |S| / {{ num(models.pcs.rated_kva, 0) }} kVA · η at {{ num(models.reference.load_frac * 100, 0) }} % = {{ num(d.v.eta_ref_pct, 2) }} %</span></td>
+                        <td class="num mono">{{ num(d.v.fit.r2, 2) }}</td>
+                        <td class="num mono">{{ num(d.v.fit.mae_kw, 2) }} kW</td>
+                        <td class="num mono" [class.lm-bad]="(d.v.out_of_baseline.r2 ?? 1) < 0.5">{{ num(d.v.out_of_baseline.r2, 2) }}</td>
+                        <td class="num mono">{{ num(d.v.out_of_baseline.mae_kw, 2) }} kW</td>
+                      </tr>
+                    }
+                    <tr>
+                      <td>Transformer</td>
+                      <td class="mono lm-formula">{{ num(models.transformer.nameplate_core_kw, 2) }} kW core + {{ num(models.transformer.nameplate_cu_at_rated_kw, 2) }} kW·(S/S<sub>r</sub>)²
+                        <span class="lm-sub">{{ models.transformer.mode }} · {{ num(models.transformer.rating_kva, 0) }} kVA ({{ models.transformer.rating_source }}) ·
+                          {{ models.transformer.metered_residual ? 'fitted to residual: ' + num(models.transformer.fitted_core_kw, 2) + ' + ' + num(models.transformer.fitted_cu_at_rated_kw, 2) + ' kW' : 'no metered residual (|mean| ' + num(models.transformer.residual_abs_mean_kw, 3) + ' kW)' }}</span></td>
+                      <td class="num mono">—</td><td class="num mono">—</td><td class="num mono">—</td><td class="num mono">—</td>
+                    </tr>
+                    <tr>
+                      <td>Auxiliaries</td>
+                      <td class="mono lm-formula">aux = {{ num(models.aux.c0_kw, 2) }} + {{ num(models.aux.c1_kw_per_kw, 4) }}·|P_dc| {{ models.aux.c2_kw_per_c >= 0 ? '+' : '−' }} {{ num(Math.abs(models.aux.c2_kw_per_c), 3) }}·T + {{ num(models.aux.c3_kw_per_c_above_25, 3) }}·max(T−25, 0) kW
+                        <span class="lm-sub">controls base {{ num(models.aux.controls_base_kw, 2) }} kW · at reference {{ num(models.aux.ref_aux_kw, 1) }} kW</span></td>
+                      <td class="num mono">{{ num(models.aux.fit.r2, 2) }}</td>
+                      <td class="num mono">{{ num(models.aux.fit.mae_kw, 2) }} kW</td>
+                      <td class="num mono">{{ num(models.aux.out_of_baseline.r2, 2) }}</td>
+                      <td class="num mono">{{ num(models.aux.out_of_baseline.mae_kw, 2) }} kW</td>
+                    </tr>
+                    <tr>
+                      <td>Standby</td>
+                      <td class="mono lm-formula">{{ num(models.standby.self_discharge_pct_day, 3) }} %/day × {{ num(models.standby.kwh_per_pct, 2) }} kWh/% = {{ num(models.standby.expected_kw_at_rest * 1000, 1) }} W at rest
+                        <span class="lm-sub">{{ models.standby.source }}</span></td>
+                      <td class="num mono">—</td><td class="num mono">—</td><td class="num mono">—</td><td class="num mono">—</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <div>
+              <h4 class="lm-group">Closure audit</h4>
+              <table class="data-table lm-audit">
+                <tbody>
+                  <tr><td>Energy-balance closure (identity)</td><td class="num mono">{{ num(summary.window.closure_kwh, 1) }} kWh · {{ num(summary.window.closure_pct_of_throughput, 3) }} % of throughput</td></tr>
+                  <tr><td>Transformer residual POI − aux − AC</td><td class="num mono">mean |{{ num(audit('xfmr_residual_abs_mean_kw'), 3) }}| · max {{ num(audit('xfmr_residual_abs_max_kw'), 2) }} kW</td></tr>
+                  <tr><td>PCS loss vs efficiency_pct</td><td class="num mono">mean |{{ num(audit('pcs_eta_check_abs_mean_kw'), 3) }}| kW · Σ {{ num(summary.window.closure_pcs_kwh, 1) }} kWh</td></tr>
+                  <tr><td>DC bus (PCS DC − BMS)</td><td class="num mono">mean |{{ num(audit('dc_meter_abs_mean_kw'), 3) }}| kW</td></tr>
+                  <tr><td>Cells: stored energy vs ΔSOC × kWh/%</td><td class="num mono">{{ num(audit('battery_closure_abs_mean_kwh_day'), 1) }} kWh/day (mean |diff|) · {{ num(summary.kwh_per_pct, 2) }} kWh/% from {{ audit('charge_phases_used') }} charge phases</td></tr>
+                  <tr><td>Negative internal-loss intervals</td><td class="num mono">{{ audit('negative_internal_intervals') }}</td></tr>
+                  <tr><td>Standby (SOC drift at rest)</td><td class="num mono">{{ audit('standby_rest_periods') }} periods · {{ audit('standby_rest_hours') }} h · {{ audit('standby_recalibrations_excluded') }} recalibrations excluded · net drift {{ num(audit('standby_net_drift_pct'), 2) }} %</td></tr>
+                </tbody>
+              </table>
+              <h4 class="lm-group">Counters vs integrated power</h4>
+              <table class="data-table lm-audit">
+                <thead><tr><th>Meter</th><th class="num">Counter</th><th class="num">∫ P·Δt</th><th class="num">Diff</th></tr></thead>
+                <tbody>
+                  @for (c of counterRows; track c.key) {
+                    <tr>
+                      <td>{{ c.label }}</td>
+                      <td class="num mono">{{ num(c.counter, 0) }}</td>
+                      <td class="num mono">{{ num(c.integral, 0) }}</td>
+                      <td class="num mono" [class.lm-bad]="Math.abs(c.diffPct ?? 0) > 1">{{ num(c.diffPct, 3) }} %{{ c.missing ? ' · ' + c.missing + ' d no counter' : '' }}</td>
+                    </tr>
+                  }
+                </tbody>
+              </table>
+            </div>
+          </div>
+        }
+      }
+    </section>
+  }
+}
+
+@if (toDelete; as d) {
+  <div class="modal-backdrop" (click)="toDelete = null">
+    <div class="modal" (click)="$event.stopPropagation()">
+      <h3>Delete run #{{ d.run_id }}?</h3>
+      <p>This deletes the run, its daily scorecard and its interval ledger. The telemetry is not touched. This cannot be undone.</p>
+      <div class="modal-actions">
+        <button class="btn btn-secondary" (click)="toDelete = null">Cancel</button>
+        <button class="btn btn-danger-solid" (click)="deleteConfirmed()">Delete</button>
+      </div>
+    </div>
+  </div>
+}

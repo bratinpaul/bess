@@ -1,0 +1,250 @@
+<div class="page-header">
+  <div>
+    <h2>Alarm Catalog</h2>
+    <p class="subtitle">Alarms the BMS, PCS, HVAC and EMS can raise, with their severity and thresholds</p>
+  </div>
+  <a class="btn btn-primary" routerLink="/alarm-catalog/new">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+      <path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+    </svg>
+    Add Alarm
+  </a>
+</div>
+
+<!-- bulk load -->
+<div class="card telemetry-upload-card">
+  <div class="telemetry-section-header">
+    <h3>Bulk Load Catalog</h3>
+    <p class="subtitle">Excel or CSV only · entries that already exist (same source and alarm code) are updated</p>
+  </div>
+
+  <div class="upload-row">
+    <input type="file" accept=".xlsx,.xlsm,.csv" (change)="onFileSelected($event)" #fileInput />
+    <button type="button" class="btn btn-primary" [disabled]="!selectedFile || uploading" (click)="upload()">
+      {{ uploading ? 'Uploading…' : 'Upload' }}
+    </button>
+  </div>
+
+  @if (uploadError) {
+    <div class="form-error">{{ uploadError }}</div>
+  }
+
+  @if (uploadResult) {
+    <div class="upload-summary">
+      <div class="upload-stat">
+        <span class="upload-stat-value">{{ uploadResult.total_rows }}</span>
+        <span class="upload-stat-label">Rows in file</span>
+      </div>
+      <div class="upload-stat">
+        <span class="upload-stat-value">{{ uploadResult.inserted }}</span>
+        <span class="upload-stat-label">Inserted</span>
+      </div>
+      <div class="upload-stat">
+        <span class="upload-stat-value">{{ uploadResult.updated }}</span>
+        <span class="upload-stat-label">Updated</span>
+      </div>
+      <div class="upload-stat" [class.upload-stat-error]="uploadResult.error_count > 0">
+        <span class="upload-stat-value">{{ uploadResult.error_count }}</span>
+        <span class="upload-stat-label">Rows skipped</span>
+      </div>
+    </div>
+    @if (uploadResult.sheet || uploadResult.ignored_columns.length) {
+      <p class="upload-note">
+        @if (uploadResult.sheet) {
+          Read sheet <strong>{{ uploadResult.sheet }}</strong>.
+        }
+        @if (uploadResult.ignored_columns.length) {
+          Ignored column{{ uploadResult.ignored_columns.length === 1 ? '' : 's' }}: {{ uploadResult.ignored_columns.join(', ') }}.
+        }
+      </p>
+    }
+
+    @if (uploadResult.errors.length > 0) {
+      <div class="upload-errors">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>Row</th>
+              <th>Errors</th>
+            </tr>
+          </thead>
+          <tbody>
+            @for (rowError of visibleUploadErrors; track rowError.row) {
+              <tr>
+                <td class="mono">{{ rowError.row }}</td>
+                <td>{{ rowError.errors.join('; ') }}</td>
+              </tr>
+            }
+          </tbody>
+        </table>
+        @if (uploadResult.errors.length > 10) {
+          <button type="button" class="link-btn" (click)="showAllUploadErrors = !showAllUploadErrors">
+            {{ showAllUploadErrors ? 'Show fewer' : 'Show all ' + uploadResult.errors.length + ' skipped rows' }}
+          </button>
+        }
+      </div>
+    }
+  }
+</div>
+
+<!-- catalog -->
+<div class="card catalog-card">
+  @if (loading && items.length === 0) {
+    <div class="empty-state">Loading the alarm catalog…</div>
+  } @else if (error) {
+    <div class="empty-state error">{{ error }}</div>
+  } @else if (items.length === 0) {
+    <div class="empty-state">The catalog is empty. Upload the Alarm Catalog sheet above or click "Add Alarm".</div>
+  } @else {
+    <div class="source-tabs" role="tablist" aria-label="Filter by source">
+      <button type="button" class="source-tab" [class.active]="!sourceFilter" (click)="sourceFilter = ''; onFilterChange()">
+        All <span class="source-tab-count">{{ items.length }}</span>
+      </button>
+      @for (s of sources; track s) {
+        <button type="button" class="source-tab" [class.active]="sourceFilter === s" [attr.data-source]="s"
+          (click)="sourceFilter = s; onFilterChange()">
+          {{ s }} <span class="source-tab-count">{{ countBy(s) }}</span>
+        </button>
+      }
+    </div>
+
+    <div class="toolbar">
+      <div class="search-box">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+          <circle cx="11" cy="11" r="7" stroke="currentColor" stroke-width="1.6" />
+          <path d="m20 20-3.5-3.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
+        </svg>
+        <input
+          type="text"
+          placeholder="Filter by code, type, asset, description or cause…"
+          [(ngModel)]="searchTerm"
+          (ngModelChange)="onFilterChange()" />
+      </div>
+      <select class="severity-filter" [(ngModel)]="severityFilter" (ngModelChange)="onFilterChange()" aria-label="Filter by severity">
+        <option [ngValue]="null">All severities</option>
+        @for (s of severities; track s.severity_level) {
+          <option [ngValue]="s.severity_level">{{ s.severity_name }}</option>
+        }
+      </select>
+      @if (hasFilters) {
+        <button type="button" class="link-btn" (click)="clearFilters()">Clear filters</button>
+      }
+      <div class="result-count">{{ totalItems }} alarm{{ totalItems === 1 ? '' : 's' }}</div>
+    </div>
+
+    @if (totalItems === 0) {
+      <div class="empty-state">No alarms match the current filters.</div>
+    } @else {
+      <div class="table-scroll">
+        <table class="data-table catalog-table">
+          <thead>
+            <tr>
+              @for (col of [
+                { key: 'source', label: 'Source' },
+                { key: 'alarm_code', label: 'Alarm Code' },
+                { key: 'alarm_type', label: 'Type' },
+                { key: 'severity_level', label: 'Severity' },
+                { key: 'asset_type', label: 'Asset Type' }
+              ]; track col.key) {
+                <th class="sortable" (click)="setSort($any(col.key))">
+                  {{ col.label }}
+                  <span class="sort-icon" [class.active]="sortColumn === col.key">
+                    {{ sortColumn === col.key && sortDirection === 'desc' ? '▼' : '▲' }}
+                  </span>
+                </th>
+              }
+              <th>Description</th>
+              <th class="num">Threshold</th>
+              <th class="actions-col"></th>
+            </tr>
+          </thead>
+          <tbody>
+            @for (item of pagedItems; track item.alarm_catalog_id) {
+              <tr (click)="view(item)">
+                <td><span class="source-chip" [attr.data-source]="item.source">{{ item.source }}</span></td>
+                <td class="mono code-cell">{{ item.alarm_code }}</td>
+                <td>{{ item.alarm_type }}</td>
+                <td>
+                  <span class="severity-badge" [attr.data-level]="item.severity_level">{{ item.severity_name }}</span>
+                </td>
+                <td>{{ item.asset_type || '—' }}</td>
+                <td class="description-cell" [title]="item.probable_cause ? 'Probable cause: ' + item.probable_cause : ''">
+                  {{ item.description }}
+                </td>
+                <td class="num">
+                  @if (item.threshold !== null) {
+                    {{ item.threshold }} <span class="unit">{{ item.unit }}</span>
+                  } @else {
+                    —
+                  }
+                </td>
+                <td class="actions-col">
+                  <button class="btn btn-secondary btn-icon" title="Edit" (click)="edit(item, $event)">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+                      <path d="M4 20h4l10.5-10.5a2.1 2.1 0 0 0-3-3L5 17v3Z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" />
+                    </svg>
+                  </button>
+                  <button class="btn btn-danger btn-icon" title="Delete" (click)="confirmDelete(item, $event)">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+                      <path
+                        d="M5 7h14M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2m2 0-1 13a1 1 0 0 1-1 1H8a1 1 0 0 1-1-1L6 7"
+                        stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
+                    </svg>
+                  </button>
+                </td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      </div>
+
+      <div class="pagination">
+        <div class="page-size">
+          <label for="pageSize">Rows per page</label>
+          <select id="pageSize" [ngModel]="pageSize" (ngModelChange)="setPageSize($event)">
+            @for (size of pageSizeOptions; track size) {
+              <option [ngValue]="size">{{ size }}</option>
+            }
+          </select>
+        </div>
+        <div class="page-range">{{ rangeStart }}–{{ rangeEnd }} of {{ totalItems }}</div>
+        <div class="page-controls">
+          <button class="btn btn-secondary btn-icon" [disabled]="currentPage === 1" (click)="goToPage(currentPage - 1)" title="Previous page">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+              <path d="M15 6l-6 6 6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+            </svg>
+          </button>
+          <span class="page-indicator">Page {{ currentPage }} of {{ totalPages }}</span>
+          <button class="btn btn-secondary btn-icon" [disabled]="currentPage === totalPages" (click)="goToPage(currentPage + 1)" title="Next page">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+              <path d="M9 6l6 6-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+            </svg>
+          </button>
+        </div>
+      </div>
+    }
+  }
+</div>
+
+@if (itemToDelete) {
+  <div class="modal-backdrop" (click)="cancelDelete()">
+    <div class="modal" (click)="$event.stopPropagation()">
+      <h3>Delete alarm?</h3>
+      <p>
+        This will permanently delete <strong>{{ itemToDelete.source }} · {{ itemToDelete.alarm_code }}</strong> from the catalog.
+        This action cannot be undone.
+      </p>
+      @if (deleteError) {
+        <div class="form-error">{{ deleteError }}</div>
+      }
+      <div class="modal-actions">
+        <button class="btn btn-secondary" (click)="cancelDelete()" [disabled]="deleting">{{ deleteError ? 'Close' : 'Cancel' }}</button>
+        @if (!deleteError) {
+          <button class="btn btn-danger-solid" (click)="deleteConfirmed()" [disabled]="deleting">
+            {{ deleting ? 'Deleting…' : 'Delete' }}
+          </button>
+        }
+      </div>
+    </div>
+  </div>
+}

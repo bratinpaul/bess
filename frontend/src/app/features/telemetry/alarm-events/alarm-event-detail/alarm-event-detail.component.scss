@@ -1,0 +1,146 @@
+.card {
+  padding: 24px;
+}
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.alarm-title {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 3px 12px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.status-pill.active {
+  background: rgba(220, 38, 38, 0.1);
+  color: #b91c1c;
+}
+
+.status-pill.active .dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #dc2626;
+}
+
+.status-pill.cleared {
+  background: rgba(99, 248, 186, 0.22);
+  color: #0e8f66;
+}
+
+.alarm-headline {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 22px;
+}
+
+.headline-text {
+  font-size: 16px;
+  font-weight: 600;
+}
+
+// ---- raise -> acknowledge -> clear
+.alarm-timeline {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  margin: 0 0 24px;
+  padding: 0;
+  list-style: none;
+}
+
+.alarm-timeline li {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-top: 22px;
+}
+
+// connector line to the next step
+.alarm-timeline li::before {
+  content: '';
+  position: absolute;
+  top: 6px;
+  left: 14px;
+  right: 0;
+  height: 2px;
+  background: var(--color-border);
+}
+
+.alarm-timeline li.done::before {
+  background: #63f8ba;
+}
+
+.alarm-timeline li:last-child::before {
+  display: none;
+}
+
+.step-dot {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--color-border);
+  border-radius: 50%;
+  background: #fff;
+}
+
+.done .step-dot {
+  border-color: #0e8f66;
+  background: #63f8ba;
+}
+
+.pending .step-dot {
+  border-color: #dc2626;
+  background: rgba(220, 38, 38, 0.15);
+}
+
+.step-label {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+}
+
+.step-time {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.step-note {
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+
+.muted {
+  margin-left: 4px;
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+
+.detail-grid a {
+  color: #0e8f66;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.detail-grid a:hover {
+  text-decoration: underline;
+}

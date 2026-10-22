@@ -1,0 +1,138 @@
+.cp-header {
+  align-items: flex-start;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.cp-controls {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  align-items: flex-end;
+
+  select {
+    min-width: 160px;
+    max-width: 380px;
+  }
+}
+
+.cp-warnings {
+  margin-bottom: 10px;
+  padding: 8px 14px;
+  border: 1px solid #f2c94c;
+  border-radius: 8px;
+  background: #fff8e1;
+  font-size: 13px;
+  color: #6b4e00;
+
+  ul {
+    margin: 8px 0 2px;
+    padding-left: 18px;
+  }
+
+  li {
+    margin: 3px 0;
+  }
+}
+
+.link-btn {
+  border: none;
+  background: none;
+  padding: 0;
+  font: inherit;
+  font-weight: 600;
+  color: inherit;
+  cursor: pointer;
+}
+
+.cp-tiles {
+  margin-bottom: 12px;
+}
+
+.cp-warn {
+  box-shadow: inset 3px 0 0 #d03b3b;
+}
+
+.cp-bad {
+  color: #b42318;
+  font-weight: 600;
+}
+
+.cp-two,
+.cp-three {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 16px;
+  margin-bottom: 16px;
+
+  .chart-card {
+    margin: 0;
+  }
+
+  @media (max-width: 1100px) {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.cp-three {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.chart-card {
+  margin-bottom: 16px;
+}
+
+.cp-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+
+  h3 {
+    margin: 0;
+  }
+}
+
+.cp-step {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+
+  select {
+    padding: 6px 10px;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius);
+    font: inherit;
+    font-size: 13px;
+  }
+}
+
+.cp-note {
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+
+.cp-kv td:first-child {
+  color: var(--color-text-muted);
+}
+
+.cp-mode {
+  display: inline-block;
+  margin-left: 8px;
+}
+
+.cp-form {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin-bottom: 12px;
+
+  @media (max-width: 760px) {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+.cp-pred {
+  margin-top: 4px;
+}

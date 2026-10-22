@@ -1,0 +1,152 @@
+<div class="page-header">
+  <div>
+    <h2>Battery Packs</h2>
+    <p class="subtitle">Battery packs</p>
+  </div>
+  <a class="btn btn-primary" routerLink="/battery-packs/new">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+      <path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+    </svg>
+    Add Pack
+  </a>
+</div>
+
+<div class="card">
+  @if (loading) {
+    <div class="empty-state">Loading battery packs…</div>
+  } @else if (error) {
+    <div class="empty-state error">{{ error }}</div>
+  } @else if (packs.length === 0) {
+    <div class="empty-state">No battery packs yet. Click "Add Pack" to create one.</div>
+  } @else {
+    <div class="toolbar">
+      <div class="search-box">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+          <circle cx="11" cy="11" r="7" stroke="currentColor" stroke-width="1.6" />
+          <path d="m20 20-3.5-3.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
+        </svg>
+        <input
+          type="text"
+          placeholder="Filter by number, status or container…"
+          [(ngModel)]="searchTerm"
+          (ngModelChange)="onSearchChange()" />
+      </div>
+      <div class="result-count">{{ totalItems }} pack{{ totalItems === 1 ? '' : 's' }}</div>
+    </div>
+
+    @if (totalItems === 0) {
+      <div class="empty-state">No battery packs match "{{ searchTerm }}".</div>
+    } @else {
+      <div class="table-scroll">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th class="sortable" (click)="setSort('pack_number')">
+              Pack Number
+              <span class="sort-icon" [class.active]="sortColumn === 'pack_number'">
+                {{ sortColumn === 'pack_number' && sortDirection === 'desc' ? '▼' : '▲' }}
+              </span>
+            </th>
+            <th>Container</th>
+            <th class="sortable" (click)="setSort('nominal_voltage')">
+              Nominal Voltage
+              <span class="sort-icon" [class.active]="sortColumn === 'nominal_voltage'">
+                {{ sortColumn === 'nominal_voltage' && sortDirection === 'desc' ? '▼' : '▲' }}
+              </span>
+            </th>
+            <th class="sortable" (click)="setSort('nominal_capacity_ah')">
+              Nominal Capacity (Ah)
+              <span class="sort-icon" [class.active]="sortColumn === 'nominal_capacity_ah'">
+                {{ sortColumn === 'nominal_capacity_ah' && sortDirection === 'desc' ? '▼' : '▲' }}
+              </span>
+            </th>
+            <th class="sortable" (click)="setSort('status')">
+              Status
+              <span class="sort-icon" [class.active]="sortColumn === 'status'">
+                {{ sortColumn === 'status' && sortDirection === 'desc' ? '▼' : '▲' }}
+              </span>
+            </th>
+            <th class="actions-col"></th>
+          </tr>
+        </thead>
+        <tbody>
+          @for (item of pagedItems; track item.pack_id) {
+            <tr (click)="view(item)">
+              <td>{{ item.pack_number || '—' }}</td>
+              <td>{{ containerNumber(item.container_id) }}</td>
+              <td>{{ item.nominal_voltage ?? '—' }}</td>
+              <td>{{ item.nominal_capacity_ah ?? '—' }}</td>
+              <td>
+                @if (item.status) {
+                  <span class="status-badge">{{ item.status }}</span>
+                } @else {
+                  —
+                }
+              </td>
+              <td class="actions-col">
+                <button class="btn btn-secondary btn-icon" title="Edit" (click)="edit(item, $event)">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+                    <path
+                      d="M4 20h4l10.5-10.5a2.1 2.1 0 0 0-3-3L5 17v3Z"
+                      stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" />
+                  </svg>
+                </button>
+                <button class="btn btn-danger btn-icon" title="Delete" (click)="confirmDelete(item, $event)">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+                    <path
+                      d="M5 7h14M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2m2 0-1 13a1 1 0 0 1-1 1H8a1 1 0 0 1-1-1L6 7"
+                      stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
+                  </svg>
+                </button>
+              </td>
+            </tr>
+          }
+        </tbody>
+      </table>
+      </div>
+
+      <div class="pagination">
+        <div class="page-size">
+          <label for="pageSize">Rows per page</label>
+          <select id="pageSize" [ngModel]="pageSize" (ngModelChange)="setPageSize($event)">
+            @for (size of pageSizeOptions; track size) {
+              <option [ngValue]="size">{{ size }}</option>
+            }
+          </select>
+        </div>
+        <div class="page-range">{{ rangeStart }}–{{ rangeEnd }} of {{ totalItems }}</div>
+        <div class="page-controls">
+          <button class="btn btn-secondary btn-icon" [disabled]="currentPage === 1" (click)="goToPage(currentPage - 1)" title="Previous page">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+              <path d="M15 6l-6 6 6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+            </svg>
+          </button>
+          <span class="page-indicator">Page {{ currentPage }} of {{ totalPages }}</span>
+          <button class="btn btn-secondary btn-icon" [disabled]="currentPage === totalPages" (click)="goToPage(currentPage + 1)" title="Next page">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+              <path d="M9 6l6 6-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+            </svg>
+          </button>
+        </div>
+      </div>
+    }
+  }
+</div>
+
+@if (itemToDelete) {
+  <div class="modal-backdrop" (click)="cancelDelete()">
+    <div class="modal" (click)="$event.stopPropagation()">
+      <h3>Delete battery pack?</h3>
+      <p>
+        This will permanently delete <strong>{{ itemToDelete.pack_number || 'this pack' }}</strong>.
+        This action cannot be undone.
+      </p>
+      <div class="modal-actions">
+        <button class="btn btn-secondary" (click)="cancelDelete()" [disabled]="deleting">Cancel</button>
+        <button class="btn btn-danger-solid" (click)="deleteConfirmed()" [disabled]="deleting">
+          {{ deleting ? 'Deleting…' : 'Delete' }}
+        </button>
+      </div>
+    </div>
+  </div>
+}

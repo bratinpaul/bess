@@ -1,0 +1,39 @@
+<div class="card graph-card">
+  <div class="graph-card-header">
+    <h3>{{ spec.title }}</h3>
+    <div class="line-options" role="group" [attr.aria-label]="spec.title + ' counters'">
+      @for (counter of spec.counters; track counter.key) {
+        <label class="line-option" [class.on]="isSelected(counter)" [style.--box]="counter.color">
+          <input type="checkbox" class="box" [checked]="isSelected(counter)" (change)="toggle(counter)" />
+          {{ counter.label }}
+          @if (counter.role === 'bandMin' || counter.role === 'bandMax' || counter.dashed) {
+            <span class="line-glyph dashed" [title]="counter.dashed ? 'Dashed line' : 'Band edge'"></span>
+          } @else if (counter.role === 'bar') {
+            <span class="line-glyph bar" [class.signed]="!!counter.negativeColor" [style.--neg]="counter.negativeColor" title="Bars"></span>
+          } @else if (counter.role === 'area') {
+            <span class="line-glyph area" [title]="counter.negate ? 'Shaded area, drawn below zero' : 'Shaded area'"></span>
+          }
+          @if (counter.axis === 'y2') {
+            <span class="axis-tag" title="Plotted on the right-hand axis">R</span>
+          }
+        </label>
+      }
+      @for (ref of activeRefLines; track ref.line.label) {
+        <span class="ref-legend" [style.--box]="ref.line.color" title="Reference line">
+          <span class="line-glyph dashed"></span>{{ ref.line.label }}
+        </span>
+      }
+      @if (spec.refBand) {
+        <span class="ref-legend" [style.--box]="spec.refBand.color" title="Reference band">
+          <span class="line-glyph band"></span>{{ spec.refBand.label }}
+        </span>
+      }
+    </div>
+  </div>
+  <div class="graph-canvas-wrap">
+    <canvas #canvas></canvas>
+    @if (!hasSelection) {
+      <div class="graph-overlay">Select a counter above to plot it.</div>
+    }
+  </div>
+</div>

@@ -1,0 +1,384 @@
+<div class="page-header">
+  <div>
+    <h2>Fault Classifier</h2>
+    <p class="subtitle">
+      Fault classification &amp; diagnosis on the confirmed fault episodes: a signature / Bayesian engine that needs no training (the
+      <code>fault_signature</code> library scored against each window) fused with a LightGBM / XGBoost classifier on telemetry, signature, alarm and
+      context features - scored out-of-fold by episode and forward in time, then calibrated. Results, Pareto and fishbone are on the
+      <a routerLink="/ml/fault-diag">Fault Diagnosis</a> viewer.
+    </p>
+  </div>
+</div>
+
+@if (optionsError) {
+  <div class="card empty-state error">{{ optionsError }}</div>
+}
+
+@if (options && form) {
+  <div class="lm-grid">
+    <section class="card lm-panel">
+      <h3 class="lm-title">New run</h3>
+      <div class="fd-data">
+        <div><strong>{{ options.episodes.n }}</strong> confirmed episodes · <strong>{{ options.episodes.classes }}</strong> of {{ options.classes.length }} classes ·
+          {{ options.episodes.confirmed_by_repair }} confirmed by a repair · {{ options.episodes.date_from }} → {{ options.episodes.date_to }}</div>
+        @if (options.episodes.filed_systems.join() !== options.episodes.telemetry_systems.join()) {
+          <div class="lm-sub">Episodes are filed under {{ systemNames(options.episodes.filed_systems) }}; their alarms and telemetry are on
+            {{ systemNames(options.episodes.telemetry_systems) }} - the model reads the telemetry system.</div>
+        }
+        <button type="button" class="link-btn fd-toggle" (click)="showClasses = !showClasses">{{ showClasses ? 'Hide' : 'Show' }} class support {{ showClasses ? '▴' : '▾' }}</button>
+        @if (showClasses) {
+          <div class="table-scroll fd-classes">
+            <table class="data-table">
+              <thead><tr><th>Class</th><th>Subsystem</th><th class="num">Episodes</th><th class="num">Signatures</th><th>Safety</th></tr></thead>
+              <tbody>
+                @for (c of options.classes; track c.fault_code) {
+                  <tr [class.lm-muted]="c.episodes === 0">
+                    <td><span class="mono">{{ c.fault_code }}</span> <span class="lm-sub">{{ c.fault_name }}</span></td>
+                    <td>{{ c.subsystem }}</td>
+                    <td class="num mono" [class.lm-bad]="c.episodes > 0 && c.episodes < 3">{{ c.episodes }}</td>
+                    <td class="num mono">{{ c.signatures }}</td>
+                    <td>{{ c.safety_critical ? '⚠ critical' : '' }}</td>
+                  </tr>
+                }
+              </tbody>
+            </table>
+          </div>
+        }
+      </div>
+
+      <h4 class="lm-group">Labels &amp; windows</h4>
+      <div class="form-grid three">
+        <div class="field"><label for="from">Episodes from</label><input id="from" type="date" [(ngModel)]="form.date_from" /></div>
+        <div class="field"><label for="to">Episodes to</label><input id="to" type="date" [(ngModel)]="form.date_to" /></div>
+        <div class="field"><label for="name">Name (optional)</label><input id="name" type="text" maxlength="120" [(ngModel)]="form.run_name" placeholder="e.g. triage v1" /></div>
+        <div class="field span-2">
+          <label for="lm">Leakage mode (what the model is for)</label>
+          <select id="lm" [(ngModel)]="form.leakage_mode">
+            <option value="triage">Alarm triage - the defining alarm is in the window (correlation / root cause)</option>
+            <option value="early">Early detection - window ends at detection; defining alarms hidden</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="gr">Granularity</label>
+          <select id="gr" [(ngModel)]="form.granularity">
+            <option value="episode">Episode (one window each)</option>
+            <option value="window">Sliding windows (grouped by episode)</option>
+          </select>
+        </div>
+        <div class="field"><label for="lb">Lookback (min)</label><input id="lb" type="number" min="15" max="720" step="5" [(ngModel)]="form.lookback_min" /></div>
+        <div class="field" title="Triage only: minutes after detection still inside the window"><label for="pm">After detection (min)</label><input id="pm" type="number" min="0" max="120" step="5" [(ngModel)]="form.post_min" [disabled]="form.leakage_mode === 'early'" /></div>
+        <div class="field" title="Sliding windows: step between window ends"><label for="st">Window step (min)</label><input id="st" type="number" min="5" max="120" step="5" [(ngModel)]="form.step_min" [disabled]="form.granularity === 'episode'" /></div>
+        <div class="field" title="Healthy F-NONE windows sampled from quiet periods (the scoring log's healthy rows first)"><label for="nn">Healthy windows</label><input id="nn" type="number" min="5" max="500" [(ngModel)]="form.n_none" /></div>
+        <div class="field" title="Healthy windows stay this far from any alarm or episode"><label for="ng">Healthy guard (h)</label><input id="ng" type="number" min="0" max="48" step="0.5" [(ngModel)]="form.none_guard_h" /></div>
+        <div class="field" title="Sliding windows (triage): how far after detection the windows go"><label for="ms">Max span after detection (min)</label><input id="ms" type="number" min="15" max="1440" step="15" [(ngModel)]="form.max_span_min" [disabled]="form.granularity === 'episode'" /></div>
+      </div>
+
+      <h4 class="lm-group">Feature families</h4>
+      <div class="lm-systems">
+        @for (f of options.families; track f.key) {
+          <label class="lm-system" [class.on]="families.has(f.key)">
+            <input type="checkbox" [checked]="families.has(f.key)" (change)="toggleFamily(f.key)" />
+            <span><strong>{{ f.label }}</strong>
+              <span class="lm-sub">{{ f.key === 'telemetry' ? 'mean / max / min / std / slope / last / change per signal' : f.key === 'signature' ? 'each fault_signature rule as a soft match + per-fault score' : f.key === 'alarm' ? 'alarm codes in the window, count, max severity' : 'hour of day, charge / discharge / idle share' }}</span></span>
+          </label>
+        }
+      </div>
+
+      <h4 class="lm-group">Model</h4>
+      <div class="form-grid four">
+        <div class="field">
+          <label for="al">Classifier</label>
+          <select id="al" [(ngModel)]="form.algorithm">
+            <option value="lightgbm">LightGBM</option>
+            <option value="xgboost">XGBoost</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="sr">Structure</label>
+          <select id="sr" [(ngModel)]="form.structure">
+            <option value="flat">Flat (one multiclass model)</option>
+            <option value="hierarchical">Hierarchical (subsystem → fault)</option>
+          </select>
+        </div>
+        <div class="field" title="Weight of the ML posterior in the geometric-mean fusion (0 = signature engine only, 1 = ML only)"><label for="fa">Fusion weight α (ML)</label><input id="fa" type="number" min="0" max="1" step="0.05" [(ngModel)]="form.alpha" /></div>
+        <div class="field"><label for="fo">CV folds (grouped by episode)</label><input id="fo" type="number" min="2" max="10" [(ngModel)]="form.folds" /></div>
+        <div class="field" title="Forward holdout: train on the earliest share of episodes, test on the rest"><label for="tf">Forward train share</label><input id="tf" type="number" min="0.4" max="0.9" step="0.05" [(ngModel)]="form.train_frac" /></div>
+        <div class="field"><label for="at">Alert threshold</label><input id="at" type="number" min="0.05" max="0.99" step="0.05" [(ngModel)]="form.alert_threshold" /></div>
+        <div class="field fd-check"><label><input type="checkbox" [(ngModel)]="form.calibrate" /> Temperature calibration</label></div>
+        <div class="field fd-check"><label><input type="checkbox" [(ngModel)]="form.augment" /> Synthetic minority windows</label></div>
+      </div>
+
+      <button type="button" class="link-btn fd-toggle" (click)="showAdvanced = !showAdvanced">{{ showAdvanced ? 'Hide' : 'Show' }} engine &amp; booster settings {{ showAdvanced ? '▴' : '▾' }}</button>
+      @if (showAdvanced) {
+        <h4 class="lm-group">Signature / Bayesian engine</h4>
+        <div class="form-grid four">
+          <div class="field" title="Evidence sharpness κ"><label for="ka">κ (sharpness)</label><input id="ka" type="number" min="0.1" max="10" step="0.1" [(ngModel)]="form.kappa" /></div>
+          <div class="field" title="Weight of an absent symptom relative to a present one"><label for="ap">Absent-symptom weight λ</label><input id="ap" type="number" min="0" max="1" step="0.05" [(ngModel)]="form.absent_penalty" /></div>
+          <div class="field"><label for="np">F-NONE prior</label><input id="np" type="number" min="0.01" max="0.99" step="0.05" [(ngModel)]="form.none_prior" /></div>
+          <div class="field">
+            <label for="pr">Fault priors</label>
+            <select id="pr" [(ngModel)]="form.prior">
+              <option value="empirical">Episode counts (Laplace)</option>
+              <option value="uniform">Uniform</option>
+            </select>
+          </div>
+          <div class="field" title="Penalty for faults none of whose signatures can be observed"><label for="up">Unobservable penalty</label><input id="up" type="number" min="0" max="10" step="0.5" [(ngModel)]="form.unknown_penalty" /></div>
+          <div class="field" title="Mute a telemetry signature matching more than this share of healthy windows (0 = off)"><label for="mr">Mute always-on above</label><input id="mr" type="number" min="0" max="1" step="0.05" [(ngModel)]="form.mute_rate" /></div>
+          <div class="field" title="Soft threshold width as a fraction of |threshold|"><label for="sp">Soft threshold width</label><input id="sp" type="number" min="0.01" max="1" step="0.01" [(ngModel)]="form.soft_pct" /></div>
+          <div class="field"><label for="nb">F-NONE bias (log-odds)</label><input id="nb" type="number" min="-10" max="10" step="0.5" [(ngModel)]="form.none_bias" /></div>
+        </div>
+        <h4 class="lm-group">Booster &amp; imbalance</h4>
+        <div class="form-grid four">
+          <div class="field"><label for="ne">Rounds</label><input id="ne" type="number" min="20" max="3000" step="10" [(ngModel)]="form.n_estimators" /></div>
+          <div class="field"><label for="lr">Learning rate</label><input id="lr" type="number" min="0.001" max="1" step="0.01" [(ngModel)]="form.learning_rate" /></div>
+          <div class="field"><label for="md">Max depth</label><input id="md" type="number" min="2" max="12" [(ngModel)]="form.max_depth" /></div>
+          <div class="field"><label for="nl">Leaves (LightGBM)</label><input id="nl" type="number" min="3" max="128" [(ngModel)]="form.num_leaves" /></div>
+          <div class="field"><label for="mc">Min samples per leaf</label><input id="mc" type="number" min="1" max="50" [(ngModel)]="form.min_child_samples" /></div>
+          <div class="field" title="0 = no class weighting, 1 = fully balanced"><label for="cw">Class-weight power</label><input id="cw" type="number" min="0" max="1" step="0.1" [(ngModel)]="form.class_weight_power" /></div>
+          <div class="field" title="Extra weight for episodes a repair confirmed (maintenance_action.fault_confirmed)"><label for="cb">Repair-confirmed boost</label><input id="cb" type="number" min="0" max="5" step="0.1" [(ngModel)]="form.confirmed_boost" /></div>
+          <div class="field"><label for="am">Augment classes up to</label><input id="am" type="number" min="2" max="30" [(ngModel)]="form.augment_min" [disabled]="!form.augment" /></div>
+          <div class="field"><label for="an">Augment noise (× std)</label><input id="an" type="number" min="0" max="1" step="0.05" [(ngModel)]="form.augment_noise" [disabled]="!form.augment" /></div>
+          <div class="field"><label for="sd">Seed</label><input id="sd" type="number" [(ngModel)]="form.seed" /></div>
+        </div>
+      }
+
+      <div class="lm-actions">
+        <span class="lm-note">{{ form.granularity === 'window' ? 'about 15–30 s' : 'about 10 s' }} · labels from fault_episode, weighted by label_confidence</span>
+        @if (auth.hasPermission('ml.run:execute')) {
+          <button type="button" class="btn btn-primary" [disabled]="running || !families.size" (click)="run()">{{ running ? 'Training…' : 'Train classifier' }}</button>
+        } @else {
+          <span class="lm-note">Your role ({{ auth.user()?.roleName }}) can view models but not train them.</span>
+        }
+      </div>
+      @if (runError) {
+        <div class="form-error">{{ runError }}</div>
+      }
+    </section>
+
+    <section class="card lm-panel">
+      <div class="lm-head">
+        <h3 class="lm-title">Runs</h3>
+        <button type="button" class="btn btn-secondary" (click)="loadRuns()">Refresh</button>
+      </div>
+      @if (runs.length === 0) {
+        <div class="empty-state">No runs yet - train one.</div>
+      } @else {
+        <div class="table-scroll">
+          <table class="data-table lm-runs">
+            <thead><tr><th>#</th><th>Run</th><th class="num">Macro-F1</th><th class="num">Top-3</th><th>Status</th><th></th></tr></thead>
+            <tbody>
+              @for (r of runs; track r.run_id) {
+                <tr [class.lm-selected]="selected?.run_id === r.run_id">
+                  <td class="mono">{{ r.run_id }}{{ r.is_default ? ' ★' : '' }}</td>
+                  <td>
+                    <button type="button" class="link-btn" (click)="open(r.run_id)">{{ r.run_name || 'Fault classifier' }}</button>
+                    <div class="lm-sub">{{ r.params.leakage_mode }} · {{ r.params.granularity }} · {{ r.params.algorithm }} {{ r.params.structure }} · α {{ r.params.alpha }}</div>
+                  </td>
+                  <td class="num mono">{{ pct(r.macro_f1, 1) }}</td>
+                  <td class="num mono">{{ pct(r.top3_accuracy, 1) }}</td>
+                  <td><span class="lm-status" [attr.data-status]="r.status">{{ r.status }}</span></td>
+                  <td class="lm-row-actions">
+                    @if (r.status === 'COMPLETED') {
+                      <a class="btn btn-secondary btn-sm" routerLink="/ml/fault-diag" [queryParams]="{ run: r.run_id }">View</a>
+                      @if (!r.is_default && auth.hasPermission('ml.model:approve')) {
+                        <button data-perm="ml.model:approve" type="button" class="btn btn-secondary btn-sm" title="Use this run in the viewer by default" (click)="makeDefault(r)">★</button>
+                      }
+                    }
+                    <button type="button" class="btn btn-danger btn-icon" title="Delete" (click)="confirmDelete(r)" *hasPermission="'ml.run:delete'">✕</button>
+                  </td>
+                </tr>
+              }
+            </tbody>
+          </table>
+        </div>
+        <p class="lm-note">★ = default run (viewer, fishbone model evidence). Macro-F1 / top-3 = fused, out-of-fold.</p>
+      }
+    </section>
+  </div>
+
+  @if (selected) {
+    <section class="card lm-result">
+      <div class="lm-head">
+        <h3 class="lm-title">Run #{{ selected.run_id }} {{ selected.run_name ? '· ' + selected.run_name : '' }}
+          <span class="lm-sub">{{ selected.params.leakage_mode === 'triage' ? 'Alarm triage' : 'Early detection' }} · {{ selected.params.granularity }} level ·
+            {{ algoName }} · α {{ selected.params.alpha }} · {{ num((selected.duration_ms ?? 0) / 1000, 1) }} s</span></h3>
+        @if (selected.status === 'COMPLETED') {
+          <a class="btn btn-primary" routerLink="/ml/fault-diag" [queryParams]="{ run: selected.run_id }">Open in Fault Diagnosis</a>
+        }
+      </div>
+      @if (selected.status === 'FAILED') {
+        <div class="form-error">{{ selected.error_message }}</div>
+      } @else if (selected.summary && selected.metrics && fused) {
+        @if (fused; as f) {
+        @if (selected.warnings.length) {
+          <div class="lm-warning">
+            <button type="button" class="link-btn" (click)="showWarnings = !showWarnings">⚠ {{ selected.warnings.length }} note(s) {{ showWarnings ? '▴' : '▾' }}</button>
+            @if (showWarnings) {
+              <ul class="lm-notes">
+                @for (w of selected.warnings; track $index) {
+                  <li>{{ w }}</li>
+                }
+              </ul>
+            }
+          </div>
+        }
+
+        <div class="metric-grid fd-tiles">
+          <div class="metric-card"><div class="metric-body"><span class="metric-label">Macro-F1</span><span class="metric-value">{{ pct(f.macro_f1, 1) }}<span class="metric-unit">%</span></span><span class="metric-sub">fused, out-of-fold · engine {{ pct(selected.metrics.oof.engine.macro_f1, 0) }} · ML {{ pct(selected.metrics.oof.ml.macro_f1, 0) }}</span></div></div>
+          <div class="metric-card"><div class="metric-body"><span class="metric-label">Top-3 accuracy</span><span class="metric-value">{{ pct(f.top3_accuracy, 1) }}<span class="metric-unit">%</span></span><span class="metric-sub">right fault in the shortlist · top-1 {{ pct(f.accuracy, 1) }} %</span></div></div>
+          <div class="metric-card"><div class="metric-body"><span class="metric-label">Forward macro-F1</span><span class="metric-value">{{ pct(selected.metrics.forward?.fused?.macro_f1, 1) }}<span class="metric-unit">%</span></span><span class="metric-sub">{{ selected.metrics.forward ? 'later ' + selected.metrics.forward.n_test + ' windows, trained on the earlier ' + selected.metrics.forward.n_train : 'not enough later episodes' }}</span></div></div>
+          <div class="metric-card"><div class="metric-body"><span class="metric-label">Safety-critical recall</span><span class="metric-value">{{ pct(f.safety_recall, 0) }}<span class="metric-unit">%</span></span><span class="metric-sub">isolation, hotspot, overcharge, IGBT …</span></div></div>
+          <div class="metric-card"><div class="metric-body"><span class="metric-label">F-NONE false positives</span><span class="metric-value">{{ pct(f.none_fpr, 1) }}<span class="metric-unit">%</span></span><span class="metric-sub">healthy windows called a fault · faults missed {{ pct(f.fault_miss_rate, 1) }} %</span></div></div>
+          <div class="metric-card"><div class="metric-body"><span class="metric-label">Cost-weighted error</span><span class="metric-value">{{ pct(f.cost_weighted_error, 1) }}<span class="metric-unit">%</span></span><span class="metric-sub">errors weighted 1 + severity + 2 × safety-critical</span></div></div>
+          <div class="metric-card"><div class="metric-body"><span class="metric-label">Calibration (ECE)</span><span class="metric-value">{{ pct(f.ece, 1) }}<span class="metric-unit">%</span></span><span class="metric-sub">before {{ pct(f.ece_uncalibrated, 1) }} % · temperature {{ num(selected.summary.temperature, 2) }}</span></div></div>
+          <div class="metric-card"><div class="metric-body"><span class="metric-label">Training set</span><span class="metric-value">{{ selected.summary.n_episodes }}<span class="metric-unit">episodes</span></span><span class="metric-sub">+ {{ selected.summary.n_none }} healthy · {{ selected.summary.n_examples }} windows · {{ selected.summary.n_features }} features · {{ selected.summary.folds }} folds</span></div></div>
+        </div>
+
+        <h4 class="lm-group">Model comparison</h4>
+        <div class="table-scroll">
+          <table class="data-table">
+            <thead>
+              <tr><th>Model</th><th class="num">Macro-F1</th><th class="num">Accuracy</th><th class="num">Top-3</th><th class="num">Subsystem</th><th class="num">F-NONE FP</th><th class="num">Missed faults</th><th class="num">Log loss</th><th class="num">Forward F1</th><th class="num">Forward top-3</th></tr>
+            </thead>
+            <tbody>
+              @for (r of cardRows; track r.key) {
+                <tr [class.fd-best]="r.key === 'fused'">
+                  <td>{{ r.label }}</td>
+                  <td class="num mono">{{ pct(r.oof.macro_f1) }}</td>
+                  <td class="num mono">{{ pct(r.oof.accuracy) }}</td>
+                  <td class="num mono">{{ pct(r.oof.top3_accuracy) }}</td>
+                  <td class="num mono">{{ pct(r.oof.subsystem_accuracy) }}</td>
+                  <td class="num mono">{{ pct(r.oof.none_fpr) }}</td>
+                  <td class="num mono">{{ pct(r.oof.fault_miss_rate) }}</td>
+                  <td class="num mono">{{ num(r.oof.log_loss, 3) }}</td>
+                  <td class="num mono">{{ pct(r.fwd?.macro_f1) }}</td>
+                  <td class="num mono">{{ pct(r.fwd?.top3_accuracy) }}</td>
+                </tr>
+              }
+              @if (selected.metrics.episode_level; as el) {
+                <tr><td>Fused · one vote per episode (mean over its windows)</td><td class="num mono">{{ pct(el.macro_f1) }}</td><td class="num mono">{{ pct(el.accuracy) }}</td><td class="num mono">{{ pct(el.top3_accuracy) }}</td><td class="num mono">{{ pct(el.subsystem_accuracy) }}</td><td class="num mono">{{ pct(el.none_fpr) }}</td><td class="num mono">{{ pct(el.fault_miss_rate) }}</td><td class="num mono">{{ num(el.log_loss, 3) }}</td><td></td><td></td></tr>
+              }
+            </tbody>
+          </table>
+        </div>
+        <p class="lm-note">Out-of-fold = every window of an episode held out together (no leakage across folds). With classes of 1–3 episodes, per-class numbers are provisional until more confirmed labels arrive.</p>
+
+        <div class="lm-two">
+          <div>
+            <h4 class="lm-group">Per-class (fused, out-of-fold)</h4>
+            <div class="table-scroll fd-perclass">
+              <table class="data-table">
+                <thead><tr><th>Class</th><th class="num">n</th><th class="num">Recall</th><th class="num">Precision</th><th class="num">Top-3</th></tr></thead>
+                <tbody>
+                  @for (p of f.per_class; track p.fault_code) {
+                    <tr>
+                      <td><span class="mono">{{ p.fault_code }}</span>{{ p.is_safety_critical ? ' ⚠' : '' }} <span class="lm-sub">{{ p.subsystem }} · {{ className(p.fault_code) }}</span></td>
+                      <td class="num mono" [class.lm-bad]="p.support < 3">{{ p.support }}</td>
+                      <td class="num mono" [class.lm-bad]="p.recall < 0.5">{{ pct(p.recall, 0) }}</td>
+                      <td class="num mono">{{ pct(p.precision, 0) }}</td>
+                      <td class="num mono">{{ pct(p.top3_recall, 0) }}</td>
+                    </tr>
+                  }
+                </tbody>
+              </table>
+            </div>
+          </div>
+          <div>
+            <h4 class="lm-group">What the classifier leans on</h4>
+            @for (x of familyImportance; track x.k) {
+              <div class="fd-bar-row">
+                <span class="fd-bar-label">{{ familyLabel(x.k) }}</span>
+                <span class="fd-bar"><span [style.width.%]="x.v * 100"></span></span>
+                <span class="mono fd-bar-val">{{ pct(x.v, 0) }} %</span>
+              </div>
+            }
+            <h4 class="lm-group">Top features</h4>
+            <ol class="fd-features">
+              @for (i of selected.metrics.importance.slice(0, 12); track i.feature) {
+                <li><span>{{ i.label }}</span> <span class="lm-sub">{{ familyLabel(i.family) }} · {{ pct(i.importance, 1) }} %</span></li>
+              }
+            </ol>
+            @if (selected.summary.ttd_summary; as t) {
+              <h4 class="lm-group">Time to detect</h4>
+              <p class="lm-note">{{ t.episodes_detected }} of {{ t.episodes }} episodes named correctly at p ≥ {{ selected.params.alert_threshold }} by some window;
+                median lead vs the alarm {{ num(t.median_lead_vs_alarm_min, 0) }} min (negative = after the alarm).</p>
+            }
+            @if (unavailable.length || muted.length) {
+              <h4 class="lm-group">Signature coverage</h4>
+              @if (unavailable.length) {
+                <p class="lm-note">No telemetry for: {{ unavailable.join(', ') }}.</p>
+              }
+              @for (m of muted; track m.signature_id) {
+                <p class="lm-note">Muted: <span class="mono">{{ m.signal }} {{ m.operator }} {{ m.threshold }}</span> → {{ m.fault_code }} matches {{ pct(m.healthy_match_rate, 0) }} % of healthy windows (threshold doesn't fit this plant's range).</p>
+              }
+            }
+          </div>
+        </div>
+
+        <h4 class="lm-group">Use the model</h4>
+        <div class="lm-two">
+          <div>
+            <p class="lm-note">Publish the out-of-fold predictions to <code>fault_prediction</code> (model_version <span class="mono">fault-diag-r{{ selected.run_id }}</span>)
+              so <code>v_fault_scoring</code> compares this model with the logged ones.</p>
+            @if (auth.hasPermission('ml.model:approve')) {
+              <button type="button" class="btn btn-secondary" (click)="publish()">{{ selected.published_at ? 'Re-publish' : 'Publish to fault_prediction' }}</button>
+            } @else {
+              <span class="lm-note">Publishing needs the model-approval permission (Admin).</span>
+            }
+            @if (selected.published_at) {
+              <span class="lm-note"> · published {{ selected.published_at | date: 'yyyy-MM-dd HH:mm' }}</span>
+            }
+            @if (publishMsg) {
+              <p class="lm-note">{{ publishMsg }}</p>
+            }
+          </div>
+          <div>
+            <p class="lm-note">Scan telemetry with sliding windows; candidate faults go to <code>fault_prediction</code> (…-scan) for operator review on the viewer.</p>
+            <div class="form-grid four">
+              <div class="field">
+                <label for="ss">System</label>
+                <select id="ss" [(ngModel)]="scanForm.system_id" (ngModelChange)="onScanSystem()">
+                  @for (s of options.systems; track s.system_id) {
+                    <option [ngValue]="s.system_id">{{ s.system_name }}{{ s.episodes ? ' (' + s.episodes + ' episodes)' : '' }}</option>
+                  }
+                </select>
+              </div>
+              <div class="field"><label for="sf">From</label><input id="sf" type="date" [(ngModel)]="scanForm.date_from" [min]="scanSystem?.date_from ?? ''" [max]="scanSystem?.date_to ?? ''" /></div>
+              <div class="field"><label for="stt">To</label><input id="stt" type="date" [(ngModel)]="scanForm.date_to" [min]="scanSystem?.date_from ?? ''" [max]="scanSystem?.date_to ?? ''" /></div>
+              <div class="field"><label for="sth">Threshold</label><input id="sth" type="number" min="0.05" max="0.99" step="0.05" [(ngModel)]="scanForm.threshold" /></div>
+            </div>
+            <div class="lm-actions">
+              <span class="lm-note">≈ 30 s per month at a {{ scanForm.step_min }}-min step</span>
+              @if (auth.hasPermission('ml.run:execute')) {
+                <button type="button" class="btn btn-primary" [disabled]="scanning" (click)="scan()">{{ scanning ? 'Scanning…' : 'Scan' }}</button>
+              } @else {
+                <span class="lm-note">Scanning needs the train permission (Admin, Data Scientist).</span>
+              }
+            </div>
+            @if (scanError) {
+              <div class="form-error">{{ scanError }}</div>
+            }
+            @if (scanResult; as s) {
+              <p class="lm-note">{{ s.windows | number }} windows · {{ s.flagged_windows }} flagged → <strong>{{ s.candidates }}</strong> candidate events.
+                <a routerLink="/ml/fault-diag" [queryParams]="{ run: selected.run_id, tab: 'diagnosis' }">Review them</a></p>
+            }
+          </div>
+        </div>
+        }
+      }
+    </section>
+  }
+}
+
+@if (toDelete; as d) {
+  <div class="modal-backdrop" (click)="toDelete = null">
+    <div class="modal" (click)="$event.stopPropagation()">
+      <h3>Delete run #{{ d.run_id }}?</h3>
+      <p>This deletes the run, its model file, its scans and candidates, and the rows it published to fault_prediction. The episodes and telemetry are not touched. This cannot be undone.</p>
+      <div class="modal-actions">
+        <button class="btn btn-secondary" (click)="toDelete = null">Cancel</button>
+        <button class="btn btn-danger-solid" (click)="deleteConfirmed()">Delete</button>
+      </div>
+    </div>
+  </div>
+}

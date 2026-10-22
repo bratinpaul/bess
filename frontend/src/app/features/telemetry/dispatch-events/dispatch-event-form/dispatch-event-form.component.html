@@ -1,0 +1,251 @@
+<div class="page-header">
+  <div>
+    <a class="back-link" routerLink="/telemetry/dispatch">← Back to dispatch events</a>
+    <h2>{{ isEditMode ? 'Edit Dispatch ' + dispatchId : 'Add Dispatch' }}</h2>
+  </div>
+</div>
+
+<div class="card">
+  @if (loading) {
+    <div class="empty-state">Loading…</div>
+  } @else {
+    <form [formGroup]="form" (ngSubmit)="submit()">
+      @if (error) {
+        <div class="form-error">{{ error }}</div>
+      }
+
+      <h3 class="form-section-title">Dispatch</h3>
+      <div class="form-grid">
+        <div class="field">
+          <label for="dispatch_id">Dispatch ID *</label>
+          <input id="dispatch_id" type="text" formControlName="dispatch_id" />
+          @if (invalid('dispatch_id')) {
+            <span class="field-error">Dispatch ID is required.</span>
+          } @else if (!isEditMode) {
+            <span class="field-hint">Next free ID suggested; must be unique.</span>
+          }
+        </div>
+
+        <div class="field">
+          <label for="ems_id">EMS *</label>
+          <select id="ems_id" formControlName="ems_id">
+            <option [ngValue]="null" disabled>Select an EMS</option>
+            @for (e of lookups?.ems ?? []; track e.ems_id) {
+              <option [ngValue]="e.ems_id">{{ e.ems_code }}{{ e.system_name ? ' · ' + e.system_name : '' }}</option>
+            }
+          </select>
+          @if (invalid('ems_id')) {
+            <span class="field-error">EMS is required.</span>
+          }
+        </div>
+
+        <div class="field">
+          <label for="dispatch_mode">Dispatch Mode *</label>
+          <select id="dispatch_mode" formControlName="dispatch_mode" (change)="onModeChange()">
+            <option [ngValue]="null" disabled>Select a mode</option>
+            @for (m of lookups?.modes ?? []; track m.code) {
+              <option [ngValue]="m.code">{{ modeLabel(m.code) }} · {{ m.code }}</option>
+            }
+          </select>
+          @if (invalid('dispatch_mode')) {
+            <span class="field-error">Dispatch mode is required.</span>
+          } @else if (selectedMode?.description) {
+            <span class="field-hint">{{ selectedMode!.description }}</span>
+          }
+        </div>
+
+        <div class="field">
+          <label for="command_code">Command *</label>
+          <select id="command_code" formControlName="command_code">
+            <option [ngValue]="null" disabled>Select a command</option>
+            @for (c of lookups?.command_codes ?? []; track c) {
+              <option [ngValue]="c">{{ c }}</option>
+            }
+          </select>
+          @if (invalid('command_code')) {
+            <span class="field-error">Command is required.</span>
+          }
+        </div>
+
+        <div class="field">
+          <label for="grid_service">Grid Service *</label>
+          <select id="grid_service" formControlName="grid_service">
+            @for (s of lookups?.services ?? []; track s.code) {
+              <option [ngValue]="s.code">{{ s.code }}{{ s.description ? ' · ' + s.description : '' }}</option>
+            }
+          </select>
+        </div>
+
+        <div class="field">
+          <label for="source">Issued By</label>
+          <input id="source" type="text" formControlName="source" list="dispatch-sources" placeholder="e.g. Market optimizer" />
+          <datalist id="dispatch-sources">
+            @for (s of lookups?.sources ?? []; track s) {
+              <option [value]="s"></option>
+            }
+          </datalist>
+        </div>
+      </div>
+
+      <h3 class="form-section-title">Timing</h3>
+      <div class="form-grid">
+        <div class="field">
+          <label for="effective_from">Effective From *</label>
+          <input id="effective_from" type="datetime-local" formControlName="effective_from" />
+          @if (invalid('effective_from')) {
+            <span class="field-error">Effective-from time is required.</span>
+          } @else {
+            <span class="field-hint">Plant local time. One EMS runs one dispatch at a time.</span>
+          }
+        </div>
+
+        <div class="field">
+          <label for="effective_to">Effective To</label>
+          <input id="effective_to" type="datetime-local" formControlName="effective_to" (change)="onEndChange()" />
+          @if (groupError('endBeforeStart')) {
+            <span class="field-error">Can't be before the effective-from time.</span>
+          } @else if (durationMin !== null) {
+            <span class="field-hint">Runs {{ durationMin }} min.</span>
+          } @else {
+            <span class="field-hint">Leave empty while the dispatch is running.</span>
+          }
+        </div>
+
+        <div class="field">
+          <label for="issued_at">Issued At</label>
+          <input id="issued_at" type="datetime-local" formControlName="issued_at" />
+          @if (groupError('issuedAfterStart')) {
+            <span class="field-error">Can't be after the effective-from time.</span>
+          } @else {
+            <span class="field-hint">Defaults to the effective-from time.</span>
+          }
+        </div>
+
+        <div class="field">
+          <label for="status">Status *</label>
+          <select id="status" formControlName="status">
+            @for (s of lookups?.statuses ?? []; track s) {
+              <option [ngValue]="s">{{ s }}</option>
+            }
+          </select>
+          @if (groupError('activeWithEnd')) {
+            <span class="field-error">An Active dispatch has no end time.</span>
+          } @else if (groupError('endedWithoutEnd')) {
+            <span class="field-error">A {{ form.value.status }} dispatch needs an end time.</span>
+          }
+        </div>
+      </div>
+
+      <h3 class="form-section-title">Setpoint &amp; SOC</h3>
+      <div class="form-grid three">
+        <div class="field">
+          <label for="p_setpoint_kw">Power Setpoint (kW) *</label>
+          <input id="p_setpoint_kw" type="number" step="any" formControlName="p_setpoint_kw" />
+          @if (invalid('p_setpoint_kw')) {
+            <span class="field-error">Setpoint is required (0 to hold).</span>
+          } @else {
+            <span class="field-hint setpoint-hint" [attr.data-dir]="direction">
+              @if (direction === 'charge') {
+                ▲ Charging (import)
+              } @else if (direction === 'discharge') {
+                ▼ Discharging (export)
+              } @else {
+                Holding · &gt; 0 charges, &lt; 0 discharges
+              }
+            </span>
+          }
+        </div>
+        <div class="field">
+          <label for="ramp_rate_kw_s">Ramp Rate (kW/s)</label>
+          <input id="ramp_rate_kw_s" type="number" step="any" min="0" formControlName="ramp_rate_kw_s" />
+          @if (invalid('ramp_rate_kw_s')) {
+            <span class="field-error">Can't be negative.</span>
+          }
+        </div>
+        <div class="field">
+          <label for="target_soc_pct">Target SOC (%)</label>
+          <input id="target_soc_pct" type="number" step="any" min="0" max="100" formControlName="target_soc_pct" />
+          @if (invalid('target_soc_pct')) {
+            <span class="field-error">Must be 0–100.</span>
+          }
+        </div>
+        <div class="field">
+          <label for="soc_start_pct">SOC at Start (%)</label>
+          <input id="soc_start_pct" type="number" step="any" min="0" max="100" formControlName="soc_start_pct" />
+          @if (invalid('soc_start_pct')) {
+            <span class="field-error">Must be 0–100.</span>
+          }
+        </div>
+        <div class="field">
+          <label for="soc_end_pct">SOC at End (%)</label>
+          <input id="soc_end_pct" type="number" step="any" min="0" max="100" formControlName="soc_end_pct" />
+          @if (invalid('soc_end_pct')) {
+            <span class="field-error">Must be 0–100.</span>
+          }
+        </div>
+      </div>
+
+      <h3 class="form-section-title">Energy &amp; Market</h3>
+      <div class="form-grid three">
+        <div class="field">
+          <label for="import_kwh">Energy Imported (kWh) *</label>
+          <input id="import_kwh" type="number" step="any" min="0" formControlName="import_kwh" />
+          @if (invalid('import_kwh')) {
+            <span class="field-error">Required; can't be negative.</span>
+          }
+        </div>
+        <div class="field">
+          <label for="export_kwh">Energy Exported (kWh) *</label>
+          <input id="export_kwh" type="number" step="any" min="0" formControlName="export_kwh" />
+          @if (invalid('export_kwh')) {
+            <span class="field-error">Required; can't be negative.</span>
+          }
+        </div>
+        <div class="field">
+          <label>Net Energy (kWh)</label>
+          <div class="readonly-value">{{ netEnergy | number: '1.0-1' }}</div>
+          <span class="field-hint">Import − export; calculated.</span>
+        </div>
+        <div class="field">
+          <label for="avg_price_mwh">Avg Price ($/MWh)</label>
+          <input id="avg_price_mwh" type="number" step="any" formControlName="avg_price_mwh" />
+        </div>
+        <div class="field">
+          <label for="revenue_usd">Revenue ($)</label>
+          <div class="input-with-action">
+            <input id="revenue_usd" type="number" step="any" formControlName="revenue_usd" />
+            <button type="button" class="btn btn-secondary" (click)="calculateRevenue()"
+              title="(export − import) × avg price ÷ 1000">Calculate</button>
+          </div>
+          @if (invalid('avg_price_mwh')) {
+            <span class="field-error">Enter the average price first.</span>
+          } @else {
+            <span class="field-hint">Negative when the dispatch buys energy.</span>
+          }
+        </div>
+      </div>
+
+      <h3 class="form-section-title">Other</h3>
+      <div class="form-grid">
+        <div class="field">
+          <label class="check-label">
+            <input type="checkbox" class="box" formControlName="accepted" />
+            Accepted by the plant
+          </label>
+          <span class="field-hint">Clear this if the plant rejected the command.</span>
+        </div>
+        <div class="field span-2">
+          <label for="note">Note</label>
+          <textarea id="note" rows="2" formControlName="note" placeholder="Optional"></textarea>
+        </div>
+      </div>
+
+      <div class="form-actions">
+        <a class="btn btn-secondary" [routerLink]="isEditMode ? ['/telemetry/dispatch', dispatchId] : ['/telemetry/dispatch']">Cancel</a>
+        <button type="submit" class="btn btn-primary" [disabled]="saving">
+          {{ saving ? 'Saving…' : 'Save Dispatch' }}
+        </button>
+      </div>
+    </form>
+  }
+</div>

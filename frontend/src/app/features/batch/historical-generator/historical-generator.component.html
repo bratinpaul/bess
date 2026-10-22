@@ -1,0 +1,582 @@
+<div class="page-header">
+  <div>
+    <h2>Historical Generator</h2>
+    <p class="subtitle">
+      Generate historical telemetry files (BMS, PCS, EMS, HVAC, module, alarms, dispatch events) for one or more sites
+      from the sample files in <span class="mono">input\historical</span>, in the same layout as the Bhadla BESS folder.
+      Ratings and asset codes come from master data; you can adjust them for a run without changing master data.
+    </p>
+    <ol class="steps">
+      <li>Select sites and the date range</li>
+      <li>Review the mapping and scenarios</li>
+      <li>Generate</li>
+      <li>Monitor it with <em>Refresh status</em></li>
+    </ol>
+  </div>
+</div>
+
+@if (optionsError) {
+  <div class="card empty-state error">{{ optionsError }}</div>
+}
+
+@if (options) {
+  @if (options.missing_samples.length) {
+    <div class="card run-card failed">
+      <strong>Sample files missing</strong> in <span class="mono">{{ options.samples_folder }}</span>:
+      {{ options.missing_samples.join(', ') }}
+    </div>
+  }
+
+  <!-- 1 · sites and range -->
+  <div class="card setup-card">
+    <div class="card-head">
+      <h3>1 · Sites and date range</h3>
+      <span class="muted small">battery systems from master data · {{ selected.size }} selected</span>
+    </div>
+    <div class="table-scroll">
+      <table class="data-table site-table">
+        <thead>
+          <tr>
+            <th class="inc-col">Generate</th>
+            <th>Site</th>
+            <th>Battery system</th>
+            <th>State · climate</th>
+            <th class="num">Rating</th>
+            <th class="num">Modules</th>
+            <th>Output folder</th>
+          </tr>
+        </thead>
+        <tbody>
+          @for (s of options.systems; track s.battery_system_id) {
+            <tr [class.dim]="!s.ready" [class.picked]="isSelected(s.battery_system_id)" (click)="toggleSite(s)">
+              <td class="inc-col">
+                <input type="checkbox" [checked]="isSelected(s.battery_system_id)" [disabled]="!s.ready || running"
+                  (click)="$event.stopPropagation()" (change)="toggleSite(s)" [attr.aria-label]="'Generate ' + s.site_name" />
+              </td>
+              <td><strong>{{ s.site_name }}</strong></td>
+              <td class="mono small">{{ s.system_name }}</td>
+              <td>{{ s.state || '—' }} <span class="muted small">· {{ s.climate }}</span></td>
+              <td class="num">{{ s.rated_power_mw }} MW / {{ s.rated_energy_mwh }} MWh</td>
+              <td class="num">{{ s.modules }}</td>
+              <td>
+                <span class="mono small">{{ s.folder_relative }}</span>
+                @if (!s.ready) {
+                  <div class="bad small">Missing in master data: {{ s.missing.join(', ') }}</div>
+                } @else if (s.last_generated) {
+                  <div class="muted small">generated {{ s.last_generated.date_from }} – {{ s.last_generated.date_to }}</div>
+                } @else if (s.existing_files) {
+                  <div class="warn small">{{ s.existing_files }} existing files</div>
+                }
+              </td>
+            </tr>
+          }
+        </tbody>
+      </table>
+    </div>
+    <div class="setup-grid range-grid">
+      <div class="field">
+        <label for="from">From *</label>
+        <input id="from" type="date" [(ngModel)]="dateFrom" (ngModelChange)="onRangeChange()" [disabled]="running" />
+      </div>
+      <div class="field">
+        <label for="to">To *</label>
+        <input id="to" type="date" [(ngModel)]="dateTo" (ngModelChange)="onRangeChange()" [disabled]="running" />
+      </div>
+      <div class="field">
+        <label for="modfrom">Module data from <span class="muted">(to the end date)</span></label>
+        <input id="modfrom" type="date" [(ngModel)]="moduleFrom" [min]="dateFrom" [max]="dateTo" [disabled]="running" />
+      </div>
+      <div class="field range-info">
+        <span class="small"><strong>{{ days > 0 ? days : 0 }}</strong> days · module CSVs for <strong>{{ moduleDays > 0 ? moduleDays : 0 }}</strong> days</span>
+        <span class="muted small">288 rows a day per feed · module files ≈ modules × 288 rows a day · max {{ options.max_days }} days</span>
+      </div>
+    </div>
+    <div class="setup-actions">
+      @if (rangeError) {
+        <span class="problem">{{ rangeError }}</span>
+      } @else if (prepareError) {
+        <span class="problem">{{ prepareError }}</span>
+      }
+      <button type="button" class="btn btn-secondary" (click)="prepare()"
+        [disabled]="!selected.size || !!rangeError || preparing || running || !needsPrepare">
+        {{ preparing ? 'Reading master data…' : planIds.length && !needsPrepare ? 'Mapping ready ✓' : '2 · Prepare mapping & scenarios' }}
+      </button>
+    </div>
+  </div>
+
+  <!-- 2 · mapping and scenarios per site -->
+  @if (planIds.length) {
+    <div class="card setup-card" [class.stale]="needsPrepare">
+      <div class="card-head">
+        <h3>2 · Mapping and scenarios</h3>
+        <span class="muted small">
+          @if (needsPrepare) {
+            <span class="bad">The range or the selection changed — click Prepare again.</span>
+          } @else {
+            values for this run only · master data is not changed
+          }
+        </span>
+      </div>
+      <div class="site-tabs" role="tablist">
+        @for (id of planIds; track id) {
+          <button type="button" role="tab" class="site-tab" [class.active]="activeId === id" (click)="activeId = id"
+            [attr.aria-selected]="activeId === id">
+            {{ plans.get(id)!.preview.site_name }}
+            @if (changedCount(plans.get(id)!)) {
+              <span class="chip">{{ changedCount(plans.get(id)!) }} changed</span>
+            }
+            @if (calendarProblems(plans.get(id)!.calendar).length) {
+              <span class="chip bad-chip">!</span>
+            }
+          </button>
+        }
+      </div>
+
+      @if (active; as plan) {
+        <div class="plan-grid">
+          <!-- mapping -->
+          <section>
+            <div class="section-head">
+              <h4>Mapping · {{ plan.preview.system_name }}</h4>
+              <button type="button" class="link-btn" (click)="resetMapping(plan)" [disabled]="running || !changedCount(plan)">
+                Reset to master data
+              </button>
+            </div>
+            <table class="data-table map-table">
+              <thead>
+                <tr>
+                  <th>Field</th>
+                  <th>Master data</th>
+                  <th>Used for this run</th>
+                </tr>
+              </thead>
+              <tbody>
+                @for (f of plan.preview.fields; track f.name) {
+                  <tr [class.changed]="isChanged(plan, f.name, f.master)">
+                    <td>{{ f.label }}</td>
+                    <td class="mono small">{{ f.master }}</td>
+                    <td>
+                      <div class="map-input">
+                        @switch (f.name) {
+                          @case ('pcs_code') {
+                            <select [(ngModel)]="plan.values[f.name]" [disabled]="running">
+                              @for (c of plan.preview.choices.pcs_code; track c) {
+                                <option [value]="c">{{ c }}</option>
+                              }
+                            </select>
+                          }
+                          @case ('ems_code') {
+                            <select [(ngModel)]="plan.values[f.name]" [disabled]="running">
+                              @for (c of plan.preview.choices.ems_code; track c) {
+                                <option [value]="c">{{ c }}</option>
+                              }
+                            </select>
+                          }
+                          @case ('hvac_code') {
+                            <select [(ngModel)]="plan.values[f.name]" [disabled]="running">
+                              @for (c of plan.preview.choices.hvac_code; track c) {
+                                <option [value]="c">{{ c }}</option>
+                              }
+                            </select>
+                          }
+                          @case ('climate_key') {
+                            <select [(ngModel)]="plan.values[f.name]" [disabled]="running">
+                              @for (c of plan.preview.choices.climate_key; track c.key) {
+                                <option [value]="c.key">{{ c.key }} · {{ c.label }}</option>
+                              }
+                            </select>
+                          }
+                          @case ('prefix') {
+                            <input type="text" maxlength="6" [(ngModel)]="plan.values[f.name]" [disabled]="running" />
+                          }
+                          @default {
+                            <input type="number" [step]="f.kind === 'int' ? 1 : 'any'" [(ngModel)]="plan.values[f.name]"
+                              [disabled]="running" />
+                          }
+                        }
+                        @if (isChanged(plan, f.name, f.master)) {
+                          <button type="button" class="link-btn" title="Back to master data" (click)="resetField(plan, f.name, f.master)">↺</button>
+                        }
+                      </div>
+                    </td>
+                  </tr>
+                }
+              </tbody>
+            </table>
+            <dl class="detail-list map-facts">
+              <dt>Assets</dt>
+              <dd>{{ plan.preview.packs }} packs · {{ plan.preview.modules }} modules (module CSVs list every module)</dd>
+              <dt>Scaling</dt>
+              <dd>
+                power ×{{ scaling(plan).power | number: '1.0-3' }} of the 1 MW sample ·
+                SOC swing ×{{ scaling(plan).soc | number: '1.0-3' }}
+                @if (scaling(plan).soc > 1) {
+                  <span class="warn">(larger than the sample: deep cycles are clipped at 5–100 %)</span>
+                }
+              </dd>
+              <dt>Folder</dt>
+              <dd>
+                <span class="mono small">input\{{ plan.preview.folder_relative }}</span>
+                @if (plan.preview.existing_files) {
+                  <span class="warn"> · its {{ plan.preview.existing_files }} generated files will be replaced</span>
+                }
+              </dd>
+              <dt>Ids</dt>
+              <dd class="mono small">{{ plan.values.prefix }}-ALM-00001 · {{ plan.values.prefix }}-DSP-00001</dd>
+            </dl>
+          </section>
+
+          <!-- scenarios -->
+          <section>
+            <div class="section-head">
+              <h4>Scenarios · {{ climateLabel(plan) }}</h4>
+              <span class="section-actions">
+                <button type="button" class="link-btn" (click)="repropose(plan)" [disabled]="running || plan.reproposing"
+                  title="A new proposal from the climate profile and range">{{ plan.reproposing ? 'Proposing…' : 'Propose again' }}</button>
+                <button type="button" class="link-btn" (click)="resetCalendar(plan)" [disabled]="running">Reset</button>
+                <button type="button" class="link-btn" (click)="clearCalendar(plan)" [disabled]="running">Sample mix only</button>
+              </span>
+            </div>
+            @if (plan.error) {
+              <div class="form-error">{{ plan.error }}</div>
+            }
+            <div class="legend">
+              @for (l of legend; track l.key) {
+                <span class="legend-item"><span class="dot" [attr.data-s]="l.key"></span>{{ l.label }}
+                  <strong>{{ counts(plan.calendar)[l.key] }}</strong></span>
+              }
+            </div>
+            <div class="months">
+              @for (m of months; track m.label) {
+                <div class="month">
+                  <div class="month-label">{{ m.label }}</div>
+                  <div class="cal-grid">
+                    @for (w of weekdays; track w) {
+                      <span class="wd">{{ w }}</span>
+                    }
+                    @for (week of m.weeks; track $index) {
+                      @for (d of week; track $index) {
+                        @if (d) {
+                          <button type="button" class="cal-day" [class.out]="!d.inRange"
+                            [attr.data-s]="d.inRange ? scenarioOf(plan.calendar, d.iso) : null" [disabled]="!d.inRange || running"
+                            [title]="d.inRange ? dayTitle(plan, d) : ''" (click)="cycleDay(plan, d)">
+                            {{ d.day }}
+                            @if (plan.calendar.low_insulation === d.iso) {
+                              <span class="mark" aria-hidden="true">≈</span>
+                            }
+                          </button>
+                        } @else {
+                          <span></span>
+                        }
+                      }
+                    }
+                  </div>
+                </div>
+              }
+            </div>
+            <p class="muted small">Click a day: sample mix → heat wave → monsoon → sample mix. Every day copies one sample
+              day; each month first gets sample days that cover every alarm / grid-service case.</p>
+
+            <div class="event-grid">
+              <label class="check-inline">
+                <input type="checkbox" [checked]="!!plan.calendar.maintenance" [disabled]="running"
+                  (change)="toggleMaintenance(plan.calendar, $any($event.target).checked)" />
+                Planned maintenance
+              </label>
+              @if (plan.calendar.maintenance; as mt) {
+                <div class="event-fields">
+                  <select [(ngModel)]="mt.date" [disabled]="running" aria-label="Maintenance day">
+                    @for (d of freeDays(plan.calendar, mt.date); track d) {
+                      <option [value]="d">{{ d }}</option>
+                    }
+                  </select>
+                  <input type="time" step="300" [(ngModel)]="mt.start" [disabled]="running" aria-label="Maintenance start" />
+                  <span class="muted">–</span>
+                  <input type="time" step="300" [(ngModel)]="mt.end" [disabled]="running" aria-label="Maintenance end" />
+                </div>
+              } @else {
+                <span class="muted small">none</span>
+              }
+
+              <label class="check-inline">
+                <input type="checkbox" [checked]="!!plan.calendar.outage" [disabled]="running"
+                  (change)="toggleOutage(plan.calendar, $any($event.target).checked)" />
+                Forced outage
+              </label>
+              @if (plan.calendar.outage; as ot) {
+                <div class="event-fields">
+                  <select [(ngModel)]="ot.date" [disabled]="running" aria-label="Outage day">
+                    @for (d of freeDays(plan.calendar, ot.date); track d) {
+                      <option [value]="d">{{ d }}</option>
+                    }
+                  </select>
+                  <span class="muted small">restart</span>
+                  <input type="time" step="300" min="13:30" max="17:00" [(ngModel)]="ot.restart" [disabled]="running"
+                    aria-label="Outage restart" />
+                  <span class="muted small">trip time comes from the sample day (morning standby)</span>
+                </div>
+              } @else {
+                <span class="muted small">none</span>
+              }
+
+              <span class="event-label">DC insulation dip</span>
+              <div class="event-fields">
+                <select [(ngModel)]="plan.calendar.low_insulation" [disabled]="running || !plan.calendar.monsoon.length"
+                  aria-label="Insulation dip day">
+                  <option [ngValue]="null">{{ plan.calendar.monsoon.length ? 'none' : 'needs a monsoon day' }}</option>
+                  @for (d of plan.calendar.monsoon; track d) {
+                    <option [ngValue]="d">{{ d }}</option>
+                  }
+                </select>
+                <span class="muted small">on a monsoon day (moisture)</span>
+              </div>
+
+              @if (heatDays(plan.calendar).length) {
+                <span class="event-label">Heat afternoon extra (°C)</span>
+                <div class="event-fields heat-list">
+                  @for (d of heatDays(plan.calendar); track d) {
+                    <label class="heat-item">
+                      <span class="mono small">{{ d.slice(5) }}</span>
+                      <input type="number" min="0" max="15" step="0.5" [ngModel]="plan.calendar.heat[d]"
+                        (ngModelChange)="setHeat(plan.calendar, d, $event)" [disabled]="running" />
+                    </label>
+                  }
+                </div>
+              }
+            </div>
+            @for (p of calendarProblems(plan.calendar); track p) {
+              <div class="form-error">{{ p }}</div>
+            }
+          </section>
+        </div>
+      }
+
+      <div class="setup-actions">
+        <span class="muted small">
+          {{ planIds.length }} site(s) · {{ dateFrom }} – {{ dateTo }} · generated one after another
+          @for (r of replacing; track r.site) {
+            · <span class="warn">replaces {{ r.files }} files in {{ r.site }}</span>
+          }
+        </span>
+        <button data-perm="batch:execute" type="button" class="btn btn-primary run-btn" [disabled]="!canGenerate" (click)="generate()">
+          {{ starting ? 'Starting…' : '3 · Generate (' + planIds.length + ' site' + (planIds.length === 1 ? '' : 's') + ')' }}
+        </button>
+      </div>
+    </div>
+  }
+  @if (runError) {
+    <div class="card run-card failed"><strong>The generation didn't start.</strong> {{ runError }}</div>
+  }
+}
+
+<!-- 4 · monitor (by hand) -->
+<div class="card monitor-bar">
+  <div>
+    <h3>4 · Monitor</h3>
+    <p class="muted small">
+      The generation runs in the background; the page doesn't update by itself. Click <em>Refresh status</em> to see its
+      progress and the batch log.
+      @if (refreshedAt) {
+        Last refreshed {{ refreshedAt | date: 'HH:mm:ss' }}.
+      }
+    </p>
+  </div>
+  <button type="button" class="btn btn-secondary" [disabled]="refreshing" (click)="refresh()">
+    {{ refreshing ? 'Refreshing…' : 'Refresh status' }}
+  </button>
+</div>
+
+@if (status?.progress; as pr) {
+  <div class="card run-card" [class.failed]="pr.status === 'FAILED'">
+    <div class="card-head">
+      <h3>
+        @if (running) {
+          Generation in progress
+          <span class="batch-status running">RUNNING</span>
+        } @else {
+          Last generation
+          <span class="batch-status" [attr.data-status]="pr.status">{{ pr.status }}</span>
+        }
+      </h3>
+      <span class="muted small">
+        {{ pr.date_from }} – {{ pr.date_to }} · started {{ plantTime(pr.started_at) }}{{ pr.finished_at ? ' → ' + plantTime(pr.finished_at) : '' }}
+        @if (pr.batch_id) {
+          · batchlog #{{ pr.batch_id }}
+        }
+      </span>
+    </div>
+    @if (pr.error) {
+      <div class="form-error">{{ pr.error }}</div>
+    }
+    <div class="progress-row">
+      <div class="progress-bar" role="progressbar" [attr.aria-valuenow]="percent" aria-valuemin="0" aria-valuemax="100">
+        <span [style.width.%]="percent"></span>
+      </div>
+      <span class="small">{{ doneSites }} / {{ siteProgress.length }} sites
+        @if (running && pr.current) {
+          · now: {{ pr.current }}
+        }</span>
+    </div>
+    <div class="table-scroll">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>Site</th>
+            <th>Folder</th>
+            <th>Status</th>
+            <th class="num">Files</th>
+            <th class="num">Rows</th>
+            <th class="num">Time</th>
+            <th>Notes</th>
+          </tr>
+        </thead>
+        <tbody>
+          @for (s of pr.sites; track s.battery_system_id) {
+            <tr>
+              <td><strong>{{ s.site_name }}</strong> <span class="mono small muted">{{ s.system_name }}</span></td>
+              <td class="mono small">{{ s.folder_relative }}</td>
+              <td>
+                <span class="file-status" [attr.data-status]="s.status === 'DONE' ? 'LOADED' : s.status === 'GENERATING' ? 'LOADING' : s.status">
+                  @if (s.status === 'GENERATING') {
+                    <span class="spinner dark" aria-hidden="true"></span>
+                  }
+                  {{ s.status | titlecase }}
+                </span>
+                @if (s.status === 'GENERATING' && s.step) {
+                  <div class="muted small">{{ s.step }}</div>
+                }
+              </td>
+              <td class="num">{{ s.files ?? '—' }}</td>
+              <td class="num">{{ s.rows !== null ? (s.rows | number) : '—' }}</td>
+              <td class="num">{{ s.seconds !== null ? s.seconds + ' s' : '' }}</td>
+              <td class="notes">
+                @if (s.error) {
+                  <div class="bad">{{ s.error }}</div>
+                }
+                @if (s.scenarios) {
+                  <div class="muted">{{ scenarioText(s.scenarios) }}</div>
+                }
+                @if (s.overrides && overrideText(s.overrides)) {
+                  <div class="muted">overrides: {{ overrideText(s.overrides) }}</div>
+                }
+                @for (w of s.warnings; track w) {
+                  <div class="warn">{{ w }}</div>
+                }
+              </td>
+            </tr>
+          }
+        </tbody>
+      </table>
+    </div>
+    @if (!running && pr.status !== 'FAILED') {
+      <p class="small next-step">
+        Next: load the files with <a routerLink="/batch/historical">Batch → Historical Load</a> (choose the site and its
+        folder, e.g. <span class="mono">historical\Bhuj BESS</span>).
+      </p>
+    }
+  </div>
+}
+
+<!-- batch log -->
+<div class="card history-card">
+  <div class="card-head">
+    <h3>Batch log</h3>
+    <span class="muted small">battery_raw.batchlog · job historical_generate · one row per run</span>
+  </div>
+  <div class="history-bar">
+    <div class="status-tabs" role="tablist" aria-label="Filter by status">
+      <button type="button" class="status-tab" [class.active]="!statusFilter" (click)="setStatusFilter('')">
+        All <span class="count">{{ allCount }}</span>
+      </button>
+      @for (s of statuses; track s) {
+        <button type="button" class="status-tab" [class.active]="statusFilter === s" (click)="setStatusFilter(s)">
+          <span class="swatch" [attr.data-status]="s"></span>{{ s | titlecase }}
+          <span class="count">{{ logs?.counts?.[s] ?? 0 }}</span>
+        </button>
+      }
+    </div>
+  </div>
+  @if (logsLoading && !logs) {
+    <div class="empty-state">Loading…</div>
+  } @else if (!logs || logs.items.length === 0) {
+    <div class="empty-state">No generations yet.</div>
+  } @else {
+    <div class="table-scroll">
+      <table class="data-table history-table" [class.refreshing]="logsLoading">
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>Sites · range</th>
+            <th>Status</th>
+            <th class="num">Sites</th>
+            <th class="num">Rows</th>
+            <th class="num">Duration</th>
+            <th>Started</th>
+          </tr>
+        </thead>
+        <tbody>
+          @for (log of logs.items; track log.batch_id) {
+            <tr class="log-row" [class.open]="expanded === log.batch_id" (click)="toggle(log)">
+              <td class="mono">{{ log.batch_id }}</td>
+              <td>{{ log.file_name }}</td>
+              <td><span class="batch-status" [attr.data-status]="log.status">{{ log.status }}</span></td>
+              <td class="num">{{ log.feeds_loaded }} / {{ log.feeds_total }}</td>
+              <td class="num">{{ log.rows_total | number }}</td>
+              <td class="num">{{ duration(log.duration_ms) }}</td>
+              <td>{{ plantTime(log.started_at) }}</td>
+            </tr>
+            @if (expanded === log.batch_id) {
+              <tr class="detail-row">
+                <td colspan="7">
+                  <div class="log-detail">
+                    @if (log.error_message) {
+                      <div class="form-error">{{ log.error_message }}</div>
+                    }
+                    <table class="data-table feed-table">
+                      <thead>
+                        <tr>
+                          <th>Site</th>
+                          <th>Folder</th>
+                          <th class="num">Rows</th>
+                          <th>Notes</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        @for (site of log.feed_results; track $index) {
+                          <tr>
+                            <td>{{ site.feed }}</td>
+                            <td class="mono small">{{ site.csv }}</td>
+                            <td class="num">{{ site.rows | number }}</td>
+                            <td class="notes">
+                              @if (site.result) {
+                                <div class="muted">{{ site.result }}</div>
+                              }
+                              @for (e of site.errors ?? []; track e) {
+                                <div class="bad">{{ e }}</div>
+                              }
+                            </td>
+                          </tr>
+                        }
+                      </tbody>
+                    </table>
+                    <dl class="detail-list">
+                      <dt>Run</dt>
+                      <dd class="mono small">{{ log.run_id }}</dd>
+                    </dl>
+                  </div>
+                </td>
+              </tr>
+            }
+          }
+        </tbody>
+      </table>
+    </div>
+    <div class="pagination">
+      <div class="page-range">{{ logs.total ? offset + 1 : 0 }}–{{ offset + logs.items.length }} of {{ logs.total }}</div>
+      <div class="page-controls">
+        <button class="btn btn-secondary btn-icon" [disabled]="offset === 0" (click)="page(-1)" title="Newer">‹</button>
+        <button class="btn btn-secondary btn-icon" [disabled]="offset + pageSize >= logs.total" (click)="page(1)" title="Older">›</button>
+      </div>
+    </div>
+  }
+</div>

@@ -1,0 +1,2 @@
+pcs_code,ts,mode_code,grid_service,ac_active_power_kw,ac_reactive_power_kvar,ac_apparent_power_kva,power_factor,ac_frequency_hz,ac_voltage_ab_v,ac_voltage_bc_v,ac_voltage_ca_v,ac_current_a_a,ac_current_b_a,ac_current_c_a,thd_voltage_pct,thd_current_pct,dc_voltage_v,dc_current_a,dc_power_kw,efficiency_pct,igbt_temp_c,heatsink_temp_c,inlet_coolant_temp_c,breaker_state,alarm_level
+01-01-PCS-01,2026-09-28T18:35:00,GRID_FOLLOWING,NONE,-669.62,113.2,679.12,0.986,49.989,398.15,397.86,398.32,1005.54,1023.75,972.02,1.01,1.35,1242.5,-544.87,-677.0,98.91,44.41,36.7,26.93,CLOSED,0

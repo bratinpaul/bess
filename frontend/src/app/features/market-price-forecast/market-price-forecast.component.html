@@ -1,0 +1,333 @@
+<div class="page-header">
+  <div>
+    <h2>Price Forecast</h2>
+    <p class="subtitle">Probabilistic (P10 / P50 / P90) price forecasts per node, issue vintage and target hour — every vintage is kept, so models train on what was known at the time</p>
+  </div>
+  <div class="header-actions">
+    <label class="toggle-switch" title="Show the upload section">
+      <input data-perm="write" type="checkbox" [(ngModel)]="showUpload" [ngModelOptions]="{ standalone: true }" />
+      <span class="track" aria-hidden="true"><span class="thumb"></span></span>
+      Upload file
+    </label>
+    <button type="button" class="btn btn-primary" (click)="openAdd()" [disabled]="nodes.length === 0">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+        <path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+      </svg>
+      Add Forecast
+    </button>
+  </div>
+</div>
+
+@if (showUpload) {
+  <div class="card telemetry-upload-card">
+    <div class="telemetry-section-header">
+      <h3>Upload Price Forecast File</h3>
+      <p class="subtitle">CSV or Excel · columns node_code, issued_at, target_ts, horizon_h, p10_mwh, p50_mwh, p90_mwh, model ·
+        p50 required · horizon derived when empty · existing node + vintage + target rows are updated</p>
+    </div>
+
+    <div class="upload-row">
+      <input type="file" accept=".csv,.xlsx,.xlsm" (change)="onFileSelected($event)" #fileInput />
+      <div class="field inline-field">
+        <label for="uploadNode">Node for rows without node_code</label>
+        <select id="uploadNode" [(ngModel)]="uploadNodeId">
+          <option [ngValue]="null">From file</option>
+          @for (n of nodes; track n.node_id) {
+            <option [ngValue]="n.node_id">{{ n.node_code }}</option>
+          }
+        </select>
+      </div>
+      <button type="button" class="btn btn-primary" [disabled]="!selectedFile || uploading" (click)="upload()">
+        {{ uploading ? 'Uploading…' : 'Upload' }}
+      </button>
+    </div>
+    <p class="upload-note">Checks per row: a known price node, valid issue and target times (plant time, no UTC
+      conversion) with the target after the issue and at most two weeks ahead, horizon_h equal to target − issue,
+      quantiles in order (P10 ≤ P50 ≤ P90) and prices between −1000 and 20000 {{ currency }}/MWh. A node + vintage +
+      target repeated in the file: the last row wins.</p>
+
+    @if (uploadError) {
+      <div class="form-error">{{ uploadError }}</div>
+    }
+
+    @if (uploadResult) {
+      <div class="upload-summary">
+        <div class="upload-stat">
+          <span class="upload-stat-value">{{ uploadResult.total_rows }}</span>
+          <span class="upload-stat-label">Rows in file</span>
+        </div>
+        <div class="upload-stat">
+          <span class="upload-stat-value">{{ uploadResult.inserted }}</span>
+          <span class="upload-stat-label">Inserted</span>
+        </div>
+        <div class="upload-stat">
+          <span class="upload-stat-value">{{ uploadResult.updated }}</span>
+          <span class="upload-stat-label">Updated</span>
+        </div>
+        <div class="upload-stat">
+          <span class="upload-stat-value">{{ uploadResult.vintages }}</span>
+          <span class="upload-stat-label">Vintages</span>
+        </div>
+        <div class="upload-stat" [class.upload-stat-error]="uploadResult.error_count > 0">
+          <span class="upload-stat-value">{{ uploadResult.error_count }}</span>
+          <span class="upload-stat-label">Rows skipped</span>
+        </div>
+      </div>
+      @if (uploadResult.first_target) {
+        <p class="upload-note">Loaded {{ uploadResult.nodes.join(', ') }} · targets {{ label(uploadResult.first_target) }} →
+          {{ label(uploadResult.last_target) }}</p>
+      }
+      @if (uploadResult.errors.length > 0) {
+        <div class="upload-errors">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Row</th>
+                <th>Errors</th>
+              </tr>
+            </thead>
+            <tbody>
+              @for (rowError of visibleUploadErrors; track $index) {
+                <tr>
+                  <td class="mono">{{ rowError.row }}</td>
+                  <td>{{ rowError.errors.join('; ') }}</td>
+                </tr>
+              }
+            </tbody>
+          </table>
+          @if (uploadResult.errors.length > 10) {
+            <button type="button" class="btn btn-secondary" (click)="showAllUploadErrors = !showAllUploadErrors">
+              {{ showAllUploadErrors ? 'Show fewer' : 'Show all ' + uploadResult.errors.length + ' messages' }}
+            </button>
+          }
+        </div>
+      }
+    }
+  </div>
+}
+
+<div class="card">
+  <div class="toolbar telemetry-filters">
+    <div class="field">
+      <label for="filterNode">Node</label>
+      <select id="filterNode" [(ngModel)]="filterNode" (ngModelChange)="onNodeChange()">
+        <option [ngValue]="null">All nodes</option>
+        @for (n of nodes; track n.node_id) {
+          <option [ngValue]="n.node_id">{{ n.node_code }}{{ n.site_code ? ' · ' + n.site_code : '' }}</option>
+        }
+      </select>
+    </div>
+    <div class="field">
+      <label for="filterVintage">Issue vintage</label>
+      <select id="filterVintage" [(ngModel)]="filterVintage">
+        <option [ngValue]="null">All vintages</option>
+        @for (v of vintageOptions; track v.node_id + v.issued_at) {
+          <option [ngValue]="v.issued_at">{{ label(v.issued_at) }} · {{ v.rows }} h{{ filterNode == null ? ' · ' + v.node_code : '' }}</option>
+        }
+      </select>
+    </div>
+    <div class="field">
+      <label for="filterStart">Target from</label>
+      <input id="filterStart" type="date" [(ngModel)]="filterStart" />
+    </div>
+    <div class="field">
+      <label for="filterEnd">Target to</label>
+      <input id="filterEnd" type="date" [(ngModel)]="filterEnd" />
+    </div>
+    <div class="field">
+      <label for="filterModel">Model</label>
+      <select id="filterModel" [(ngModel)]="filterModel">
+        <option [ngValue]="null">All models</option>
+        @for (m of models; track m) {
+          <option [ngValue]="m">{{ m }}</option>
+        }
+      </select>
+    </div>
+    <div class="telemetry-filter-actions">
+      <button type="button" class="btn btn-primary" (click)="applyFilters()">Apply</button>
+      <button type="button" class="btn btn-secondary" (click)="clearFilters()">Clear</button>
+    </div>
+  </div>
+
+  @if (page && page.stats.rows > 0) {
+    <div class="pf-summary">
+      <div class="pf-stat">
+        <span class="pf-stat-value">{{ page.stats.rows }}</span>
+        <span class="pf-stat-label">Rows · {{ page.stats.vintages }} vintage{{ page.stats.vintages === 1 ? '' : 's' }} · targets
+          {{ label(page.stats.first_target) }} → {{ label(page.stats.last_target) }}</span>
+      </div>
+      <div class="pf-stat">
+        <span class="pf-stat-value">{{ page.stats.avg_p50 | number: '1.2-2' }}</span>
+        <span class="pf-stat-label">Avg P50 {{ currency }}/MWh</span>
+      </div>
+      <div class="pf-stat">
+        <span class="pf-stat-value">{{ page.stats.avg_band | number: '1.2-2' }}</span>
+        <span class="pf-stat-label">Avg P90 − P10 band</span>
+      </div>
+      @if (page.stats.matched_actual > 0) {
+        <div class="pf-stat">
+          <span class="pf-stat-value">{{ page.stats.mae | number: '1.2-2' }}</span>
+          <span class="pf-stat-label">MAE vs actual DAM</span>
+        </div>
+        <div class="pf-stat">
+          <span class="pf-stat-value">{{ (page.stats.bias ?? 0) > 0 ? '+' : '' }}{{ page.stats.bias | number: '1.2-2' }}</span>
+          <span class="pf-stat-label">Bias (P50 − actual)</span>
+        </div>
+        @if (page.stats.coverage_pct != null) {
+          <div class="pf-stat" [class.pf-stat-warn]="page.stats.coverage_pct < 70 || page.stats.coverage_pct > 95">
+            <span class="pf-stat-value">{{ page.stats.coverage_pct | number: '1.0-1' }}%</span>
+            <span class="pf-stat-label">in P10–P90 (nominal 80%)</span>
+          </div>
+        }
+      }
+      <div class="pf-stat" [class.pf-stat-warn]="page.stats.matched_actual < page.stats.rows">
+        <span class="pf-stat-value">{{ page.stats.matched_actual }}</span>
+        <span class="pf-stat-label">{{ page.stats.matched_actual < page.stats.rows ? 'with an actual DAM price (rest not yet realized)' : 'all with an actual DAM price' }}</span>
+      </div>
+    </div>
+  }
+
+  <div class="table-bar">
+    <span class="table-bar-info">
+      @if (!loading && !error) {
+        {{ total }} rows ·
+        <button type="button" class="link-btn" (click)="toggleOrder()">{{ order === 'asc' ? 'oldest target first ↑' : 'newest target first ↓' }}</button>
+        · {{ visibleColumns.length }} of {{ allColumns.length }} columns · times in plant time (Asia/Kolkata)
+      }
+    </span>
+    <app-column-picker
+      [columns]="allColumns"
+      [defaultKeys]="defaultColumnKeys"
+      storageKey="bess.priceForecastTable.columns"
+      (visibleChange)="visibleColumns = $event" />
+  </div>
+
+  @if (loading) {
+    <div class="empty-state">Loading price forecasts…</div>
+  } @else if (error) {
+    <div class="empty-state error">{{ error }}</div>
+  } @else if (tableRows.length === 0) {
+    <div class="empty-state">No forecasts match the current filters. Turn on <strong>Upload file</strong> to load price_forecast.csv.</div>
+  } @else {
+    <app-telemetry-table [columns]="visibleColumns" [rows]="tableRows" [actions]="true"
+      (editRow)="openEdit($event)" (deleteRow)="confirmDelete($event)" />
+
+    <div class="pagination">
+      <div class="page-size">
+        <label for="pageSize">Rows per page</label>
+        <select id="pageSize" [ngModel]="pageSize" (ngModelChange)="setPageSize($event)">
+          @for (size of pageSizeOptions; track size) {
+            <option [ngValue]="size">{{ size }}</option>
+          }
+        </select>
+      </div>
+      <div class="page-range">{{ rangeStart }}–{{ rangeEnd }} of {{ total }}</div>
+      <div class="page-controls">
+        <button class="btn btn-secondary btn-icon" [disabled]="currentPage === 1" (click)="goToPage(currentPage - 1)" title="Previous page">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+            <path d="M15 6l-6 6 6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+          </svg>
+        </button>
+        <span class="page-indicator">Page {{ currentPage }} of {{ totalPages }}</span>
+        <button class="btn btn-secondary btn-icon" [disabled]="currentPage === totalPages" (click)="goToPage(currentPage + 1)" title="Next page">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+            <path d="M9 6l6 6-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+          </svg>
+        </button>
+      </div>
+    </div>
+  }
+</div>
+
+<!-- add / edit -->
+@if (edit; as e) {
+  <div class="modal-backdrop" (click)="edit = null">
+    <div class="modal edit-modal" (click)="$event.stopPropagation()">
+      <h3>{{ e.mode === 'add' ? 'Add price forecast' : 'Edit forecast for ' + e.target_local.replace('T', ' ') }}</h3>
+      <div class="form-grid">
+        <div class="field">
+          <label for="eNode">Price node</label>
+          <select id="eNode" [(ngModel)]="e.node_id" [disabled]="e.mode === 'edit'">
+            @for (n of nodes; track n.node_id) {
+              <option [ngValue]="n.node_id">{{ n.node_code }}</option>
+            }
+          </select>
+        </div>
+        <div class="field">
+          <label for="eModel">Model</label>
+          <input id="eModel" type="text" maxlength="80" [(ngModel)]="e.model" list="pfModels" placeholder="e.g. QuantileGBM-v1" />
+          <datalist id="pfModels">
+            @for (m of models; track m) {
+              <option [value]="m"></option>
+            }
+          </datalist>
+        </div>
+        <div class="field">
+          <label for="eIssued">Issued at (plant time)</label>
+          <input id="eIssued" type="datetime-local" [(ngModel)]="e.issued_local" [disabled]="e.mode === 'edit'" />
+        </div>
+        <div class="field">
+          <label for="eTarget">Target hour (plant time)</label>
+          <input id="eTarget" type="datetime-local" [(ngModel)]="e.target_local" [disabled]="e.mode === 'edit'" />
+        </div>
+        <div class="field">
+          <label for="eP10">P10 ({{ currency }}/MWh)</label>
+          <input id="eP10" type="number" step="0.01" [(ngModel)]="e.p10_mwh" />
+        </div>
+        <div class="field">
+          <label for="eP50">P50 ({{ currency }}/MWh)</label>
+          <input id="eP50" type="number" step="0.01" [(ngModel)]="e.p50_mwh" />
+        </div>
+        <div class="field">
+          <label for="eP90">P90 ({{ currency }}/MWh)</label>
+          <input id="eP90" type="number" step="0.01" [(ngModel)]="e.p90_mwh" />
+        </div>
+        <div class="field">
+          <label>Horizon (target − issue)</label>
+          <input type="text" disabled [value]="editHorizon != null ? editHorizon + ' h' : '—'" />
+        </div>
+      </div>
+      @if (e.mode === 'edit') {
+        <p class="derived-note">
+          Actual DAM price of the target hour: <strong>{{ e.actual_mwh != null ? (e.actual_mwh | number: '1.2-2') : 'not yet realized' }}</strong>
+          — node, vintage and target identify the row and cannot be changed.
+        </p>
+      }
+      @if (editError) {
+        <div class="form-error">{{ editError }}</div>
+      }
+      <div class="modal-actions">
+        @if (editProblem) {
+          <span class="problem-note">{{ editProblem }}</span>
+        }
+        <button class="btn btn-secondary" (click)="edit = null" [disabled]="saving">Cancel</button>
+        <button class="btn btn-primary" (click)="save()" [disabled]="saving || !!editProblem">
+          {{ saving ? 'Saving…' : e.mode === 'add' ? 'Add forecast' : 'Save changes' }}
+        </button>
+      </div>
+    </div>
+  </div>
+}
+
+<!-- delete -->
+@if (toDelete; as d) {
+  <div class="modal-backdrop" (click)="toDelete = null">
+    <div class="modal" (click)="$event.stopPropagation()">
+      <h3>Delete price forecast?</h3>
+      <p>
+        This permanently deletes the <strong>{{ d.node_code }}</strong> forecast issued
+        <strong>{{ label(d.issued_at) }}</strong> for <strong>{{ label(d.target_ts) }}</strong>
+        (P50 {{ d.p50_mwh | number: '1.2-2' }} {{ currency }}/MWh). This cannot be undone.
+      </p>
+      @if (deleteError) {
+        <div class="form-error">{{ deleteError }}</div>
+      }
+      <div class="modal-actions">
+        <button class="btn btn-secondary" (click)="toDelete = null" [disabled]="deleting">{{ deleteError ? 'Close' : 'Cancel' }}</button>
+        @if (!deleteError) {
+          <button class="btn btn-danger-solid" (click)="deleteConfirmed()" [disabled]="deleting">{{ deleting ? 'Deleting…' : 'Delete' }}</button>
+        }
+      </div>
+    </div>
+  </div>
+}

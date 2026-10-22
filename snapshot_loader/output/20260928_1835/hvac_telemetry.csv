@@ -1,0 +1,2 @@
+ts,cooling_mode,coolant_setpoint_c,coolant_supply_temp_c,coolant_return_temp_c,coolant_delta_t_c,coolant_flow_lpm,compressor_speed_pct,condenser_fan_pct,refrig_suction_bar,refrig_discharge_bar,battery_heat_load_kw,cooling_capacity_kw,heat_rejected_kw,cop,hvac_power_kw,enclosure_temp_c,enclosure_humidity_pct,alarm_level,alarm_flags
+2026-09-28T18:35:00,COOLING,25.0,25.06,28.11,3.05,119.3,55.5,73.8,4.48,23.24,21.86,81.16,102.05,3.89,20.89,29.08,46.6,0,

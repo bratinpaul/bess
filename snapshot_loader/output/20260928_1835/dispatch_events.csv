@@ -1,0 +1,2 @@
+dispatch_id,ems_code,command_code,dispatch_mode,grid_service,source,issued_at,effective_from,effective_to,p_setpoint_kw,target_soc_pct,ramp_rate_kw_s,status,note
+DSP-00358,EMS-01,SET_POWER,ENERGY_ARBITRAGE,ARBITRAGE,Market optimizer,2026-09-28T18:20:00,2026-09-28T18:20:00,2026-09-28T18:40:00,-695,62.4,50.0,Completed,Source dispatch ID DSP-00022 (already used for the dispatch from 2026-08-02 18:20); loaded as DSP-00358

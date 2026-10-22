@@ -1,0 +1,1400 @@
+# EMS KPI definitions - read by app/services/bms_kpi with domain EMS (API /api/ems-kpi and
+# `python -m app.services.bms_kpi.cli --domain ems`). Same engine and file format as bms_kpi.yaml / pcs_kpi.yaml.
+#
+# Every KPI is computed per EMS controller (= plant) per plant-local day from battery_telemetry.ems_telemetry and
+# stored in battery_ml.ems_kpi. Edit this file and press "Calculate KPIs" on EMS Telemetry → Analytics → KPI runs (or
+# run the CLI); the file is re-read on every request. Bump `version` when a formula changes.
+#
+# Methods: integrate | aggregate (min max avg sum count first last) | counter_delta | derived | query - see bms_kpi.yaml.
+# Row expressions: ems_telemetry columns and params with + − × ÷, abs, sqrt, greatest, least, delta(x) (x minus the
+# previous sample of the same EMS). filter values are literals, lists or "$param". "system" in system_params /
+# system_overrides means the EMS controller (overrides are keyed by ems_id).
+# Named queries bind :ems_ids, :start_ts / :end_ts, :start_date / :end_date, :tz and the global params, and return
+# ems_id, kpi_date and one column per output field. CTE `sp` (ems_id + system params) is injected.
+#
+# Data facts this file relies on (checked 2026-10-15 against ems_telemetry):
+#   * Sign: poi_active_power_kw > 0 = import (charging and, in standby, the auxiliary load), < 0 = export.
+#     "Charging" for prices therefore uses the command (p_setpoint_kw > idle_kw), not P > 0.
+#   * tracking_error_kw is logged NET OF AUX: tracking_error_kw = poi_active_power_kw − aux_load_kw − p_setpoint_kw
+#     (the battery's delivery vs the command). The catalog's POI − setpoint is reported separately (incl. aux).
+#   * revenue_cum_usd grows by market_price_mwh × (Δexport − Δimport) ÷ 1000 - it falls while importing, so it is not
+#     a monotonic counter: daily revenue = Σ delta(revenue_cum_usd), and the same Σ delta() is used for the energy
+#     counters so the step across midnight is counted (the first sample of a calculated range has no previous sample).
+#   * aux_load_pct = aux_load_kw ÷ plant rating × 100.
+#   * Plant rating: least(battery rated power, Σ PCS rated power) - system 1's master data says 10 MW but its single
+#     PCS is 1 MW and telemetry tops out at ~1 MW. Usable energy = rated energy, system 1 overridden to 2000 kWh (as in
+#     bms_kpi.yaml); (plant_soc_pct − 10) × usable_kwh reproduces avail_discharge_energy_kwh exactly.
+#   * POI voltage is ~33 kV at every plant (including system 1, whose PCS is LV) - nominal from poi_nominal_kv.
+#   * Only ARBITRAGE and FREQ_REG occur as grid services; AS awards (battery_master.as_award) exist for system 12.
+
+version: 1
+
+timezone: Asia/Kolkata
+
+interval:
+  mode: fixed
+  minutes: 5
+  max_gap_minutes: 15
+
+expected_samples_per_day: 288
+
+params:
+  idle_kw: 5                       # |setpoint| or |P − aux| below this = not dispatching / battery at rest
+  tracking_tol_pct: 2              # tracking tolerance band, % of plant rating
+  poi_nominal_kv: 33               # POI nominal voltage
+  voltage_band_pct: 5              # ± POI voltage band
+  rated_hz: 50                     # grid frequency
+  freq_deadband_hz: 0.2            # ± frequency dead band
+  freq_event_hz: 0.1               # |Δf| above this = frequency event (droop estimate)
+  droop_pct: 5                     # committed droop: full rated power over droop_pct % of rated_hz
+  droop_min_samples: 3             # event samples needed in a day for a droop estimate
+  regulation_min_samples: 3        # FREQ_REG samples needed in a day for an AGC correlation
+  min_pf: 0.9                      # POI power-factor floor (grid code)
+  soc_floor_flag_pct: 10.5         # plant_soc_pct ≤ this counts as at the SOC floor (floor 10 %)
+  soc_ceiling_flag_pct: 94.5       # plant_soc_pct ≥ this counts as at the SOC ceiling (ceiling 95 %)
+
+system_params:
+  rated_kw:
+    sql: LEAST(COALESCE(bs.rated_power_mw * 1000, pc.rated_kw), COALESCE(pc.rated_kw, bs.rated_power_mw * 1000))
+    unit: kW
+    description: Plant rating = least(battery system rated power, Σ PCS rated power)
+  usable_kwh:
+    sql: bs.rated_energy_mwh * 1000
+    unit: kWh
+    description: Plant usable energy (battery rated_energy_mwh); see system_overrides
+  total_units:
+    sql: GREATEST(pc.n_units, 1)
+    description: PCS units in the plant (denominator of units_online)
+
+system_overrides:
+  1:
+    usable_kwh: 2000              # master data says 10 MWh; EMS available energy and the BMS EFC counter imply ~2 MWh
+
+groups:
+  - code: economic
+    name: Economic / market performance
+    description: Revenue, unit economics and the arbitrage spread captured
+  - code: energy
+    name: Plant energy & throughput (POI)
+    description: Export / import at the POI, plant AC round-trip efficiency and cycles
+  - code: tracking
+    name: Dispatch / control tracking
+    description: Tracking error against the EMS setpoint, follow accuracy, bias and ramps
+  - code: grid
+    name: Grid-service performance
+    description: AGC accuracy, droop delivery, revenue-bearing time and AS-commitment delivery
+  - code: aux
+    name: Auxiliary / parasitic load
+    description: Station-service energy and its drag on plant efficiency
+  - code: soc
+    name: State of charge & energy management
+    description: SOC tracking against the target, SOC range, dispatchable energy and time at limits
+  - code: poi
+    name: Grid-interface power quality (POI)
+    description: POI voltage and frequency deviation, power factor and reactive support
+  - code: availability
+    name: Availability & reliability
+    description: Plant availability, units online, energy availability, alarm exposure, outages
+  - code: utilization
+    name: Utilization / duty
+    description: Capacity factor, cycles per day and the dispatch-mode duty profile
+
+queries:
+  agc_regulation:
+    description: >-
+      Correlation of poi_active_power_kw with agc_signal on FREQ_REG samples (needs regulation_min_samples in the day).
+      With 5-min samples the regulation signal rides on a large dispatch base point, so the correlation is indicative.
+    sql: |
+      SELECT t.ems_id, CAST(t.ts AT TIME ZONE :tz AS date) AS kpi_date,
+             COUNT(*) AS regulation_samples,
+             CASE WHEN COUNT(*) >= :regulation_min_samples
+                  THEN CORR(t.poi_active_power_kw, t.agc_signal) END AS agc_corr
+      FROM battery_telemetry.ems_telemetry t
+      WHERE t.ems_id = ANY(:ems_ids) AND t.ts >= :start_ts AND t.ts < :end_ts
+        AND t.grid_service = 'FREQ_REG' AND t.agc_signal IS NOT NULL
+      GROUP BY 1, 2
+
+  droop_response:
+    description: >-
+      Frequency-response delivery: slope of poi_active_power_kw against grid_frequency_hz over the samples with
+      |f − rated_hz| > freq_event_hz (regr_slope, kW/Hz; under-frequency should push P down = more export, so a
+      positive slope is the right direction). Committed slope = rated_kw ÷ (droop_pct % × rated_hz). Indicative: P is
+      also driven by the dispatch schedule.
+    sql: |
+      SELECT t.ems_id, CAST(t.ts AT TIME ZONE :tz AS date) AS kpi_date,
+             COUNT(*) AS freq_event_samples,
+             CASE WHEN COUNT(*) >= :droop_min_samples
+                  THEN REGR_SLOPE(t.poi_active_power_kw, t.grid_frequency_hz) END AS droop_slope_kw_hz,
+             MAX(sp.rated_kw) / (:droop_pct / 100.0 * :rated_hz) AS droop_committed_kw_hz
+      FROM battery_telemetry.ems_telemetry t JOIN sp ON sp.ems_id = t.ems_id
+      WHERE t.ems_id = ANY(:ems_ids) AND t.ts >= :start_ts AND t.ts < :end_ts
+        AND ABS(t.grid_frequency_hz - :rated_hz) > :freq_event_hz
+      GROUP BY 1, 2
+
+  as_commitment:
+    description: >-
+      AS commitments (battery_master.as_award of the plant's battery system): EMS samples inside each award window;
+      a sample is delivered when plant_available = 1 and, for FREQ_REG awards, grid_service = FREQ_REG. Days without
+      awards return nothing (no value).
+    sql: |
+      SELECT t.ems_id, CAST(t.ts AT TIME ZONE :tz AS date) AS kpi_date,
+             COUNT(*) AS committed_samples,
+             COUNT(*) FILTER (WHERE t.plant_available = 1
+                                AND (pr.product_code <> 'FREQ_REG' OR t.grid_service = 'FREQ_REG')) AS delivered_samples
+      FROM battery_telemetry.ems_telemetry t
+      JOIN battery_master.ems_controller e ON e.ems_id = t.ems_id
+      JOIN battery_master.as_award a ON a.system_id = e.battery_system_id
+                                    AND t.ts >= a.delivery_start AND t.ts < a.delivery_end
+      JOIN battery_master.as_product pr ON pr.product_id = a.product_id
+      WHERE t.ems_id = ANY(:ems_ids) AND t.ts >= :start_ts AND t.ts < :end_ts
+      GROUP BY 1, 2
+
+  outages:
+    description: >-
+      Outages = transitions of plant_available from 1 to 0. Restoration = time to the next sample with
+      plant_available = 1. An outage belongs to the day it starts.
+    sql: |
+      WITH x AS (
+          SELECT ems_id, ts, plant_available, LAG(plant_available) OVER (PARTITION BY ems_id ORDER BY ts) AS prev
+          FROM battery_telemetry.ems_telemetry
+          WHERE ems_id = ANY(:ems_ids) AND ts >= :start_ts - interval '1 day' AND ts < :end_ts
+      ), o AS (
+          SELECT x.ems_id, x.ts,
+                 (SELECT MIN(t2.ts) FROM battery_telemetry.ems_telemetry t2
+                   WHERE t2.ems_id = x.ems_id AND t2.ts > x.ts AND t2.plant_available = 1) AS back_ts
+          FROM x WHERE x.plant_available = 0 AND x.prev = 1 AND x.ts >= :start_ts
+      )
+      SELECT ems_id, CAST(ts AT TIME ZONE :tz AS date) AS kpi_date,
+             COUNT(*) AS outage_count,
+             SUM(EXTRACT(EPOCH FROM back_ts - ts) / 60) AS outage_restore_min_sum,
+             COUNT(back_ts) AS outages_restored
+      FROM o GROUP BY 1, 2
+
+kpis:
+  # =================================================================================================================
+  # 1. Economic / market performance
+  # =================================================================================================================
+  - code: revenue_usd
+    name: Revenue
+    group: economic
+    unit: USD
+    description: Σ delta(revenue_cum_usd) - the day's change of the cumulative revenue (falls while importing)
+    method: aggregate
+    func: sum
+    column: delta(revenue_cum_usd)
+    summary: sum
+    color: "#12a37f"
+  - code: revenue_integrated_usd
+    name: Revenue (Σ price × net export)
+    group: economic
+    unit: USD
+    description: Cross-check - Σ market_price_mwh × (−poi_active_power_kw) × Δt ÷ 1000
+    method: integrate
+    column: -poi_active_power_kw * market_price_mwh / 1000
+    summary: sum
+    color: "#12a37f"
+    dashed: true
+  - code: revenue_per_day_usd
+    name: Revenue per day
+    group: economic
+    unit: USD/day
+    description: The range card shows the average revenue per day
+    method: derived
+    formula: revenue_usd
+    summary: avg
+    color: "#12a37f"
+  - code: revenue_per_mwh_discharged
+    name: Revenue per MWh discharged
+    group: economic
+    unit: USD/MWh
+    description: Revenue ÷ (energy exported ÷ 1000) - unit economics of throughput
+    method: derived
+    formula: revenue_usd / (export_kwh / 1000)
+    summary: formula
+    color: "#2f6fed"
+  - code: revenue_per_mw
+    name: Revenue per MW installed
+    group: economic
+    unit: USD/MW
+    description: Revenue ÷ plant rating (MW) - benchmarks the asset
+    method: derived
+    formula: revenue_usd / (rated_kw / 1000)
+    summary: formula
+    color: "#7c5cdb"
+  - code: price_avg_exporting
+    name: Average price while exporting
+    group: economic
+    unit: USD/MWh
+    description: Flat average market price over samples with a discharge command (p_setpoint_kw < −idle_kw)
+    method: aggregate
+    func: avg
+    column: market_price_mwh
+    filter: [{column: -p_setpoint_kw, op: ">", value: "$idle_kw"}]
+    summary: avg
+    color: "#e8830c"
+    dashed: true
+  - code: price_avg_charging
+    name: Average price while charging
+    group: economic
+    unit: USD/MWh
+    description: Flat average market price over samples with a charge command (p_setpoint_kw > idle_kw)
+    method: aggregate
+    func: avg
+    column: market_price_mwh
+    filter: [{column: p_setpoint_kw, op: ">", value: "$idle_kw"}]
+    summary: avg
+    color: "#2f6fed"
+    dashed: true
+  - code: arbitrage_spread_flat
+    name: Arbitrage spread (flat average)
+    group: economic
+    unit: USD/MWh
+    description: avg(price | exporting) − avg(price | charging) - the raw buy-low / sell-high margin
+    method: derived
+    formula: price_avg_exporting - price_avg_charging
+    summary: avg
+    color: "#6b7280"
+  - code: export_value_usd
+    name: Export value
+    group: economic
+    unit: USD
+    description: Σ (−P) × price × Δt ÷ 1000 over exporting samples (P < 0)
+    method: integrate
+    column: -poi_active_power_kw * market_price_mwh / 1000
+    filter: [{column: poi_active_power_kw, op: "<", value: 0}]
+    summary: sum
+  - code: charge_cost_usd
+    name: Charging cost
+    group: economic
+    unit: USD
+    description: Σ P × price × Δt ÷ 1000 over samples with a charge command
+    method: integrate
+    column: poi_active_power_kw * market_price_mwh / 1000
+    filter:
+      - {column: p_setpoint_kw, op: ">", value: "$idle_kw"}
+      - {column: poi_active_power_kw, op: ">", value: 0}
+    summary: sum
+  - code: charge_energy_cmd_kwh
+    name: Energy imported while charging
+    group: economic
+    unit: kWh
+    description: Σ P × Δt over samples with a charge command (excludes standby aux import)
+    method: integrate
+    column: poi_active_power_kw
+    filter:
+      - {column: p_setpoint_kw, op: ">", value: "$idle_kw"}
+      - {column: poi_active_power_kw, op: ">", value: 0}
+    summary: sum
+  - code: realized_export_price
+    name: Average realized export price
+    group: economic
+    unit: USD/MWh
+    description: Σ(P·price·Δt | export) ÷ Σ(export energy) - price-weighted, not a flat average
+    method: derived
+    formula: export_value_usd / (export_integrated_kwh / 1000)
+    summary: formula
+    color: "#e8830c"
+  - code: realized_charge_price
+    name: Average realized charging price
+    group: economic
+    unit: USD/MWh
+    description: Σ(P·price·Δt | charging) ÷ Σ(charging energy)
+    method: derived
+    formula: charge_cost_usd / (charge_energy_cmd_kwh / 1000)
+    summary: formula
+    color: "#2f6fed"
+  - code: arbitrage_spread
+    name: Arbitrage spread captured
+    group: economic
+    unit: USD/MWh
+    description: Realized export price − realized charging price (energy-weighted)
+    method: derived
+    formula: realized_export_price - realized_charge_price
+    summary: formula
+    color: "#12a37f"
+
+  # =================================================================================================================
+  # 2. Plant energy & throughput (POI)
+  # =================================================================================================================
+  - code: export_kwh
+    name: Energy exported (counter)
+    group: energy
+    unit: kWh
+    description: Σ delta(cum_export_kwh)
+    method: aggregate
+    func: sum
+    column: delta(cum_export_kwh)
+    summary: sum
+    color: "#e8830c"
+  - code: import_kwh
+    name: Energy imported (counter)
+    group: energy
+    unit: kWh
+    description: Σ delta(cum_import_kwh) - includes the auxiliary load drawn in standby
+    method: aggregate
+    func: sum
+    column: delta(cum_import_kwh)
+    summary: sum
+    color: "#2f6fed"
+  - code: export_integrated_kwh
+    name: Energy exported (Σ P·Δt)
+    group: energy
+    unit: kWh
+    description: Cross-check - Σ −P × Δt over exporting samples
+    method: integrate
+    column: -poi_active_power_kw
+    filter: [{column: poi_active_power_kw, op: "<", value: 0}]
+    summary: sum
+    color: "#e8830c"
+    dashed: true
+  - code: import_integrated_kwh
+    name: Energy imported (Σ P·Δt)
+    group: energy
+    unit: kWh
+    description: Cross-check - Σ P × Δt over importing samples
+    method: integrate
+    column: poi_active_power_kw
+    filter: [{column: poi_active_power_kw, op: ">", value: 0}]
+    summary: sum
+    color: "#2f6fed"
+    dashed: true
+  - code: net_export_kwh
+    name: Net energy (export − import)
+    group: energy
+    unit: kWh
+    method: derived
+    formula: export_kwh - import_kwh
+    summary: sum
+    color: "#6b7280"
+  - code: throughput_kwh
+    name: Throughput (Σ |P|·Δt)
+    group: energy
+    unit: kWh
+    method: integrate
+    column: abs(poi_active_power_kw)
+    summary: sum
+    color: "#7c5cdb"
+  - code: plant_rte_pct
+    name: Plant AC round-trip efficiency
+    group: energy
+    unit: "%"
+    description: >-
+      Σ export ÷ Σ import - whole plant (PCS + transformer + parasitics), lower than the PCS-only RTE. Daily values
+      swing with the SOC carried over; the range card uses Σ export ÷ Σ import.
+    method: derived
+    formula: export_kwh / import_kwh * 100
+    summary: formula
+    color: "#12a37f"
+  - code: efc
+    name: Equivalent full cycles
+    group: energy
+    unit: cycles
+    description: Σ export ÷ plant usable kWh
+    method: derived
+    formula: export_kwh / usable_kwh
+    decimals: 3
+    summary: sum
+    color: "#e8830c"
+
+  # =================================================================================================================
+  # 3. Dispatch / control tracking
+  # =================================================================================================================
+  - code: tracking_samples
+    name: Samples with a setpoint
+    group: tracking
+    unit: samples
+    method: aggregate
+    func: count
+    column: tracking_error_kw
+    decimals: 0
+    summary: sum
+  - code: te_abs_sum
+    name: Σ |tracking error|
+    group: tracking
+    unit: kW·samples
+    method: aggregate
+    func: sum
+    column: abs(tracking_error_kw)
+    summary: sum
+  - code: te_sq_sum
+    name: Σ tracking error²
+    group: tracking
+    unit: kW²·samples
+    method: aggregate
+    func: sum
+    column: tracking_error_kw * tracking_error_kw
+    summary: sum
+  - code: te_sum
+    name: Σ tracking error (signed)
+    group: tracking
+    unit: kW·samples
+    method: aggregate
+    func: sum
+    column: tracking_error_kw
+    summary: sum
+  - code: setpoint_abs_sum
+    name: Σ |setpoint|
+    group: tracking
+    unit: kW·samples
+    method: aggregate
+    func: sum
+    column: abs(p_setpoint_kw)
+    summary: sum
+  - code: tracking_mae_kw
+    name: Tracking error MAE
+    group: tracking
+    unit: kW
+    description: avg(|tracking_error_kw|) - the logged error, net of aux
+    method: derived
+    formula: te_abs_sum / tracking_samples
+    summary: formula
+    color: "#2f6fed"
+  - code: tracking_rmse_kw
+    name: Tracking error RMSE
+    group: tracking
+    unit: kW
+    description: √(avg(tracking_error_kw²)) - the range card pools every sample of the range
+    method: derived
+    formula: sqrt(te_sq_sum / tracking_samples)
+    summary: formula
+    color: "#d64545"
+  - code: dispatch_bias_kw
+    name: Dispatch bias
+    group: tracking
+    unit: kW
+    description: avg(tracking_error_kw), signed; a persistent non-zero value = systematic over / under-delivery
+    method: derived
+    formula: te_sum / tracking_samples
+    summary: formula
+    color: "#6b7280"
+  - code: setpoint_follow_pct
+    name: Setpoint-follow accuracy
+    group: tracking
+    unit: "%"
+    description: 1 − Σ|tracking error| ÷ Σ|setpoint|
+    method: derived
+    formula: (1 - te_abs_sum / setpoint_abs_sum) * 100
+    summary: formula
+    color: "#12a37f"
+  - code: tracking_within_samples
+    name: Samples within tolerance
+    group: tracking
+    unit: samples
+    method: aggregate
+    func: count
+    column: "1"
+    filter: [{column: abs(tracking_error_kw) / rated_kw * 100, op: "<=", value: "$tracking_tol_pct"}]
+    decimals: 0
+    summary: sum
+  - code: tracking_within_tol_pct
+    name: Time within tracking tolerance
+    group: tracking
+    unit: "%"
+    description: Samples with |tracking_error_kw| ≤ tracking_tol_pct % of rating ÷ samples with a setpoint
+    method: derived
+    formula: tracking_within_samples / tracking_samples * 100
+    summary: formula
+    color: "#12a37f"
+    dashed: true
+  - code: poi_tracking_mae_kw
+    name: POI tracking MAE (incl. aux)
+    group: tracking
+    unit: kW
+    description: avg(|poi_active_power_kw − p_setpoint_kw|) - the catalog definition; includes the auxiliary load
+    method: aggregate
+    func: avg
+    column: abs(poi_active_power_kw - p_setpoint_kw)
+    summary: avg
+    color: "#7c5cdb"
+  - code: ramp_max_kw_min
+    name: Max POI ramp rate
+    group: tracking
+    unit: kW/min
+    description: MAX |ΔP_poi| ÷ Δt between consecutive samples
+    method: aggregate
+    func: max
+    column: abs(delta(poi_active_power_kw)) / (interval_h * 60)
+    summary: max
+    color: "#e8830c"
+  - code: ramp_delivered_sum_kw
+    name: Σ |ΔP| when the command changed
+    group: tracking
+    unit: kW
+    method: aggregate
+    func: sum
+    column: abs(delta(poi_active_power_kw))
+    filter: [{column: delta(p_setpoint_kw), op: "!=", value: 0}]
+    summary: sum
+  - code: ramp_commanded_sum_kw
+    name: Σ |ΔP_cmd| when the command changed
+    group: tracking
+    unit: kW
+    method: aggregate
+    func: sum
+    column: abs(delta(p_setpoint_kw))
+    filter: [{column: delta(p_setpoint_kw), op: "!=", value: 0}]
+    summary: sum
+  - code: ramp_delivery_pct
+    name: Ramp delivered vs commanded
+    group: tracking
+    unit: "%"
+    description: Σ|ΔP_poi| ÷ Σ|ΔP_cmd| over the intervals where the command changed (100 % = followed every step)
+    method: derived
+    formula: ramp_delivered_sum_kw / ramp_commanded_sum_kw * 100
+    summary: formula
+    color: "#e8830c"
+    dashed: true
+
+  # =================================================================================================================
+  # 4. Grid-service performance
+  # =================================================================================================================
+  - code: regulation_samples
+    name: FREQ_REG samples
+    group: grid
+    unit: samples
+    method: query
+    query: agc_regulation
+    default: 0
+    decimals: 0
+    summary: sum
+  - code: agc_corr
+    name: AGC / regulation accuracy (corr)
+    group: grid
+    description: Correlation of poi_active_power_kw with agc_signal on FREQ_REG samples; range card = average of days
+    method: query
+    query: agc_regulation
+    decimals: 3
+    summary: avg
+    color: "#0e8f8f"
+  - code: freq_event_samples
+    name: Frequency-event samples
+    group: grid
+    unit: samples
+    description: Samples with |f − rated_hz| > freq_event_hz
+    method: query
+    query: droop_response
+    default: 0
+    decimals: 0
+    summary: sum
+  - code: droop_slope_kw_hz
+    name: Measured droop response
+    group: grid
+    unit: kW/Hz
+    description: regr_slope(P, f) over the frequency-event samples of the day
+    method: query
+    query: droop_response
+    decimals: 0
+    summary: avg
+    color: "#7c5cdb"
+  - code: droop_committed_kw_hz
+    name: Committed droop response
+    group: grid
+    unit: kW/Hz
+    description: rated_kw ÷ (droop_pct % × rated_hz)
+    method: query
+    query: droop_response
+    decimals: 0
+    summary: avg
+    color: "#7c5cdb"
+    dashed: true
+  - code: droop_delivery_pct
+    name: Droop delivery
+    group: grid
+    unit: "%"
+    description: Measured ÷ committed droop response (indicative - P also follows the schedule)
+    method: derived
+    formula: droop_slope_kw_hz / droop_committed_kw_hz * 100
+    summary: avg
+    color: "#7c5cdb"
+  - code: revenue_bearing_samples
+    name: Revenue-bearing samples
+    group: grid
+    unit: samples
+    method: aggregate
+    func: count
+    column: "1"
+    filter: [{column: grid_service, op: in, value: [ARBITRAGE, FREQ_REG, PEAK_SHAVE, CAPACITY]}]
+    decimals: 0
+    summary: sum
+  - code: revenue_bearing_time_pct
+    name: Revenue-bearing time share
+    group: grid
+    unit: "%"
+    description: Samples with grid_service in ARBITRAGE / FREQ_REG / PEAK_SHAVE / CAPACITY ÷ all samples
+    method: derived
+    formula: revenue_bearing_samples / total_samples * 100
+    summary: formula
+    color: "#12a37f"
+  - code: committed_samples
+    name: AS-committed samples
+    group: grid
+    unit: samples
+    method: query
+    query: as_commitment
+    decimals: 0
+    summary: sum
+  - code: delivered_samples
+    name: AS-committed samples delivered
+    group: grid
+    unit: samples
+    method: query
+    query: as_commitment
+    decimals: 0
+    summary: sum
+  - code: commitment_availability_pct
+    name: Service-commitment availability
+    group: grid
+    unit: "%"
+    description: Delivered ÷ committed samples inside the AS award windows (as_award)
+    method: derived
+    formula: delivered_samples / committed_samples * 100
+    summary: formula
+    color: "#2f6fed"
+
+  # =================================================================================================================
+  # 5. Auxiliary / parasitic load
+  # =================================================================================================================
+  - code: aux_load_pct_avg
+    name: Auxiliary load (avg % of rating)
+    group: aux
+    unit: "%"
+    description: avg(aux_load_pct) - logged as aux_load_kw ÷ plant rating
+    method: aggregate
+    func: avg
+    column: aux_load_pct
+    summary: avg
+    color: "#e8830c"
+  - code: aux_load_kw_avg
+    name: Auxiliary load (avg)
+    group: aux
+    unit: kW
+    method: aggregate
+    func: avg
+    column: aux_load_kw
+    decimals: 1
+    summary: avg
+    color: "#e8830c"
+    dashed: true
+  - code: aux_factor_converting_pct
+    name: Auxiliary load factor while converting
+    group: aux
+    unit: "%"
+    description: avg(aux_load_kw ÷ |poi_active_power_kw|) over samples converting (|P − aux| > idle_kw)
+    method: aggregate
+    func: avg
+    column: aux_load_kw / abs(poi_active_power_kw) * 100
+    filter: [{column: abs(poi_active_power_kw - aux_load_kw), op: ">", value: "$idle_kw"}]
+    summary: avg
+    color: "#7c5cdb"
+  - code: aux_energy_kwh
+    name: Parasitic energy
+    group: aux
+    unit: kWh
+    description: Σ aux_load_kw × Δt - energy the plant spends on itself (HVAC + controls)
+    method: integrate
+    column: aux_load_kw
+    summary: sum
+    color: "#d64545"
+  - code: aux_share_of_discharge_pct
+    name: Station service as % of discharge
+    group: aux
+    unit: "%"
+    description: Parasitic energy ÷ energy exported
+    method: derived
+    formula: aux_energy_kwh / export_kwh * 100
+    summary: formula
+    color: "#d64545"
+    dashed: true
+  - code: rte_excl_aux_pct
+    name: RTE excluding auxiliary
+    group: aux
+    unit: "%"
+    description: Export ÷ (import − parasitic energy) - the plant RTE if station service were supplied separately
+    method: derived
+    formula: export_kwh / (import_kwh - aux_energy_kwh) * 100
+    summary: formula
+    color: "#12a37f"
+  - code: aux_rte_drag_pt
+    name: Auxiliary drag on RTE
+    group: aux
+    unit: pt
+    description: RTE excluding auxiliary − plant RTE
+    method: derived
+    formula: rte_excl_aux_pct - plant_rte_pct
+    summary: formula
+    color: "#6b7280"
+
+  # =================================================================================================================
+  # 6. State of charge & energy management
+  # =================================================================================================================
+  - code: soc_tracking_mae_pt
+    name: SOC tracking MAE
+    group: soc
+    unit: pt
+    description: avg(|plant_soc_pct − target_soc_pct|) - how well the EMS holds its plan
+    method: aggregate
+    func: avg
+    column: abs(plant_soc_pct - target_soc_pct)
+    summary: avg
+    color: "#2f6fed"
+  - code: soc_tracking_bias_pt
+    name: SOC tracking bias
+    group: soc
+    unit: pt
+    description: avg(plant_soc_pct − target_soc_pct), signed
+    method: aggregate
+    func: avg
+    column: plant_soc_pct - target_soc_pct
+    summary: avg
+    color: "#2f6fed"
+    dashed: true
+  - code: soc_max_pct
+    name: SOC max
+    group: soc
+    unit: "%"
+    method: aggregate
+    func: max
+    column: plant_soc_pct
+    decimals: 1
+    summary: max
+    color: "#e8830c"
+  - code: soc_min_pct
+    name: SOC min
+    group: soc
+    unit: "%"
+    method: aggregate
+    func: min
+    column: plant_soc_pct
+    decimals: 1
+    summary: min
+    color: "#2f6fed"
+  - code: soc_range_pt
+    name: SOC utilization range
+    group: soc
+    unit: pt
+    description: max(plant_soc_pct) − min(plant_soc_pct) per day (range card = average daily range)
+    method: derived
+    formula: soc_max_pct - soc_min_pct
+    decimals: 1
+    summary: avg
+    color: "#12a37f"
+  - code: dispatchable_discharge_pct
+    name: Dispatchable energy - discharge
+    group: soc
+    unit: "%"
+    description: avg(avail_discharge_energy_kwh ÷ usable_kwh)
+    method: aggregate
+    func: avg
+    column: avail_discharge_energy_kwh / usable_kwh * 100
+    summary: avg
+    color: "#e8830c"
+  - code: dispatchable_charge_pct
+    name: Dispatchable energy - charge
+    group: soc
+    unit: "%"
+    description: avg(avail_charge_energy_kwh ÷ usable_kwh)
+    method: aggregate
+    func: avg
+    column: avail_charge_energy_kwh / usable_kwh * 100
+    summary: avg
+    color: "#2f6fed"
+  - code: soc_floor_samples
+    name: Samples at the SOC floor
+    group: soc
+    unit: samples
+    method: aggregate
+    func: count
+    column: "1"
+    filter: [{column: plant_soc_pct, op: "<=", value: "$soc_floor_flag_pct"}]
+    decimals: 0
+    summary: sum
+  - code: soc_ceiling_samples
+    name: Samples at the SOC ceiling
+    group: soc
+    unit: samples
+    method: aggregate
+    func: count
+    column: "1"
+    filter: [{column: plant_soc_pct, op: ">=", value: "$soc_ceiling_flag_pct"}]
+    decimals: 0
+    summary: sum
+  - code: soc_floor_time_pct
+    name: Time at the SOC floor
+    group: soc
+    unit: "%"
+    method: derived
+    formula: soc_floor_samples / total_samples * 100
+    summary: formula
+    color: "#2f6fed"
+  - code: soc_ceiling_time_pct
+    name: Time at the SOC ceiling
+    group: soc
+    unit: "%"
+    method: derived
+    formula: soc_ceiling_samples / total_samples * 100
+    summary: formula
+    color: "#e8830c"
+
+  # =================================================================================================================
+  # 7. Grid-interface power quality (POI)
+  # =================================================================================================================
+  - code: poi_volt_dev_avg_pct
+    name: POI voltage deviation (avg)
+    group: poi
+    unit: "%"
+    description: avg((poi_voltage_kv − poi_nominal_kv) ÷ poi_nominal_kv)
+    method: aggregate
+    func: avg
+    column: (poi_voltage_kv - poi_nominal_kv) / poi_nominal_kv * 100
+    decimals: 3
+    summary: avg
+    color: "#a15c00"
+    dashed: true
+  - code: poi_volt_dev_max_abs_pct
+    name: POI voltage deviation (max |dev|)
+    group: poi
+    unit: "%"
+    method: aggregate
+    func: max
+    column: abs((poi_voltage_kv - poi_nominal_kv) / poi_nominal_kv * 100)
+    decimals: 3
+    summary: max
+    color: "#a15c00"
+  - code: poi_volt_outside_samples
+    name: Samples outside the POI voltage band
+    group: poi
+    unit: samples
+    method: aggregate
+    func: count
+    column: "1"
+    filter: [{column: abs((poi_voltage_kv - poi_nominal_kv) / poi_nominal_kv * 100), op: ">", value: "$voltage_band_pct"}]
+    decimals: 0
+    summary: sum
+  - code: poi_volt_outside_pct
+    name: Time outside the POI voltage band
+    group: poi
+    unit: "%"
+    description: Samples with |voltage deviation| > voltage_band_pct (±5 %) ÷ all samples
+    method: derived
+    formula: poi_volt_outside_samples / total_samples * 100
+    summary: formula
+    color: "#a15c00"
+  - code: freq_dev_max_hz
+    name: Max frequency deviation
+    group: poi
+    unit: Hz
+    method: aggregate
+    func: max
+    column: abs(grid_frequency_hz - rated_hz)
+    decimals: 3
+    summary: max
+    color: "#0e8f8f"
+  - code: freq_outside_samples
+    name: Samples outside the frequency dead band
+    group: poi
+    unit: samples
+    method: aggregate
+    func: count
+    column: "1"
+    filter: [{column: abs(grid_frequency_hz - rated_hz), op: ">", value: "$freq_deadband_hz"}]
+    decimals: 0
+    summary: sum
+  - code: freq_outside_pct
+    name: Time outside the frequency dead band
+    group: poi
+    unit: "%"
+    method: derived
+    formula: freq_outside_samples / total_samples * 100
+    summary: formula
+    color: "#0e8f8f"
+  - code: converting_samples
+    name: Converting samples (|P − aux| > idle)
+    group: poi
+    unit: samples
+    description: Denominator of the POI power-factor share
+    method: aggregate
+    func: count
+    column: "1"
+    filter: [{column: abs(poi_active_power_kw - aux_load_kw), op: ">", value: "$idle_kw"}]
+    decimals: 0
+    summary: sum
+  - code: poi_pf_avg
+    name: POI power factor (avg)
+    group: poi
+    description: avg(|P| ÷ √(P² + Q²)) over converting samples
+    method: aggregate
+    func: avg
+    column: abs(poi_active_power_kw) / sqrt(poi_active_power_kw * poi_active_power_kw + poi_reactive_power_kvar * poi_reactive_power_kvar)
+    filter: [{column: abs(poi_active_power_kw - aux_load_kw), op: ">", value: "$idle_kw"}]
+    decimals: 3
+    summary: avg
+    color: "#2f6fed"
+  - code: poi_pf_below_samples
+    name: Samples with POI PF below floor
+    group: poi
+    unit: samples
+    method: aggregate
+    func: count
+    column: "1"
+    filter:
+      - {column: abs(poi_active_power_kw - aux_load_kw), op: ">", value: "$idle_kw"}
+      - {column: abs(poi_active_power_kw) / sqrt(poi_active_power_kw * poi_active_power_kw + poi_reactive_power_kvar * poi_reactive_power_kvar), op: "<", value: "$min_pf"}
+    decimals: 0
+    summary: sum
+  - code: poi_pf_below_pct
+    name: Time with POI PF below floor
+    group: poi
+    unit: "%"
+    method: derived
+    formula: poi_pf_below_samples / converting_samples * 100
+    summary: formula
+    color: "#d64545"
+  - code: poi_q_avg_abs_kvar
+    name: Reactive power at POI (avg |Q|)
+    group: poi
+    unit: kVAR
+    method: aggregate
+    func: avg
+    column: abs(poi_reactive_power_kvar)
+    summary: avg
+    color: "#7c5cdb"
+  - code: reactive_energy_kvarh
+    name: Reactive energy
+    group: poi
+    unit: kVARh
+    description: Σ |Q| × Δt
+    method: integrate
+    column: abs(poi_reactive_power_kvar)
+    summary: sum
+    color: "#7c5cdb"
+    dashed: true
+  - code: var_at_rest_kvarh
+    name: VAR support at rest
+    group: poi
+    unit: kVARh
+    description: Σ |Q| × Δt while the battery is not converting (|P − aux| ≤ idle_kw) - voltage support
+    method: integrate
+    column: abs(poi_reactive_power_kvar)
+    filter: [{column: abs(poi_active_power_kw - aux_load_kw), op: "<=", value: "$idle_kw"}]
+    summary: sum
+    color: "#12a37f"
+
+  # =================================================================================================================
+  # 8. Availability & reliability
+  # =================================================================================================================
+  - code: total_samples
+    name: Samples in the day
+    group: availability
+    unit: samples
+    method: aggregate
+    func: count
+    column: "1"
+    decimals: 0
+    summary: sum
+  - code: plant_availability_pct
+    name: Plant availability
+    group: availability
+    unit: "%"
+    description: avg(plant_available) - the plant's own availability flag
+    method: aggregate
+    func: avg
+    column: plant_available * 100
+    summary: avg
+    color: "#12a37f"
+  - code: units_online_ratio_pct
+    name: Units-online ratio
+    group: availability
+    unit: "%"
+    description: avg(units_online) ÷ PCS units in the plant - partial availability
+    method: aggregate
+    func: avg
+    column: units_online / total_units * 100
+    summary: avg
+    color: "#2f6fed"
+  - code: energy_availability_factor_pct
+    name: Energy availability factor
+    group: availability
+    unit: "%"
+    description: avg(avail_discharge_kw) ÷ plant rating - captures derating, not just outages
+    method: aggregate
+    func: avg
+    column: avail_discharge_kw / rated_kw * 100
+    summary: avg
+    color: "#e8830c"
+  - code: alarm_samples
+    name: Samples with an alarm
+    group: availability
+    unit: samples
+    method: aggregate
+    func: count
+    column: "1"
+    filter: [{column: alarm_level, op: ">", value: 0}]
+    decimals: 0
+    summary: sum
+  - code: alarm_exposure_pct
+    name: Alarm exposure
+    group: availability
+    unit: "%"
+    description: Samples with alarm_level > 0 ÷ all samples
+    method: derived
+    formula: alarm_samples / total_samples * 100
+    summary: formula
+    color: "#d64545"
+  - code: alarm_l1_samples
+    name: Samples at alarm level 1
+    group: availability
+    unit: samples
+    method: aggregate
+    func: count
+    column: "1"
+    filter: [{column: alarm_level, op: "=", value: 1}]
+    decimals: 0
+    summary: sum
+  - code: alarm_l2_samples
+    name: Samples at alarm level 2
+    group: availability
+    unit: samples
+    method: aggregate
+    func: count
+    column: "1"
+    filter: [{column: alarm_level, op: "=", value: 2}]
+    decimals: 0
+    summary: sum
+  - code: alarm_l3_samples
+    name: Samples at alarm level 3 (trip)
+    group: availability
+    unit: samples
+    method: aggregate
+    func: count
+    column: "1"
+    filter: [{column: alarm_level, op: "=", value: 3}]
+    decimals: 0
+    summary: sum
+  - code: alarm_l1_pct
+    name: Time at alarm level 1
+    group: availability
+    unit: "%"
+    method: derived
+    formula: alarm_l1_samples / total_samples * 100
+    summary: formula
+    color: "#f2b05e"
+  - code: alarm_l2_pct
+    name: Time at alarm level 2
+    group: availability
+    unit: "%"
+    method: derived
+    formula: alarm_l2_samples / total_samples * 100
+    summary: formula
+    color: "#e8830c"
+  - code: alarm_l3_pct
+    name: Time at alarm level 3 (trip)
+    group: availability
+    unit: "%"
+    method: derived
+    formula: alarm_l3_samples / total_samples * 100
+    summary: formula
+    color: "#d64545"
+  - code: outage_samples
+    name: Outage samples
+    group: availability
+    unit: samples
+    method: aggregate
+    func: count
+    column: "1"
+    filter: [{column: plant_available, op: "=", value: 0}]
+    decimals: 0
+    summary: sum
+  - code: forced_outage_rate_pct
+    name: Forced-outage rate
+    group: availability
+    unit: "%"
+    description: Samples with plant_available = 0 ÷ all samples
+    method: derived
+    formula: outage_samples / total_samples * 100
+    summary: formula
+    color: "#d64545"
+    dashed: true
+  - code: operating_hours
+    name: Available hours
+    group: availability
+    unit: h
+    description: Σ Δt with plant_available = 1
+    method: integrate
+    column: "1"
+    filter: [{column: plant_available, op: "=", value: 1}]
+    summary: sum
+  - code: outage_count
+    name: Outages
+    group: availability
+    unit: outages
+    description: Transitions of plant_available from 1 to 0
+    method: query
+    query: outages
+    default: 0
+    decimals: 0
+    summary: sum
+    color: "#d64545"
+  - code: outage_restore_min_sum
+    name: Restoration time (total)
+    group: availability
+    unit: min
+    method: query
+    query: outages
+    default: 0
+    decimals: 0
+    summary: sum
+  - code: outages_restored
+    name: Outages restored
+    group: availability
+    unit: outages
+    method: query
+    query: outages
+    default: 0
+    decimals: 0
+    summary: sum
+  - code: mtbf_h
+    name: MTBF
+    group: availability
+    unit: h
+    description: Available hours ÷ outages (no value without an outage; range card = Σ hours ÷ Σ outages)
+    method: derived
+    formula: operating_hours / outage_count
+    decimals: 1
+    summary: formula
+    color: "#12a37f"
+  - code: mttr_min
+    name: MTTR
+    group: availability
+    unit: min
+    description: Mean restoration time (plant_available back to 1)
+    method: derived
+    formula: outage_restore_min_sum / outages_restored
+    decimals: 1
+    summary: formula
+    color: "#e8830c"
+
+  # =================================================================================================================
+  # 9. Utilization / duty
+  # =================================================================================================================
+  - code: capacity_factor_pct
+    name: Capacity factor
+    group: utilization
+    unit: "%"
+    description: avg(|poi_active_power_kw|) ÷ plant rating (includes the standby auxiliary import)
+    method: aggregate
+    func: avg
+    column: abs(poi_active_power_kw) / rated_kw * 100
+    summary: avg
+    color: "#12a37f"
+  - code: cycles_per_day
+    name: Cycles per day
+    group: utilization
+    unit: cycles/day
+    description: Σ export ÷ usable kWh per day (range card = average per day)
+    method: derived
+    formula: export_kwh / usable_kwh
+    decimals: 3
+    summary: avg
+    color: "#e8830c"
+  - code: mode_standby_samples
+    name: Samples in STANDBY
+    group: utilization
+    unit: samples
+    method: aggregate
+    func: count
+    column: "1"
+    filter: [{column: dispatch_mode, op: "=", value: STANDBY}]
+    decimals: 0
+    summary: sum
+  - code: mode_idle_samples
+    name: Samples in IDLE
+    group: utilization
+    unit: samples
+    method: aggregate
+    func: count
+    column: "1"
+    filter: [{column: dispatch_mode, op: "=", value: IDLE}]
+    decimals: 0
+    summary: sum
+  - code: mode_charge_samples
+    name: Samples in SCHEDULED_CHARGE
+    group: utilization
+    unit: samples
+    method: aggregate
+    func: count
+    column: "1"
+    filter: [{column: dispatch_mode, op: "=", value: SCHEDULED_CHARGE}]
+    decimals: 0
+    summary: sum
+  - code: mode_arbitrage_samples
+    name: Samples in ENERGY_ARBITRAGE
+    group: utilization
+    unit: samples
+    method: aggregate
+    func: count
+    column: "1"
+    filter: [{column: dispatch_mode, op: "=", value: ENERGY_ARBITRAGE}]
+    decimals: 0
+    summary: sum
+  - code: mode_freqreg_samples
+    name: Samples in FREQUENCY_REGULATION
+    group: utilization
+    unit: samples
+    method: aggregate
+    func: count
+    column: "1"
+    filter: [{column: dispatch_mode, op: "=", value: FREQUENCY_REGULATION}]
+    decimals: 0
+    summary: sum
+  - code: mode_standby_pct
+    name: Share in standby
+    group: utilization
+    unit: "%"
+    method: derived
+    formula: mode_standby_samples / total_samples * 100
+    decimals: 1
+    summary: formula
+    color: "#6b7280"
+  - code: mode_idle_pct
+    name: Share idle
+    group: utilization
+    unit: "%"
+    method: derived
+    formula: mode_idle_samples / total_samples * 100
+    decimals: 1
+    summary: formula
+    color: "#b9bdc4"
+  - code: mode_charge_pct
+    name: Share in scheduled charge
+    group: utilization
+    unit: "%"
+    method: derived
+    formula: mode_charge_samples / total_samples * 100
+    decimals: 1
+    summary: formula
+    color: "#2f6fed"
+  - code: mode_arbitrage_pct
+    name: Share in energy arbitrage
+    group: utilization
+    unit: "%"
+    method: derived
+    formula: mode_arbitrage_samples / total_samples * 100
+    decimals: 1
+    summary: formula
+    color: "#e8830c"
+  - code: mode_freqreg_pct
+    name: Share in frequency regulation
+    group: utilization
+    unit: "%"
+    method: derived
+    formula: mode_freqreg_samples / total_samples * 100
+    decimals: 1
+    summary: formula
+    color: "#0e8f8f"
+
+charts:
+  - title: Daily revenue
+    type: bar
+    kpis: [revenue_usd]
+  - title: Revenue - cumulative counter vs Σ price × net export
+    type: line
+    kpis: [revenue_usd, revenue_integrated_usd]
+  - title: Realized prices and spread
+    type: line
+    kpis: [realized_export_price, realized_charge_price, arbitrage_spread]
+  - title: Revenue per MWh discharged
+    type: line
+    kpis: [revenue_per_mwh_discharged]
+
+  - title: Energy exported / imported
+    type: bar
+    kpis: [export_kwh, import_kwh]
+  - title: Counters vs Σ P·Δt
+    type: line
+    kpis: [export_kwh, export_integrated_kwh, import_kwh, import_integrated_kwh]
+  - title: Plant AC round-trip efficiency
+    type: line
+    kpis: [plant_rte_pct, rte_excl_aux_pct]
+  - title: Equivalent full cycles
+    type: bar
+    kpis: [efc]
+
+  - title: Tracking error
+    type: line
+    kpis: [tracking_rmse_kw, tracking_mae_kw, poi_tracking_mae_kw]
+  - title: Follow accuracy and tolerance
+    type: line
+    kpis: [setpoint_follow_pct, tracking_within_tol_pct]
+  - title: Dispatch bias
+    type: bar
+    kpis: [dispatch_bias_kw]
+  - title: Ramp delivered vs commanded
+    type: line
+    kpis: [ramp_delivery_pct]
+
+  - title: AGC / regulation accuracy
+    type: line
+    kpis: [agc_corr]
+  - title: Droop response - measured vs committed
+    type: line
+    kpis: [droop_slope_kw_hz, droop_committed_kw_hz]
+  - title: Revenue-bearing time and AS-commitment delivery
+    type: line
+    kpis: [revenue_bearing_time_pct, commitment_availability_pct]
+
+  - title: Auxiliary load
+    type: line
+    kpis: [aux_load_pct_avg, aux_share_of_discharge_pct]
+  - title: Parasitic energy
+    type: bar
+    kpis: [aux_energy_kwh]
+  - title: Auxiliary drag on RTE
+    type: line
+    kpis: [aux_rte_drag_pt]
+
+  - title: SOC tracking
+    type: line
+    kpis: [soc_tracking_mae_pt, soc_tracking_bias_pt]
+  - title: SOC range
+    type: line
+    kpis: [soc_max_pct, soc_min_pct, soc_range_pt]
+  - title: Dispatchable energy
+    type: line
+    kpis: [dispatchable_discharge_pct, dispatchable_charge_pct]
+  - title: Time at SOC limits
+    type: bar
+    kpis: [soc_floor_time_pct, soc_ceiling_time_pct]
+
+  - title: POI voltage deviation
+    type: line
+    kpis: [poi_volt_dev_max_abs_pct, poi_volt_dev_avg_pct]
+  - title: Frequency deviation
+    type: line
+    kpis: [freq_dev_max_hz]
+  - title: POI power factor
+    type: line
+    kpis: [poi_pf_avg]
+  - title: Reactive energy and VAR at rest
+    type: bar
+    kpis: [reactive_energy_kvarh, var_at_rest_kvarh]
+
+  - title: Availability
+    type: line
+    kpis: [plant_availability_pct, units_online_ratio_pct, energy_availability_factor_pct]
+  - title: Alarm exposure by level
+    type: bar
+    kpis: [alarm_l1_pct, alarm_l2_pct, alarm_l3_pct]
+  - title: Outages and restoration
+    type: bar
+    kpis: [outage_count]
+
+  - title: Capacity factor
+    type: line
+    kpis: [capacity_factor_pct]
+  - title: Dispatch-mode duty profile
+    type: bar
+    kpis: [mode_standby_pct, mode_idle_pct, mode_charge_pct, mode_arbitrage_pct, mode_freqreg_pct]
+
+# Rollup row: money, control accuracy, efficiency and availability (range values).
+tiles: [revenue_usd, revenue_per_mwh_discharged, arbitrage_spread, plant_rte_pct, tracking_rmse_kw, agc_corr,
+        aux_load_pct_avg, soc_tracking_mae_pt, poi_pf_avg, plant_availability_pct, capacity_factor_pct]

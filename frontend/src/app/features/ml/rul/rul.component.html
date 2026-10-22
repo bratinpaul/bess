@@ -1,0 +1,285 @@
+<div class="page-header">
+  <div>
+    <h2>RUL Forecast</h2>
+    <p class="subtitle">Remaining useful life of each fleet unit — days and equivalent full cycles until SOH or resistance reaches the end-of-life
+      criteria (P10–P90) — to plan augmentation, warranty claims and replacement.</p>
+  </div>
+  <a class="link training-link" routerLink="/ml/rul-model">Open RUL Model →</a>
+</div>
+
+<div class="card picker-card">
+  <div class="picker-row">
+    <div class="field picker-field">
+      <label for="model">Model run</label>
+      <select id="model" [ngModel]="modelKey" (ngModelChange)="selectModel($event)" [disabled]="!models.length">
+        <option value="active">Default run</option>
+        @for (m of models; track m.run_id) {
+          <option [value]="'' + m.run_id">{{ optionLabel(m) }}</option>
+        }
+      </select>
+      @if (modelsError) {
+        <span class="field-error">{{ modelsError }}</span>
+      }
+    </div>
+    @if (run) {
+      <div class="field picker-field">
+        <label for="meth">Method</label>
+        <select id="meth" [ngModel]="method" (ngModelChange)="setMethod($event)">
+          @for (m of runMethods; track m) {
+            <option [value]="m">{{ labels[m] }}</option>
+          }
+        </select>
+      </div>
+    }
+  </div>
+</div>
+
+@if (modelsLoaded && !models.length && !modelsError) {
+  <div class="card">
+    <div class="empty-state">No RUL model yet. <a routerLink="/ml/rul-model">Build one on the RUL Model page</a>.</div>
+  </div>
+}
+
+@if (run; as r) {
+  <div class="tab-row">
+    <button type="button" class="tab" [class.on]="tab === 'fleet'" (click)="setTab('fleet')">Fleet</button>
+    <button type="button" class="tab" [class.on]="tab === 'unit'" (click)="setTab('unit')">Unit &amp; what-if</button>
+    <button type="button" class="tab" [class.on]="tab === 'backtest'" (click)="setTab('backtest')">Backtest</button>
+  </div>
+
+  <!-- ============================== fleet -->
+  @if (tab === 'fleet') {
+    <div class="card view-card">
+      @if (fleetLoading && !fleetRows.length) {
+        <div class="empty-state">Loading…</div>
+      } @else if (!fleetRows.length) {
+        <div class="empty-state">This run has no in-service unit to forecast.</div>
+      } @else {
+        <div class="kpi-row">
+          <div class="kpi"><span class="tile-label">In service</span><strong>{{ fleetKpis.live }}</strong>
+            <span class="muted small">{{ fleetKpis.retired }} retired units are training history</span></div>
+          @if (fleetKpis.soonest; as s) {
+            <div class="kpi accent"><span class="tile-label">Soonest end of life</span><strong>{{ s.code }}</strong>
+              <span class="muted small">P50 {{ num(s.sel?.p50_days) }} days · {{ s.sel?.eol_date_p50 }}</span></div>
+          }
+          <div class="kpi" [class.kpi-high]="fleetKpis.high"><span class="tile-label">EOL within 6 months (P50)</span><strong>{{ fleetKpis.high }}</strong>
+            <span class="muted small">plan replacement / augmentation now</span></div>
+          <div class="kpi" [class.kpi-watch]="fleetKpis.watch"><span class="tile-label">Could end within a year (P10)</span><strong>{{ fleetKpis.watch }}</strong>
+            <span class="muted small">watch — schedule the next RPT</span></div>
+        </div>
+        <h4 class="sub-title">Remaining useful life · {{ labels[method] }}</h4>
+        @if (fleetCfg) {
+          <app-chart-canvas [config]="fleetCfg" [height]="Math.max(200, fleetRows.length * 34 + 70)" />
+        }
+        <div class="table-scroll">
+          <table class="data-table bt-table fleet-table">
+            <thead>
+              <tr>
+                <th>Unit</th>
+                <th class="num">SOH</th>
+                <th class="num">R / BOL</th>
+                <th class="num">RUL P10 – P90<br /><small>days</small></th>
+                <th class="num">P50<br /><small>days</small></th>
+                <th class="num">P50<br /><small>cycles</small></th>
+                <th>EOL date (P50)</th>
+                <th>Trigger</th>
+                @for (m of runMethods; track m) {
+                  @if (m !== method) {
+                    <th class="num"><span class="swatch line" [style.background]="colors[m]"></span><br /><small>P50 d</small></th>
+                  }
+                }
+              </tr>
+            </thead>
+            <tbody>
+              @for (u of fleetRows; track u.system_id) {
+                <tr class="click-row" (click)="openUnit(u.system_id)" [attr.data-risk]="u.risk">
+                  <td class="nowrap"><span class="risk-dot" [attr.data-risk]="u.risk"></span><strong>{{ u.code }}</strong> <span class="muted small">{{ u.batch }}</span></td>
+                  <td class="num">{{ num(u.soh, 1) }} %</td>
+                  <td class="num">{{ num(u.r, 2) }}×</td>
+                  <td class="num">{{ num(u.sel?.p10_days) }} – {{ num(u.sel?.p90_days) }}</td>
+                  <td class="num"><strong>{{ num(u.sel?.p50_days) }}</strong>{{ u.sel?.beyond ? '+' : '' }}</td>
+                  <td class="num">{{ num(u.sel?.p50_cycles) }}</td>
+                  <td class="nowrap">{{ u.sel?.eol_date_p50 ?? '—' }}</td>
+                  <td class="small">{{ u.sel?.trigger ?? '—' }}</td>
+                  @for (m of runMethods; track m) {
+                    @if (m !== method) {
+                      <td class="num muted">{{ num(u.byMethod[m]?.p50_days) }}</td>
+                    }
+                  }
+                </tr>
+              }
+            </tbody>
+          </table>
+        </div>
+        <p class="muted small">As of each unit's latest snapshot ({{ fleetRows[0]?.as_of }}). Trigger: which EOL criterion is reached first
+          (capacity / resistance) for the curve methods, "hazard" for the survival models. "+": beyond the longest follow-up the survival model
+          has seen. Click a unit for its projection and what-if.</p>
+      }
+    </div>
+  }
+
+  <!-- ============================== unit -->
+  @if (tab === 'unit') {
+    <div class="card view-card">
+      <div class="view-controls">
+        <div class="control-group">
+          <span class="control-label">Unit</span>
+          <select class="filter-select" [ngModel]="unitId" (ngModelChange)="selectUnit($event)">
+            @for (s of systems; track s.system_id) {
+              @if (s.snapshots) {
+                <option [ngValue]="s.system_id">{{ unitLabel(s) }}</option>
+              }
+            }
+          </select>
+        </div>
+        <div class="toggles whatif">
+          <span class="control-label">What-if</span>
+          <label>Cycles / day <input type="number" class="num-input" min="0" max="20" step="0.05" [(ngModel)]="cpd"
+            [placeholder]="num(prediction?.state?.cpd_actual, 2)" /></label>
+          <label>Cell temp °C <input type="number" class="num-input" min="-20" max="70" step="0.5" [(ngModel)]="temp"
+            [placeholder]="num(prediction?.state?.temp_actual, 1)" /></label>
+          <button type="button" class="btn btn-primary btn-sm" (click)="loadUnit()" [disabled]="unitLoading">{{ unitLoading ? '…' : 'Apply' }}</button>
+          @if (whatIfActive) {
+            <button type="button" class="link-btn" (click)="resetWhatIf()">Reset to measured</button>
+          }
+        </div>
+      </div>
+
+      @if (unitError) {
+        <div class="empty-state error">{{ unitError }}</div>
+      } @else if (prediction) {
+        @if (prediction; as p) {
+        <p class="muted small">
+          {{ p.system_code }} · {{ p.chemistry }} · {{ p.batch_lot }} · as of {{ p.as_of }} · age {{ years(p.state.age_days) }} years ·
+          {{ num(p.state.efc) }} EFC · SOH {{ num(p.state.soh_pct, 1) }} % · R {{ num(p.state.r_ratio, 2) }}× BOL ·
+          duty {{ num(p.state.cpd, 2) }} cycles/day · {{ num(p.state.temp, 1) }} °C
+          @if (whatIfActive) {
+            <span class="note-warn">What-if — measured duty {{ num(p.state.cpd_actual, 2) }} cycles/day, {{ num(p.state.temp_actual, 1) }} °C</span>
+          }
+        </p>
+        @if (p.retired) {
+          <div class="stale-box"><span class="status-pill" data-status="STALE">{{ p.failed ? 'Failed' : 'Retired' }} on {{ p.as_of }}</span>
+            <span class="small">This unit has reached its end — its history is part of the training data. The figures below are what the
+              final model makes of its last snapshot.</span></div>
+        }
+        <div class="method-cards">
+          @for (m of runMethods; track m) {
+            @if (result(m); as x) {
+              <div class="m-card" [class.on]="m === method" (click)="setMethod(m)" [style.border-left-color]="colors[m]">
+                <span class="tile-label">{{ labels[m] }}</span>
+                <strong>{{ num(x.p50_days) }}{{ x.beyond ? '+' : '' }} days</strong>
+                <span class="small">{{ num(x.p50_cycles) }} cycles · {{ years(x.p50_days) }} y</span>
+                <span class="muted small">P10–P90 {{ num(x.p10_days) }} – {{ num(x.p90_days) }} d</span>
+                <span class="muted small">EOL {{ x.eol_date_p50 }} · {{ x.trigger }}</span>
+              </div>
+            }
+          }
+        </div>
+        @if (whatIfActive) {
+          <p class="muted small">What-if: the physics and hybrid models follow duty and temperature through the fade curve; Cox scales its
+            hazard and can over-react outside the fleet's range; the tree models (LightGBM, RSF) only respond within the duty / temperature range
+            they were trained on.</p>
+        }
+        <div class="driver-grid">
+          <div>
+            <h4 class="sub-title">State of health — measured, RPT and physics projection</h4>
+            @if (sohCfg) {
+              <app-chart-canvas [config]="sohCfg" [height]="290" />
+            }
+          </div>
+          <div>
+            <h4 class="sub-title">Internal resistance (× BOL)</h4>
+            @if (resCfg) {
+              <app-chart-canvas [config]="resCfg" [height]="290" />
+            }
+          </div>
+        </div>
+        @if (p.paths; as path) {
+          <p class="muted small">Projection: the fleet's {{ p.chemistry }} fade curve with this unit's own factor (capacity
+            ×{{ num(path.factor_capacity, 2) }}, resistance ×{{ num(path.factor_resistance, 2) }} vs its batch), anchored at the latest
+            measurement, run at the duty and temperature above; the band matches the P10–P90 RUL (calibrated to the errors on the training
+            units). ◇ = RPT checkpoints (weighted ground truth).</p>
+        }
+        @if (survCfg) {
+          <h4 class="sub-title">Survival curves — probability the unit is still within life</h4>
+          <app-chart-canvas [config]="survCfg" [height]="240" />
+          <p class="muted small">Where a curve crosses 90 % / 50 % / 10 % gives the survival models' P10 / P50 / P90. They learn from every unit,
+            including the still-running (censored) ones and the unplanned failures a fade curve cannot foresee.</p>
+        }
+        }
+      } @else if (unitLoading) {
+        <div class="empty-state">Predicting…</div>
+      }
+    </div>
+  }
+
+  <!-- ============================== backtest -->
+  @if (tab === 'backtest') {
+    <div class="card view-card">
+      <div class="view-controls">
+        <div class="control-group">
+          <span class="control-label">Unit</span>
+          <select class="filter-select" [ngModel]="unitId" (ngModelChange)="selectUnit($event)">
+            @for (s of systems; track s.system_id) {
+              @if (s.snapshots) {
+                <option [ngValue]="s.system_id">{{ unitLabel(s) }}</option>
+              }
+            }
+          </select>
+          <span class="control-label">Band</span>
+          <select class="filter-select" [(ngModel)]="btBand" (ngModelChange)="loadBacktest()">
+            @for (m of runMethods; track m) {
+              <option [value]="m">{{ labels[m] }}</option>
+            }
+          </select>
+          <div class="seg">
+            <button type="button" [class.on]="!btCycles" (click)="btCycles = false; buildBacktest()">Days</button>
+            <button type="button" [class.on]="btCycles" (click)="btCycles = true; buildBacktest()">Cycles</button>
+          </div>
+        </div>
+        <div class="toggles">
+          @for (m of runMethods; track m) {
+            <label><input type="checkbox" [checked]="btShow.has(m)" (change)="toggleBt(m)" />
+              <span class="swatch line" [style.background]="colors[m]"></span> {{ labels[m] }}</label>
+          }
+        </div>
+      </div>
+      <p class="muted small">Each point: the RUL predicted at that snapshot by models fitted without this unit (leave-one-unit-out).
+        @if (btPoints[0]?.censored) {
+          This unit is still in service: the solid line is how long it is known to have survived past each snapshot (a lower bound — a P50
+          below it is wrong); the dotted line is its synthetic label (oracle only).
+        } @else {
+          The solid line is the true remaining life.
+        }
+      </p>
+      @if (btLoading && !btCfg) {
+        <div class="empty-state">Loading…</div>
+      }
+      @if (btCfg) {
+        <app-chart-canvas [config]="btCfg" [height]="320" />
+      }
+      <h4 class="sub-title">Scores · {{ btUnit?.system_code }}</h4>
+      <table class="data-table bt-table">
+        <thead>
+          <tr><th>Method</th><th class="num">Snapshots</th><th class="num">MAE days</th><th class="num">Bias days</th><th class="num">Coverage</th>
+            <th class="num">Censored violations</th><th class="num">Oracle MAE</th></tr>
+        </thead>
+        <tbody>
+          @for (m of runMethods; track m) {
+            @if (unitMetric(m); as s) {
+              <tr>
+                <td><span class="swatch line" [style.background]="colors[m]"></span> {{ labels[m] }}</td>
+                <td class="num">{{ s.n }}</td>
+                <td class="num">{{ num(s.mae_days) }}</td>
+                <td class="num">{{ num(s.bias_days) }}</td>
+                <td class="num">{{ s.coverage_pct !== undefined && s.coverage_pct !== null ? num(s.coverage_pct) + ' %' : '—' }}</td>
+                <td class="num">{{ s.censored_violation_pct !== undefined && s.censored_violation_pct !== null ? num(s.censored_violation_pct, 1) + ' %' : '—' }}</td>
+                <td class="num">{{ num(s.oracle_mae_days) }}</td>
+              </tr>
+            }
+          }
+        </tbody>
+      </table>
+    </div>
+  }
+}

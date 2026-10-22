@@ -1,0 +1,337 @@
+<div class="page-header">
+  <div>
+    <h2>Multivariate Anomaly Model</h2>
+    <p class="subtitle">
+      Learn the system's normal joint behaviour - BMS, PCS, HVAC and EMS signals together - and flag intervals where the
+      combination is wrong even though every signal is in range. Alarms are used only to evaluate and tune, never to train.
+      Results open on <a routerLink="/ml/mv-anomaly">Multivariate Anomaly</a>.
+    </p>
+  </div>
+</div>
+
+@if (optionsError) {
+  <div class="card empty-state error">{{ optionsError }}</div>
+}
+
+@if (options) {
+  <div class="train-grid">
+    <!-- data -->
+    <section class="card panel">
+      <h3 class="panel-title">Data</h3>
+      <div class="field">
+        <label for="system">Battery system</label>
+        <select id="system" [ngModel]="systemId" (ngModelChange)="selectSystem($event)">
+          @for (s of options.systems; track s.battery_system_id) {
+            <option [ngValue]="s.battery_system_id">
+              {{ s.site_name ? s.site_name + ' · ' : '' }}{{ s.system_name }} · {{ s.date_from }} → {{ s.date_to }} · {{ s.alarms }} alarms
+            </option>
+          }
+        </select>
+      </div>
+      <div class="form-grid three">
+        <div class="field">
+          <label for="from">From</label>
+          <input id="from" type="date" [(ngModel)]="dateFrom" (ngModelChange)="schedulePreview()" [min]="system?.date_from ?? ''" [max]="system?.date_to ?? ''" />
+        </div>
+        <div class="field">
+          <label for="to">To</label>
+          <input id="to" type="date" [(ngModel)]="dateTo" (ngModelChange)="schedulePreview()" [min]="system?.date_from ?? ''" [max]="system?.date_to ?? ''" />
+        </div>
+        <div class="field">
+          <label for="evalf">Evaluation share (last part)</label>
+          <input id="evalf" type="number" min="0.1" max="0.6" step="0.05" [(ngModel)]="evalFraction" (ngModelChange)="schedulePreview()" />
+        </div>
+      </div>
+
+      <h4 class="group-head">Known-good training rows exclude</h4>
+      <div class="param-grid">
+        <div class="field" title="Alarm intervals are widened by this many minutes on each side before they are excluded">
+          <label for="pad">Alarm pad (min)</label>
+          <input id="pad" type="number" min="0" max="720" step="5" [(ngModel)]="alarmPadMin" (ngModelChange)="schedulePreview()" />
+        </div>
+        <div class="field" title="Days after battery_system.commissioned_on that are not 'normal' yet">
+          <label for="comm">Commissioning days</label>
+          <input id="comm" type="number" min="0" max="365" [(ngModel)]="commissioningDays" (ngModelChange)="schedulePreview()" />
+        </div>
+        <div class="field" title="A signal repeating the same value this many intervals is frozen (pack voltage, SOC and cell voltage only while current flows)">
+          <label for="frozen">Frozen after (intervals)</label>
+          <input id="frozen" type="number" min="2" max="288" [(ngModel)]="frozenIntervals" (ngModelChange)="schedulePreview()" />
+        </div>
+        <label class="check-field">
+          <input type="checkbox" [(ngModel)]="excludeAlarmLevel" (ngModelChange)="schedulePreview()" />
+          Any telemetry alarm_level &gt; 0
+        </label>
+      </div>
+
+      @if (preview; as p) {
+        <div class="preview" [class.warn]="p.clean_train_rows < 500">
+          <strong>{{ p.rows | number }}</strong> intervals · train {{ p.train_rows | number }} / evaluate {{ p.eval_rows | number }}
+          (from {{ p.eval_from | date: 'dd MMM HH:mm' }}) ·
+          <strong>{{ p.clean_train_rows | number }}</strong> known-good training rows
+        </div>
+        <div class="mv-preview-grid">
+          <div>
+            <span class="muted small">Excluded from training</span>
+            @for (e of excludedEntries(p); track e.key) {
+              <div class="mv-kv"><span>{{ reasonLabels[e.key] || e.key }}</span><span class="mono">{{ e.n | number }}</span></div>
+            }
+          </div>
+          <div>
+            <span class="muted small">Clean rows by regime</span>
+            @for (r of regimeEntries(p); track r.key) {
+              <div class="mv-kv"><span>{{ r.key }}</span><span class="mono">{{ r.n | number }}</span></div>
+            }
+          </div>
+          <div>
+            <span class="muted small">Labels (alarm events)</span>
+            <div class="mv-kv"><span>Training window</span><span class="mono">{{ p.alarm_events.train }}</span></div>
+            <div class="mv-kv"><span>Evaluation window</span><span class="mono">{{ p.alarm_events.eval }}</span></div>
+            <div class="mv-kv"><span>Sensor-rule intervals</span><span class="mono">{{ p.rule_rows | number }}</span></div>
+          </div>
+        </div>
+      } @else if (previewing) {
+        <div class="preview">Counting rows…</div>
+      } @else if (previewError) {
+        <div class="preview warn">{{ previewError }}</div>
+      }
+
+      <h4 class="group-head">Features <span class="muted small">({{ featureCount }} signals)</span></h4>
+      <div class="feature-groups">
+        @for (g of options.feature_groups; track g.key) {
+          <label class="feature-group" [class.on]="groups.has(g.key)">
+            <input type="checkbox" [checked]="groups.has(g.key)" (change)="toggleGroup(g.key)" />
+            <span class="fg-text">
+              <span class="fg-title">{{ g.label }}</span>
+              <span class="fg-meta">
+                @for (f of g.features; track f.key; let last = $last) {
+                  {{ f.label }}{{ last ? '' : ' · ' }}
+                }
+              </span>
+            </span>
+          </label>
+        }
+      </div>
+    </section>
+
+    <!-- models -->
+    <section class="card panel">
+      <div class="panel-subhead" style="margin-top: 0">
+        <h3 class="panel-title" style="margin: 0">Detectors</h3>
+        <button type="button" class="link-btn" (click)="resetParams()">Defaults</button>
+      </div>
+      @for (m of options.models; track m.key) {
+        <h4 class="group-head">
+          <label class="mv-model-check">
+            <input type="checkbox" [checked]="selected.has(m.key)" (change)="toggleModel(m.key)" />
+            <span class="swatch" [style.background]="colors[m.key]"></span>
+            {{ m.label }}
+            @if (m.interpretable) {
+              <span class="muted small">· per-feature attribution</span>
+            }
+          </label>
+        </h4>
+        @if (selected.has(m.key)) {
+          <div class="param-grid">
+            @for (p of m.params; track p.name) {
+              <div class="field">
+                <label [for]="m.key + p.name">{{ p.label }}</label>
+                <input [id]="m.key + p.name" type="number" [(ngModel)]="params[m.key][p.name]" [min]="p.min ?? null" [max]="p.max ?? null" [step]="p.step ?? 'any'" />
+              </div>
+            }
+          </div>
+        }
+      }
+      <div class="param-grid">
+        <div class="field">
+          <label for="primary">Primary model (drives is_anomaly + attribution)</label>
+          <select id="primary" [(ngModel)]="primary">
+            @for (m of selectedModels; track m.key) {
+              <option [value]="m.key">{{ m.label }}</option>
+            }
+          </select>
+        </div>
+      </div>
+      <p class="param-help">Keep PCA (interpretable) next to any deep model so every flag can be attributed to signals.</p>
+
+      <h4 class="group-head">Operating context</h4>
+      <div class="seg mv-seg">
+        <button type="button" [class.on]="regimeStrategy === 'feature'" (click)="regimeStrategy = 'feature'">Regime + SOC band as features</button>
+        <button type="button" [class.on]="regimeStrategy === 'separate'" (click)="regimeStrategy = 'separate'">One model per regime</button>
+      </div>
+      @if (regimeStrategy === 'separate') {
+        <div class="param-grid">
+          <div class="field">
+            <label for="minreg">Min clean rows per regime model</label>
+            <input id="minreg" type="number" min="50" max="5000" step="50" [(ngModel)]="minRegimeRows" />
+          </div>
+        </div>
+        <p class="param-help">Charging, discharging, idle and standby each get their own scaler, models and threshold; a regime
+          with fewer clean rows is scored by the pooled model.</p>
+      }
+
+      <h4 class="group-head">Threshold &amp; flags</h4>
+      <div class="param-grid">
+        <div class="field">
+          <label for="tpct">Limit = training-score percentile</label>
+          <input id="tpct" type="number" min="90" max="99.99" step="0.1" [(ngModel)]="thresholdPct" />
+        </div>
+        <div class="field">
+          <label for="tmode">Limit mode</label>
+          <select id="tmode" [(ngModel)]="thresholdMode">
+            <option value="percentile">Percentile of training scores</option>
+            <option value="best_f1">Tune on training-window alarms (best F1)</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="smooth">Smoothing (intervals)</label>
+          <input id="smooth" type="number" min="1" max="24" [(ngModel)]="smoothWindow" />
+        </div>
+        <div class="field">
+          <label for="deb">Flag after N consecutive</label>
+          <input id="deb" type="number" min="1" max="24" [(ngModel)]="debounce" />
+        </div>
+        <div class="field">
+          <label for="topk">Top contributors per flag</label>
+          <input id="topk" type="number" min="1" max="8" [(ngModel)]="topK" />
+        </div>
+        <div class="field">
+          <label for="name">Run name</label>
+          <input id="name" type="text" [(ngModel)]="runName" placeholder="optional" maxlength="120" />
+        </div>
+      </div>
+      <label class="check-field">
+        <input data-perm="ml.model:approve" type="checkbox" [(ngModel)]="makeDefault" />
+        Make it the system's live model (the first model of a system always is)
+      </label>
+
+      <div class="form-actions">
+        @if (runError) {
+          <span class="problem">{{ runError }}</span>
+        }
+        <button type="button" class="btn btn-primary train-btn" [disabled]="!canRun" (click)="run()">
+          @if (running) {
+            <span class="spinner" aria-hidden="true"></span> Training…
+          } @else {
+            Build model
+          }
+        </button>
+      </div>
+    </section>
+  </div>
+}
+
+@if (scoreFor) {
+  <div class="card mv-score-card">
+    <h3>Score another window with model #{{ scoreFor.run_id }} · {{ scoreFor.system_name }}</h3>
+    <div class="mv-score-row">
+      <div class="field">
+        <label for="sfrom">From</label>
+        <input id="sfrom" type="date" [(ngModel)]="scoreFrom" />
+      </div>
+      <div class="field">
+        <label for="sto">To</label>
+        <input id="sto" type="date" [(ngModel)]="scoreTo" />
+      </div>
+      <button type="button" class="btn btn-primary" [disabled]="scoring" (click)="runScore()">{{ scoring ? 'Scoring…' : 'Score' }}</button>
+      <button type="button" class="btn btn-secondary" (click)="scoreFor = null">Cancel</button>
+      @if (scoreError) {
+        <span class="problem">{{ scoreError }}</span>
+      }
+    </div>
+  </div>
+}
+
+<!-- history -->
+<div class="card history-card">
+  <div class="history-head">
+    <div>
+      <h3>Runs</h3>
+      <p class="muted small">battery_ml.mv_anomaly_run · click a completed run to open its results</p>
+    </div>
+    @if (options) {
+      <select class="filter-select" [(ngModel)]="filterSystem">
+        <option [ngValue]="null">All systems</option>
+        @for (s of options.systems; track s.battery_system_id) {
+          <option [ngValue]="s.battery_system_id">{{ s.system_name }}</option>
+        }
+      </select>
+    }
+  </div>
+  @if (runsLoading && !runs.length) {
+    <div class="empty-state">Loading…</div>
+  } @else if (!filteredRuns.length) {
+    <div class="empty-state">No runs yet.</div>
+  } @else {
+    <div class="table-scroll">
+      <table class="data-table runs-table">
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>Name</th>
+            <th>Kind</th>
+            <th>System</th>
+            <th>Window</th>
+            <th>Primary</th>
+            <th class="num">F1</th>
+            <th class="num">AUC</th>
+            <th class="num">Alarm recall</th>
+            <th class="num">Flagged</th>
+            <th class="num">Episodes</th>
+            <th>Status</th>
+            <th class="num">Time</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          @for (r of filteredRuns; track r.run_id) {
+            <tr (click)="open(r)">
+              <td class="mono">{{ r.run_id }}</td>
+              <td>
+                {{ r.run_name || '—' }}
+                @if (r.is_default) {
+                  <span class="active-pill"><span class="dot"></span>Live model</span>
+                }
+              </td>
+              <td>
+                {{ r.run_kind === 'train' ? 'Model' : r.run_kind === 'score' ? 'Score' : 'Live' }}
+                @if (r.parent_run_id) {
+                  <span class="muted small">(model #{{ r.parent_run_id }})</span>
+                }
+              </td>
+              <td>{{ r.system_name }}</td>
+              <td class="nowrap">{{ window_(r) }}</td>
+              <td>
+                @if (r.params?.primary; as p) {
+                  <span class="swatch" [style.background]="colors[p]"></span> {{ modelLabel(p) }}
+                } @else {
+                  —
+                }
+              </td>
+              <td class="num">{{ primaryMetric(r, 'f1') === null ? '—' : (primaryMetric(r, 'f1') | number: '1.2-2') }}</td>
+              <td class="num">{{ primaryMetric(r, 'auc') === null ? '—' : (primaryMetric(r, 'auc') | number: '1.2-2') }}</td>
+              <td class="num">{{ pct(primaryMetric(r, 'event_recall')) }}</td>
+              <td class="num">{{ r.summary?.['flagged_intervals'] ?? '—' }}</td>
+              <td class="num">{{ r.summary?.['episodes'] ?? '—' }}</td>
+              <td>
+                <span class="status-chip" [attr.data-status]="r.status">{{ r.status }}</span>
+                @if (r.error_message) {
+                  <div class="problem small">{{ r.error_message }}</div>
+                }
+              </td>
+              <td class="num">{{ duration(r.duration_ms) }}</td>
+              <td class="nowrap">
+                @if (r.run_kind === 'train' && r.status === 'COMPLETED') {
+                  <button type="button" class="link-btn" (click)="startScore(r, $event)">Score window</button>
+                  @if (!r.is_default) {
+                    <button data-perm="ml.model:approve" type="button" class="link-btn" (click)="setDefault(r, $event)">Make live</button>
+                  }
+                }
+                <button type="button" class="link-btn" (click)="deleteRun(r, $event)">Delete</button>
+              </td>
+            </tr>
+          }
+        </tbody>
+      </table>
+    </div>
+  }
+</div>

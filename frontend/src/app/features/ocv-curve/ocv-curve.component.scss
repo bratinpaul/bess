@@ -1,0 +1,73 @@
+.ocv-filters {
+  align-items: flex-end;
+  flex-wrap: wrap;
+  gap: 12px 20px;
+}
+
+.chip-group {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.chip-label {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--color-text-muted);
+}
+
+.ocv-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  border: 1px solid var(--color-border, #e3e6ea);
+  border-radius: 999px;
+  background: #fff;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text-muted);
+  cursor: pointer;
+
+  &.on {
+    border-color: #63f8ba;
+    background: rgba(99, 248, 186, 0.22);
+    color: #0e6b4d;
+  }
+
+  .dot {
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+  }
+}
+
+.ocv-charts {
+  display: grid;
+  grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+  gap: 16px;
+  padding: 12px 20px 4px;
+}
+
+@media (max-width: 1000px) {
+  .ocv-charts {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.chart-title {
+  margin: 0 0 6px;
+  font-size: 14px;
+}
+
+.ocv-note {
+  padding: 0 20px 6px;
+}
+
+.warn-note {
+  color: #875800;
+}

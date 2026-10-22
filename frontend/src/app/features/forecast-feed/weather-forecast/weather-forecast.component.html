@@ -1,0 +1,389 @@
+<div class="page-header">
+  <div>
+    <h2>Weather Forecast</h2>
+    <p class="subtitle">Forecast runs per weather station: air temperature and solar irradiance (GHI) for each hour ahead,
+      compared with the measured weather</p>
+  </div>
+  <div class="header-actions">
+    <label class="toggle-switch" title="Show the upload section">
+      <input data-perm="write" type="checkbox" [(ngModel)]="showUpload" [ngModelOptions]="{ standalone: true }" />
+      <span class="track" aria-hidden="true"><span class="thumb"></span></span>
+      Upload file
+    </label>
+    <button type="button" class="btn btn-primary" [disabled]="!stations.length" (click)="openAdd()">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+        <path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+      </svg>
+      Add Forecast Value
+    </button>
+  </div>
+</div>
+
+@if (showUpload) {
+  <div class="card telemetry-upload-card">
+    <div class="telemetry-section-header">
+      <h3>Upload Weather Forecast File</h3>
+      <p class="subtitle">CSV or Excel · columns issued_at, valid_at, station_code, temp_c, ghi_wm2 · one row per run and
+        hour · existing values (same station, run and hour) are updated</p>
+    </div>
+
+    <div class="upload-row">
+      <div class="field mp-field">
+        <label for="uploadSt">Weather station</label>
+        <select id="uploadSt" [(ngModel)]="uploadCode">
+          <option value="">From the file's station_code column</option>
+          @for (s of stations; track s.station_id) {
+            <option [value]="s.station_code">All rows → {{ s.station_code }}</option>
+          }
+        </select>
+      </div>
+      <input type="file" accept=".csv,.xlsx,.xlsm" (change)="onFileSelected($event)" #fileInput />
+      <button type="button" class="btn btn-primary" [disabled]="!selectedFile || uploading" (click)="upload()">
+        {{ uploading ? 'Uploading…' : 'Upload' }}
+      </button>
+    </div>
+    <p class="upload-note">Checks per row: valid issued_at and valid_at (plant time when no zone is given), valid_at after
+      issued_at and at most 16 days ahead, known station, temperature −60…65 °C, GHI 0…1500 W/m², and at least one value.</p>
+
+    @if (stations.length === 0) {
+      <div class="form-error">No weather stations exist yet (battery_master.weather_station).</div>
+    }
+    @if (uploadError) {
+      <div class="form-error">{{ uploadError }}</div>
+    }
+
+    @if (uploadResult) {
+      <div class="upload-summary">
+        <div class="upload-stat">
+          <span class="upload-stat-value">{{ uploadResult.total_rows }}</span>
+          <span class="upload-stat-label">Rows in file</span>
+        </div>
+        <div class="upload-stat">
+          <span class="upload-stat-value">{{ uploadResult.runs }}</span>
+          <span class="upload-stat-label">Forecast runs</span>
+        </div>
+        <div class="upload-stat">
+          <span class="upload-stat-value">{{ uploadResult.inserted }}</span>
+          <span class="upload-stat-label">Inserted</span>
+        </div>
+        <div class="upload-stat">
+          <span class="upload-stat-value">{{ uploadResult.updated }}</span>
+          <span class="upload-stat-label">Updated</span>
+        </div>
+        <div class="upload-stat" [class.upload-stat-error]="uploadResult.error_count > 0">
+          <span class="upload-stat-value">{{ uploadResult.error_count }}</span>
+          <span class="upload-stat-label">Rows skipped</span>
+        </div>
+      </div>
+      @if (uploadResult.stations.length) {
+        <p class="upload-note">Stations in the file: {{ uploadResult.stations.join(', ') }}</p>
+      }
+      @if (uploadResult.errors.length > 0) {
+        <div class="upload-errors">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Row</th>
+                <th>Errors</th>
+              </tr>
+            </thead>
+            <tbody>
+              @for (rowError of visibleUploadErrors; track $index) {
+                <tr>
+                  <td class="mono">{{ rowError.row }}</td>
+                  <td>{{ rowError.errors.join('; ') }}</td>
+                </tr>
+              }
+            </tbody>
+          </table>
+          @if (uploadResult.errors.length > 10) {
+            <button type="button" class="btn btn-secondary" (click)="showAllUploadErrors = !showAllUploadErrors">
+              {{ showAllUploadErrors ? 'Show fewer' : 'Show all ' + uploadResult.errors.length + ' messages' }}
+            </button>
+          }
+        </div>
+      }
+    }
+  </div>
+}
+
+<div class="view-tabs" role="tablist" aria-label="Forecast view">
+  <button type="button" role="tab" class="view-tab" [class.active]="activeTab === 'tabular'"
+    [attr.aria-selected]="activeTab === 'tabular'" (click)="setTab('tabular')">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+      <rect x="3.5" y="4.5" width="17" height="15" rx="1.5" stroke="currentColor" stroke-width="1.6" />
+      <path d="M3.5 9.5h17M3.5 14.5h17M9.5 9.5v10" stroke="currentColor" stroke-width="1.6" />
+    </svg>
+    Tabular
+  </button>
+  <button type="button" role="tab" class="view-tab" [class.active]="activeTab === 'graphical'"
+    [attr.aria-selected]="activeTab === 'graphical'" (click)="setTab('graphical')">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+      <path d="M3 19.5h18" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
+      <path d="M4 16l5-6 4 3 7-8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
+    </svg>
+    Graphical
+  </button>
+</div>
+
+@if (activeTab === 'graphical') {
+  <p class="graph-note">
+    Choose <strong>latest run per hour</strong> to see, for every hour, the newest forecast that covered it (what an
+    operator had at the time), or a single run to see its whole horizon. The shaded band is the spread of all runs'
+    values for that hour. Forecasts are compared with the mean of the measured 5-min weather within ±30 min.
+  </p>
+  @if (graphEntities.length) {
+    <app-telemetry-graphs
+      [charts]="graphCharts"
+      [timelines]="graphTimelines"
+      [loader]="loadGraphSeries"
+      prefsKey="bess.weatherForecastGraphs.v1"
+      entityLabel="Forecast"
+      [entities]="graphEntities"
+      [initialEntityId]="filterStationId" />
+  }
+
+  <div class="card skill-card">
+    <div class="skill-head">
+      <div>
+        <h3>Forecast Skill by Lead Time</h3>
+        <p class="subtitle">Mean absolute error and bias against measured weather, for each hour ahead · GHI scored on
+          daylight hours only</p>
+      </div>
+      <div class="skill-controls">
+        <div class="field">
+          <label for="skillSt">Weather station</label>
+          <select id="skillSt" [(ngModel)]="skillStationId" (ngModelChange)="loadSkill()">
+            @for (s of stations; track s.station_id) {
+              <option [value]="s.station_id">{{ s.station_code }}</option>
+            }
+          </select>
+        </div>
+      </div>
+    </div>
+
+    @if (skillLoading) {
+      <div class="empty-state">Scoring forecasts…</div>
+    } @else if (skillError) {
+      <div class="empty-state error">{{ skillError }}</div>
+    } @else if (skill) {
+      @if (skill.matched === 0) {
+        <div class="empty-state">
+          @if (skill.forecasts === 0) {
+            No forecasts for this station yet. Turn on <strong>Upload file</strong> to load weather_forecast_data.csv.
+          } @else {
+            {{ skill.forecasts }} forecast values, but none has measured weather to compare with. Load the measured
+            weather under <strong>Live Feed → Weather</strong>.
+          }
+        </div>
+      } @else {
+        <div class="stat-row">
+          <div class="stat">
+            <span class="stat-value">{{ skill.runs }}</span>
+            <span class="stat-label">Runs</span>
+          </div>
+          <div class="stat">
+            <span class="stat-value">{{ skill.matched }} <small>/ {{ skill.forecasts }}</small></span>
+            <span class="stat-label">Values with a measurement</span>
+          </div>
+          <div class="stat">
+            <span class="stat-value">{{ skill.temp_mae ?? '—' }} <small>°C</small></span>
+            <span class="stat-label">Temperature MAE</span>
+          </div>
+          <div class="stat">
+            <span class="stat-value">{{ skill.temp_bias ?? '—' }} <small>°C</small></span>
+            <span class="stat-label">Temperature bias · RMSE {{ skill.temp_rmse ?? '—' }}</span>
+          </div>
+          <div class="stat">
+            <span class="stat-value">{{ skill.ghi_mae ?? '—' }} <small>W/m²</small></span>
+            <span class="stat-label">GHI MAE (daylight)</span>
+          </div>
+          <div class="stat">
+            <span class="stat-value">{{ skill.ghi_bias ?? '—' }} <small>W/m²</small></span>
+            <span class="stat-label">GHI bias · RMSE {{ skill.ghi_rmse ?? '—' }}</span>
+          </div>
+        </div>
+        <div class="skill-charts">
+          @if (tempSkillConfig) {
+            <div class="skill-chart">
+              <h4>Temperature error by lead time</h4>
+              <app-chart-canvas [config]="tempSkillConfig" [height]="240" />
+            </div>
+          }
+          @if (ghiSkillConfig) {
+            <div class="skill-chart">
+              <h4>GHI error by lead time (daylight)</h4>
+              <app-chart-canvas [config]="ghiSkillConfig" [height]="240" />
+            </div>
+          }
+        </div>
+      }
+    }
+  </div>
+} @else {
+  <div class="card">
+    <div class="toolbar telemetry-filters">
+      <div class="field">
+        <label for="filterSt">Weather station</label>
+        <select id="filterSt" [(ngModel)]="filterStationId" (ngModelChange)="filterRun = ''">
+          <option value="">All stations</option>
+          @for (s of stations; track s.station_id) {
+            <option [value]="s.station_id">{{ s.station_code }}</option>
+          }
+        </select>
+      </div>
+      <div class="field">
+        <label for="filterRun">Forecast run (issued at)</label>
+        <select id="filterRun" [(ngModel)]="filterRun">
+          <option value="">All runs</option>
+          @for (r of filterRuns; track r.station_id + r.issued_at) {
+            <option [value]="r.issued_at">{{ fmt(r.issued_at) }} · {{ r.points }} h</option>
+          }
+        </select>
+      </div>
+      <div class="field">
+        <label for="filterStart">Valid from</label>
+        <input id="filterStart" type="datetime-local" [(ngModel)]="filterStart" />
+      </div>
+      <div class="field">
+        <label for="filterEnd">Valid to</label>
+        <input id="filterEnd" type="datetime-local" [(ngModel)]="filterEnd" />
+      </div>
+      <div class="telemetry-filter-actions">
+        <button type="button" class="btn btn-primary" (click)="applyFilters()">Apply</button>
+        <button type="button" class="btn btn-secondary" (click)="clearFilters()">Clear</button>
+      </div>
+    </div>
+
+    <div class="table-bar">
+      <span class="table-bar-info">
+        @if (!loading && !error) {
+          {{ total }} forecast values · {{ runs.length }} runs · {{ visibleColumns.length }} of {{ allColumns.length }} columns
+        }
+      </span>
+      <app-column-picker
+        [columns]="allColumns"
+        [defaultKeys]="defaultColumnKeys"
+        storageKey="bess.weatherForecastTable.columns"
+        (visibleChange)="visibleColumns = $event" />
+    </div>
+
+    @if (loading) {
+      <div class="empty-state">Loading forecasts…</div>
+    } @else if (error) {
+      <div class="empty-state error">{{ error }}</div>
+    } @else if (rows.length === 0) {
+      <div class="empty-state">No forecast values match the current filters. Turn on <strong>Upload file</strong> to load weather_forecast_data.csv.</div>
+    } @else {
+      <app-telemetry-table [columns]="visibleColumns" [rows]="tableRows" [actions]="true"
+        (editRow)="openEdit($event)" (deleteRow)="confirmDelete($event)" />
+
+      <div class="pagination">
+        <div class="page-size">
+          <label for="pageSize">Rows per page</label>
+          <select id="pageSize" [ngModel]="pageSize" (ngModelChange)="setPageSize($event)">
+            @for (size of pageSizeOptions; track size) {
+              <option [ngValue]="size">{{ size }}</option>
+            }
+          </select>
+        </div>
+        <div class="page-range">{{ rangeStart }}–{{ rangeEnd }} of {{ total }}</div>
+        <div class="page-controls">
+          <button class="btn btn-secondary btn-icon" [disabled]="currentPage === 1" (click)="goToPage(currentPage - 1)" title="Previous page">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+              <path d="M15 6l-6 6 6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+            </svg>
+          </button>
+          <span class="page-indicator">Page {{ currentPage }} of {{ totalPages }}</span>
+          <button class="btn btn-secondary btn-icon" [disabled]="currentPage === totalPages" (click)="goToPage(currentPage + 1)" title="Next page">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+              <path d="M9 6l6 6-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+            </svg>
+          </button>
+        </div>
+      </div>
+    }
+  </div>
+}
+
+<!-- add / edit -->
+@if (edit; as e) {
+  <div class="modal-backdrop" (click)="edit = null">
+    <div class="modal edit-modal" (click)="$event.stopPropagation()">
+      <h3>{{ e.mode === 'add' ? 'Add forecast value' : 'Edit forecast value' }}</h3>
+      <div class="form-grid">
+        <div class="field">
+          <label for="eSt">Weather station</label>
+          <select id="eSt" [(ngModel)]="e.station_id" [disabled]="e.mode === 'edit'">
+            @for (s of stations; track s.station_id) {
+              <option [ngValue]="s.station_id">{{ stationLabel(s) }}</option>
+            }
+          </select>
+        </div>
+        <div class="field">
+          <label>Lead time</label>
+          <input type="text" [value]="editLeadHours !== null ? editLeadHours + ' h ahead' : '—'" disabled />
+        </div>
+        <div class="field">
+          <label for="eIss">Run issued at (plant time)</label>
+          @if (e.mode === 'add') {
+            <input id="eIss" type="datetime-local" [(ngModel)]="e.issued_at" />
+          } @else {
+            <input id="eIss" type="text" [value]="fmt(e.issued_at)" disabled />
+          }
+        </div>
+        <div class="field">
+          <label for="eVal">Valid hour (plant time)</label>
+          @if (e.mode === 'add') {
+            <input id="eVal" type="datetime-local" step="3600" [(ngModel)]="e.valid_at" />
+          } @else {
+            <input id="eVal" type="text" [value]="fmt(e.valid_at)" disabled />
+          }
+        </div>
+        <div class="field">
+          <label for="eT">Forecast temperature (°C)</label>
+          <input id="eT" type="number" min="-60" max="65" step="0.1" [(ngModel)]="e.temp_c" />
+        </div>
+        <div class="field">
+          <label for="eG">Forecast GHI (W/m²)</label>
+          <input id="eG" type="number" min="0" max="1500" step="1" [(ngModel)]="e.ghi_wm2" />
+        </div>
+      </div>
+      @if (editError) {
+        <div class="form-error">{{ editError }}</div>
+      }
+      <div class="modal-actions">
+        @if (editProblem) {
+          <span class="problem-note">{{ editProblem }}</span>
+        }
+        <button class="btn btn-secondary" (click)="edit = null" [disabled]="saving">Cancel</button>
+        <button class="btn btn-primary" (click)="save()" [disabled]="saving || !!editProblem">
+          {{ saving ? 'Saving…' : e.mode === 'add' ? 'Add value' : 'Save changes' }}
+        </button>
+      </div>
+    </div>
+  </div>
+}
+
+<!-- delete -->
+@if (toDelete; as d) {
+  <div class="modal-backdrop" (click)="toDelete = null">
+    <div class="modal" (click)="$event.stopPropagation()">
+      <h3>Delete forecast value?</h3>
+      <p>
+        This permanently deletes the <strong>{{ d.station_code }}</strong> forecast for
+        <strong>{{ fmt(d.valid_at) }}</strong> from the run issued <strong>{{ fmt(d.issued_at) }}</strong>
+        ({{ d.temp_c ?? '—' }} °C, GHI {{ d.ghi_wm2 ?? '—' }} W/m²). This cannot be undone.
+      </p>
+      @if (deleteError) {
+        <div class="form-error">{{ deleteError }}</div>
+      }
+      <div class="modal-actions">
+        <button class="btn btn-secondary" (click)="toDelete = null" [disabled]="deleting">{{ deleteError ? 'Close' : 'Cancel' }}</button>
+        @if (!deleteError) {
+          <button class="btn btn-danger-solid" (click)="deleteConfirmed()" [disabled]="deleting">{{ deleting ? 'Deleting…' : 'Delete' }}</button>
+        }
+      </div>
+    </div>
+  </div>
+}

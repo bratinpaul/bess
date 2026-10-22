@@ -1,0 +1,2 @@
+system_name,timestamp,mode,soc_%,soh_%,pack_voltage_v,pack_current_a,power_kw,c_rate,cell_v_avg_v,cell_v_min_v,cell_v_max_v,cell_v_delta_mv,cell_temp_avg_c,cell_temp_min_c,cell_temp_max_c,coolant_temp_c,ambient_temp_c,insulation_res_kohm,cum_charge_kwh,cum_discharge_kwh,equiv_full_cycles,contactor_status,alarm_level
+01-BATTERY-01,2026-09-28T18:35:00,Discharging,36.26,99.57,1242.5,-544.8,-677.0,0.324,3.2357,3.2332,3.2381,4.9,30.52,29.21,31.82,28.32,29.56,2460.0,2558.0,2851.0,1.352,Closed,0

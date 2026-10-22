@@ -1,0 +1,438 @@
+<div class="kpi-subtabs" role="tablist" aria-label="KPI analytics view">
+  @for (t of subTabs; track t.key) {
+    <button type="button" role="tab" class="kpi-subtab" [class.active]="subTab === t.key" [attr.aria-selected]="subTab === t.key"
+      (click)="setSubTab(t.key)">
+      {{ t.label }}
+      @if (t.key === 'definitions' && config) {
+        <span class="kpi-subtab-count">{{ enabledKpis.length }}</span>
+      }
+      @if (t.key === 'runs' && runs.length) {
+        <span class="kpi-subtab-count">{{ runs.length }}</span>
+      }
+    </button>
+  }
+</div>
+
+@if (subTab === 'results') {
+<!-- Filters (calculation is on the KPI runs tab) -->
+<div class="card analytics-filters-card">
+  <div class="toolbar telemetry-filters">
+    <div class="field">
+      <label for="kpiEntity">{{ domain.entityLabel }}</label>
+      <select id="kpiEntity" [(ngModel)]="entityId" (ngModelChange)="onEntityChange()">
+        @for (e of entities; track e.id) {
+          <option [ngValue]="e.id">{{ e.name }}{{ e.samples === 0 ? ' (no telemetry)' : '' }}</option>
+        }
+      </select>
+    </div>
+    <div class="field">
+      <label for="kpiStart">From</label>
+      <input id="kpiStart" type="date" [(ngModel)]="start" />
+    </div>
+    <div class="field">
+      <label for="kpiEnd">To</label>
+      <input id="kpiEnd" type="date" [(ngModel)]="end" />
+    </div>
+    <div class="telemetry-filter-actions">
+      <button type="button" class="btn btn-secondary" [disabled]="loading || entityId === null" (click)="loadData()">Show</button>
+    </div>
+  </div>
+
+  <div class="kpi-calc-bar">
+    <div class="kpi-calc-info">
+      @if (telemetryRange) {
+        <span>Telemetry for {{ selectedEntityName }}: <strong>{{ telemetryRange }}</strong></span>
+      }
+      @if (config) {
+        <span>
+          Config <code>{{ domain.configFile }}</code> v{{ config.version }} · {{ enabledKpis.length }} KPIs ·
+          Δt {{ config.interval.mode === 'fixed' ? config.interval.minutes + ' min fixed' : 'actual gap (≤ ' + config.interval.max_gap_minutes + ' min)' }}
+          · days in {{ config.timezone }}
+        </span>
+      }
+    </div>
+  </div>
+</div>
+
+}
+
+@if (config && subTab !== 'runs') {
+  <div class="kpi-group-chips" role="tablist" aria-label="KPI group">
+    <button type="button" class="kpi-chip" role="tab" [class.active]="selectedGroup === ''" [attr.aria-selected]="selectedGroup === ''"
+      (click)="selectGroup('')">All groups</button>
+    @for (g of groups; track g.code; let i = $index) {
+      <button type="button" class="kpi-chip" role="tab" [class.active]="selectedGroup === g.code" [attr.aria-selected]="selectedGroup === g.code"
+        (click)="selectGroup(g.code)">{{ i + 1 }}. {{ g.name }}</button>
+    }
+  </div>
+}
+
+@if (configError) {
+  <div class="card">
+    <div class="empty-state error">{{ configError }}</div>
+  </div>
+}
+
+@if (subTab === 'results') {
+@if (loading) {
+  <div class="card"><div class="empty-state">Loading KPIs…</div></div>
+} @else if (error) {
+  <div class="card"><div class="empty-state error">{{ error }}</div></div>
+} @else if (data && data.days.length === 0) {
+  <div class="card">
+    <div class="empty-state">
+      No KPIs stored for {{ data.entity_name }} in this range yet. Calculate them from the {{ domain.telemetryLabel }} on the
+      <button type="button" class="link-btn" (click)="setSubTab('runs')">KPI runs</button> tab.
+    </div>
+  </div>
+} @else if (data) {
+  @if (staleDays > 0) {
+    <div class="kpi-stale-note">
+      {{ staleDays }} day{{ staleDays === 1 ? ' was' : 's were' }} calculated with an earlier version of the KPI config.
+      Recalculate on the <button type="button" class="link-btn" (click)="setSubTab('runs')">KPI runs</button> tab to bring
+      {{ staleDays === 1 ? 'it' : 'them' }} up to date.
+    </div>
+  }
+
+  <!-- Rollup row (config tiles): range values of the headline KPIs -->
+  @if (tiles.length > 0) {
+    <section class="kpi-section kpi-rollup">
+      <h3 class="kpi-section-title">Rollup</h3>
+      <div class="card analytics-metrics-card">
+        <div class="metric-grid kpi-metric-grid">
+          @for (card of tiles; track card.code) {
+            <div class="metric-card kpi-tile">
+              <div class="metric-body">
+                <span class="metric-label">{{ card.name }}</span>
+                <span class="metric-value">
+                  {{ format(card.value, card.decimals) }}<span class="metric-unit">{{ card.unit }}</span>
+                </span>
+                <span class="metric-sub">{{ card.basis }}</span>
+              </div>
+            </div>
+          }
+        </div>
+      </div>
+    </section>
+  }
+
+  <!-- One section per group: range cards + charts -->
+  @for (section of sections; track section.code) {
+    <section class="kpi-section">
+      <h3 class="kpi-section-title">{{ section.name }}</h3>
+      @if (section.cards.length === 0) {
+        <div class="card"><div class="empty-state">No stored KPIs in this group for the range - calculate them on the KPI runs tab.</div></div>
+      } @else {
+        <div class="card analytics-metrics-card">
+          <div class="metric-grid kpi-metric-grid">
+            @for (card of section.cards; track card.code) {
+              <div class="metric-card">
+                <div class="metric-body">
+                  <span class="metric-label">{{ card.name }}</span>
+                  <span class="metric-value">
+                    {{ format(card.value, card.decimals) }}<span class="metric-unit">{{ card.unit }}</span>
+                  </span>
+                  <span class="metric-sub">{{ card.basis }}</span>
+                </div>
+              </div>
+            }
+          </div>
+        </div>
+      }
+      @if (section.charts.length > 0) {
+        <div class="analytics-charts-grid kpi-charts">
+          @for (chart of section.charts; track chart.title) {
+            <div class="card chart-card">
+              <h3>{{ chart.title }}</h3>
+              <app-chart-canvas [config]="chart.config" [height]="250" />
+            </div>
+          }
+        </div>
+      }
+    </section>
+  }
+
+  <!-- Daily table -->
+  <div class="card kpi-table-card">
+    <div class="table-bar">
+      <span class="table-bar-info">{{ data.days.length }} days · {{ columns.length }} KPIs{{ selectedGroup ? ' in ' + groupName(selectedGroup) : '' }} · {{ data.entity_name }}</span>
+    </div>
+    <div class="telemetry-table-scroll">
+      <table class="data-table telemetry-table">
+        <thead>
+          <tr class="kpi-group-row">
+            <th class="sticky-col"></th>
+            @for (g of columnGroups; track $index) {
+              <th class="kpi-group-th" [attr.colspan]="g.span">{{ g.name }}</th>
+            }
+            <th colspan="3"></th>
+          </tr>
+          <tr class="kpi-col-row">
+            <th class="sticky-col">Date</th>
+            @for (col of columns; track col.code) {
+              <th class="num" [title]="col.code">
+                {{ col.name }}@if (col.unit) {<br /><span class="kpi-unit">{{ col.unit }}</span>}
+              </th>
+            }
+            <th class="num">Samples</th>
+            <th class="num">Coverage</th>
+            <th>Calculated</th>
+          </tr>
+        </thead>
+        <tbody>
+          @for (day of data.days; track day.kpi_date) {
+            <tr>
+              <td class="sticky-col mono">
+                {{ day.kpi_date }}
+                @if (day.stale) {
+                  <span class="kpi-badge" title="Calculated with an earlier version of the KPI config">old config</span>
+                }
+              </td>
+              @for (col of columns; track col.code) {
+                <td class="num mono">{{ format(value(day, col.code), decimals(col.code)) }}</td>
+              }
+              <td class="num mono">{{ day.sample_count }}</td>
+              <td class="num mono" [class.kpi-low]="day.coverage_pct < 95">{{ day.coverage_pct }}%</td>
+              <td class="mono">{{ day.calculated_at | date: 'yyyy-MM-dd HH:mm' }}</td>
+            </tr>
+          }
+        </tbody>
+      </table>
+    </div>
+  </div>
+}
+
+}
+
+<!-- Definitions from the config file -->
+@if (subTab === 'definitions' && config) {
+  <div class="card kpi-def-card">
+    <div class="kpi-def-header">
+      <h3>KPI definitions</h3>
+      <span class="kpi-def-meta">{{ config.file_path }} · v{{ config.version }} · {{ config.config_hash }}</span>
+    </div>
+    <div class="table-scroll">
+      <table class="data-table telemetry-table">
+        <thead>
+          <tr>
+            <th>Code</th>
+            <th>Name</th>
+            <th>Unit</th>
+            <th>Method</th>
+            <th>Calculation</th>
+            <th>Range card</th>
+            <th>Enabled</th>
+          </tr>
+        </thead>
+        <tbody>
+          @for (g of groups; track g.code) {
+            @if (!selectedGroup || selectedGroup === g.code) {
+              <tr class="kpi-def-group">
+                <td colspan="7">{{ g.name }}</td>
+              </tr>
+              @for (k of kpisOfGroup(g.code); track k.code) {
+                <tr [class.kpi-disabled]="!k.enabled">
+                  <td class="mono">
+                    @if (k.color) {
+                      <span class="kpi-swatch" [style.border-top-color]="k.color" [class.dashed]="k.dashed"></span>
+                    }
+                    {{ k.code }}
+                  </td>
+                  <td>
+                    {{ k.name }}
+                    @if (k.description) {
+                      <div class="kpi-desc">{{ k.description }}</div>
+                    }
+                  </td>
+                  <td>{{ k.unit }}</td>
+                  <td class="mono">{{ k.method }}{{ k.func ? ' · ' + k.func : '' }}</td>
+                  <td class="mono">{{ k.formula_text }}</td>
+                  <td>{{ k.summary }}</td>
+                  <td>{{ k.enabled ? 'Yes' : 'No' }}</td>
+                </tr>
+              }
+            }
+          }
+        </tbody>
+      </table>
+    </div>
+
+    <button type="button" class="kpi-def-toggle kpi-sub-toggle" (click)="showParams = !showParams" [attr.aria-expanded]="showParams">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" [class.open]="showParams">
+        <path d="M9 6l6 6-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+      </svg>
+      Parameters &amp; queries
+    </button>
+    @if (showParams) {
+      <div class="kpi-params">
+        <div class="kpi-param-block">
+          <h4>Global params</h4>
+          <table class="data-table telemetry-table">
+            <tbody>
+              @for (p of paramEntries; track p.name) {
+                <tr>
+                  <td class="mono">{{ p.name }}</td>
+                  <td class="num mono">{{ p.value }}</td>
+                </tr>
+              }
+            </tbody>
+          </table>
+        </div>
+        <div class="kpi-param-block">
+          <h4>{{ domain.entityLabel }} params · {{ selectedEntityName }}</h4>
+          <table class="data-table telemetry-table">
+            <tbody>
+              @for (p of systemParamEntries; track p.name) {
+                <tr>
+                  <td class="mono">
+                    {{ p.name }}
+                    <div class="kpi-desc">{{ p.description }}</div>
+                  </td>
+                  <td class="num mono">
+                    {{ format(p.value, 1) }} {{ p.unit }}
+                    @if (p.overridden) {
+                      <span class="kpi-badge" title="Set in system_overrides, not from master data">override</span>
+                    }
+                  </td>
+                </tr>
+              }
+            </tbody>
+          </table>
+        </div>
+        <div class="kpi-param-block kpi-param-wide">
+          <h4>Named queries</h4>
+          @for (q of queryEntries; track q.name) {
+            <details class="kpi-query">
+              <summary><span class="mono">{{ q.name }}</span> - {{ q.description }}</summary>
+              <pre>{{ q.sql }}</pre>
+            </details>
+          }
+        </div>
+      </div>
+    }
+
+    <p class="kpi-def-hint">
+      Edit the YAML file to add, change or disable KPIs, then press Calculate KPIs on the KPI runs tab. The file is re-read on every request.
+      Methods: <code>integrate</code> (Σ expression × Δt_h), <code>aggregate</code> (min / max / avg / sum / count / first /
+      last), <code>counter_delta</code> (max − min in the day), <code>derived</code> (arithmetic over KPI codes and params),
+      <code>query</code> (a named, read-only SQL query).
+    </p>
+  </div>
+}
+
+<!-- Calculation history -->
+@if (subTab === 'runs') {
+<!-- Calculation (moved here from the results tab) -->
+<div class="card analytics-filters-card kpi-calc-card">
+  <div class="kpi-def-header">
+    <h3>Calculate KPIs</h3>
+  </div>
+  <div class="toolbar telemetry-filters">
+    <div class="field">
+      <label for="calcEntity">{{ domain.entityLabel }}</label>
+      <select id="calcEntity" [(ngModel)]="entityId" (ngModelChange)="onEntityChange()" [disabled]="allEntities">
+        @for (e of entities; track e.id) {
+          <option [ngValue]="e.id">{{ e.name }}{{ e.samples === 0 ? ' (no telemetry)' : '' }}</option>
+        }
+      </select>
+    </div>
+    <div class="field">
+      <label for="calcStart">From</label>
+      <input id="calcStart" type="date" [(ngModel)]="start" />
+    </div>
+    <div class="field">
+      <label for="calcEnd">To</label>
+      <input id="calcEnd" type="date" [(ngModel)]="end" />
+    </div>
+  </div>
+  <div class="kpi-calc-bar">
+    <div class="kpi-calc-info">
+      @if (telemetryRange) {
+        <span>Telemetry for {{ selectedEntityName }}: <strong>{{ telemetryRange }}</strong></span>
+      }
+      @if (config) {
+        <span>
+          Config <code>{{ domain.configFile }}</code> v{{ config.version }} · {{ enabledKpis.length }} KPIs ·
+          Δt {{ config.interval.mode === 'fixed' ? config.interval.minutes + ' min fixed' : 'actual gap (≤ ' + config.interval.max_gap_minutes + ' min)' }}
+          · days in {{ config.timezone }}
+        </span>
+      }
+    </div>
+    <div class="kpi-calc-actions">
+      <label class="kpi-check">
+        <input type="checkbox" [(ngModel)]="allEntities" />
+        All {{ domain.entityPlural }}
+      </label>
+      <button data-perm="kpi:execute" type="button" class="btn btn-primary" [disabled]="calculating || !config || (!allEntities && entityId === null)" (click)="calculate()">
+        {{ calculating ? 'Calculating…' : 'Calculate KPIs' }}
+      </button>
+    </div>
+  </div>
+  <p class="kpi-calc-hint">
+    Calculates {{ allEntities ? 'every ' + domain.entityLabel : selectedEntityName || 'the selected ' + domain.entityLabel }} for
+    {{ start || end ? (start || 'first day') + ' → ' + (end || 'last day') : 'all telemetry days' }}
+    and replaces the KPIs already stored for those days.
+  </p>
+
+  @if (calcError) {
+    <div class="form-error kpi-msg">{{ calcError }}</div>
+  }
+  @if (calcResult) {
+    <div class="upload-success kpi-msg">
+      Run #{{ calcResult.run_id }}: {{ calcResult.rows_written }} KPI values for {{ calcResult.days }} days
+      ({{ calcResult.systems_done }} {{ calcResult.systems_done === 1 ? domain.entityLabel : domain.entityPlural }}) in {{ calcResult.duration_ms }} ms
+      · {{ calcResult.rows_deleted }} previous values replaced
+    </div>
+  }
+</div>
+
+<div class="card kpi-runs-card">
+  <div class="table-bar">
+    <span class="table-bar-info">Recent calculations ({{ domain.runTable }})</span>
+    <button type="button" class="btn btn-secondary" (click)="loadRuns()">Refresh</button>
+  </div>
+  @if (runsError) {
+    <div class="empty-state error">{{ runsError }}</div>
+  } @else if (runs.length === 0) {
+    <div class="empty-state">No calculations yet.</div>
+  } @else {
+    <div class="table-scroll">
+      <table class="data-table telemetry-table">
+        <thead>
+          <tr>
+            <th>Run</th>
+            <th>Status</th>
+            <th>Scope</th>
+            <th class="num">Days</th>
+            <th class="num">Values</th>
+            <th>Config</th>
+            <th>Started</th>
+            <th class="num">Duration</th>
+            <th>By</th>
+          </tr>
+        </thead>
+        <tbody>
+          @for (run of runs; track run.run_id) {
+            <tr>
+              <td class="mono">#{{ run.run_id }}</td>
+              <td>
+                <span class="kpi-status" [attr.data-status]="run.status">{{ run.status }}</span>
+                @if (run.error_message) {
+                  <div class="kpi-desc error">{{ run.error_message }}</div>
+                }
+              </td>
+              <td>{{ runScope(run) }}</td>
+              <td class="num mono">{{ run.days ?? '—' }}</td>
+              <td class="num mono">{{ run.rows_written ?? '—' }}</td>
+              <td class="mono">v{{ run.config_version }} · {{ run.config_hash }}</td>
+              <td class="mono">{{ run.started_at | date: 'yyyy-MM-dd HH:mm:ss' }}</td>
+              <td class="num mono">{{ run.duration_ms !== null ? run.duration_ms + ' ms' : '—' }}</td>
+              <td>{{ run.triggered_by }}</td>
+            </tr>
+          }
+        </tbody>
+      </table>
+    </div>
+  }
+</div>
+}

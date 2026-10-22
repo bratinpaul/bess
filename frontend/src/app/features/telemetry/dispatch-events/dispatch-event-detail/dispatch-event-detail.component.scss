@@ -1,0 +1,183 @@
+.card {
+  padding: 24px;
+}
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.dispatch-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.headline {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 22px;
+}
+
+.headline-text {
+  font-size: 16px;
+  font-weight: 600;
+}
+
+// ---- issued -> in effect -> ended
+.dispatch-timeline {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  margin: 0 0 24px;
+  padding: 0;
+  list-style: none;
+}
+
+.dispatch-timeline li {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-top: 22px;
+}
+
+// connector line to the next step
+.dispatch-timeline li::before {
+  content: '';
+  position: absolute;
+  top: 6px;
+  left: 14px;
+  right: 0;
+  height: 2px;
+  background: var(--color-border);
+}
+
+.dispatch-timeline li.done::before {
+  background: #63f8ba;
+}
+
+.dispatch-timeline li:last-child::before {
+  display: none;
+}
+
+.step-dot {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--color-border);
+  border-radius: 50%;
+  background: #fff;
+}
+
+.done .step-dot {
+  border-color: #0e8f66;
+  background: #63f8ba;
+}
+
+.running .step-dot {
+  border-color: #0e8f66;
+  box-shadow: 0 0 0 4px rgba(99, 248, 186, 0.35);
+}
+
+.aborted .step-dot {
+  border-color: #dc2626;
+  background: rgba(220, 38, 38, 0.15);
+}
+
+.step-label {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+}
+
+.step-time {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.step-note {
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+
+// ---- headline figures
+.figures {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 24px;
+}
+
+@media (max-width: 1000px) {
+  .figures {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+.figure {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 14px 16px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  background: var(--color-bg);
+}
+
+.figure-label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+}
+
+.figure-value {
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.figure-note {
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+
+// charge / discharge: arrow + word carry the direction, colour only reinforces it
+.setpoint[data-dir='charge'] {
+  color: #0e7a58;
+}
+
+.setpoint[data-dir='discharge'] {
+  color: #b45309;
+}
+
+.setpoint[data-dir='none'] {
+  color: var(--color-text-muted);
+}
+
+.negative {
+  color: #b91c1c;
+}
+
+.muted {
+  margin-left: 4px;
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+
+.detail-grid a {
+  color: #0e8f66;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.detail-grid a:hover {
+  text-decoration: underline;
+}

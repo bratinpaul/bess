@@ -1,0 +1,253 @@
+<div class="page-header">
+  <div>
+    <h2>SOC Trajectory</h2>
+    <p class="subtitle">Where the plant's state of charge is heading over the next hours (P10–P90), the energy and headroom it leaves, and when it hits a limit.</p>
+  </div>
+  <a class="link training-link" routerLink="/ml/soc-forecast-model">Open SOC Forecast Model →</a>
+</div>
+
+<div class="card picker-card">
+  <div class="picker-row">
+    <div class="field picker-field">
+      <label for="model">Model run</label>
+      <select id="model" [ngModel]="modelKey" (ngModelChange)="selectModel($event)" [disabled]="!models.length">
+        <option value="active">Default run</option>
+        @for (m of models; track m.run_id) {
+          <option [value]="'' + m.run_id">{{ optionLabel(m) }}</option>
+        }
+      </select>
+      @if (modelsError) {
+        <span class="field-error">{{ modelsError }}</span>
+      }
+    </div>
+    @if (run; as r) {
+      <div class="field picker-field">
+        <label for="ems">Site · EMS</label>
+        <select id="ems" [ngModel]="emsId" (ngModelChange)="selectEms($event)">
+          @for (e of r.ems_ids; track e) {
+            <option [ngValue]="e">{{ unitLabel(e) }}</option>
+          }
+        </select>
+      </div>
+    }
+  </div>
+</div>
+
+@if (modelsLoaded && !models.length && !modelsError) {
+  <div class="card">
+    <div class="empty-state">No SOC forecast model yet. <a routerLink="/ml/soc-forecast-model">Build one on the SOC Forecast Model page</a>.</div>
+  </div>
+}
+
+@if (run; as r) {
+  <div class="tab-row">
+    <button type="button" class="tab" [class.on]="tab === 'live'" (click)="setTab('live')">Next hours</button>
+    <button type="button" class="tab" [class.on]="tab === 'backtest'" (click)="setTab('backtest')">Backtest</button>
+  </div>
+
+  @if (tab === 'live') {
+    <div class="card view-card">
+      <div class="view-controls">
+        <div class="control-group">
+          <span class="control-label">Plan</span>
+          <div class="seg">
+            <button type="button" [class.on]="source === 'scheduled'" (click)="setSource('scheduled')">Dispatch schedule</button>
+            <button type="button" [class.on]="source === 'typical'" (click)="setSource('typical')">Typical day</button>
+            <button type="button" [class.on]="source === 'custom'" (click)="setSource('custom')">What-if</button>
+          </div>
+        </div>
+        <div class="control-group">
+          <span class="control-label">Band</span>
+          <div class="seg">
+            @for (m of bandMethods; track m) {
+              <button type="button" [class.on]="bandMethod === m" (click)="bandMethod = m; buildLive()">
+                <span class="swatch line" [style.background]="shortColors[m]"></span>{{ liveLabels[m] }}
+              </button>
+            }
+          </div>
+        </div>
+        <div class="toggles">
+          <label><input type="checkbox" [(ngModel)]="showPhysics" (ngModelChange)="buildLive()" /> Physics P50</label>
+          <label><input type="checkbox" [(ngModel)]="showHold" (ngModelChange)="buildLive()" /> Hold SOC</label>
+          <label>Horizon
+            <select [(ngModel)]="horizonH" (ngModelChange)="loadForecast()">
+              @for (h of horizonOptions; track h) {
+                <option [ngValue]="h">{{ h }} h</option>
+              }
+            </select>
+          </label>
+        </div>
+      </div>
+
+      @if (source === 'custom') {
+        <div class="whatif">
+          <div class="whatif-head">
+            <strong>What-if plan</strong>
+            <span class="muted small">Setpoint blocks in plant time (+ charge / − discharge kW); hours outside them follow the typical day.</span>
+          </div>
+          <table class="data-table whatif-table">
+            <thead><tr><th>From</th><th>Until</th><th class="num">kW</th><th></th></tr></thead>
+            <tbody>
+              @for (b of blocks; track $index; let i = $index) {
+                <tr>
+                  <td><input type="datetime-local" [(ngModel)]="b.start" /></td>
+                  <td><input type="datetime-local" [(ngModel)]="b.end" /></td>
+                  <td class="num"><input type="number" step="50" [(ngModel)]="b.kw" /></td>
+                  <td><button type="button" class="link-btn" (click)="removeBlock(i)">Remove</button></td>
+                </tr>
+              }
+            </tbody>
+          </table>
+          <div class="whatif-actions">
+            <button type="button" class="link-btn" (click)="addBlock()">+ Add block</button>
+            <button type="button" class="btn btn-primary" [disabled]="loading" (click)="loadForecast()">{{ loading ? 'Forecasting…' : 'Apply plan' }}</button>
+          </div>
+        </div>
+      }
+
+      @if (loading && !forecast) {
+        <div class="empty-state">Forecasting…</div>
+      } @else if (error) {
+        <div class="empty-state error">{{ error }}</div>
+      } @else if (forecast) {
+        @if (forecast; as f) {
+        <p class="muted small">
+          From the newest reading ({{ timeOf(f.origin_ts) }}, plant time) with run #{{ f.run_id }}.
+          @if (source === 'scheduled') {
+            @if ((f.schedule_coverage ?? 0) < 0.999) {
+              <span class="note-warn">Dispatch commands cover {{ num((f.schedule_coverage ?? 0) * 100, 0) }} % of the horizon — the rest follows the typical day.</span>
+            } @else {
+              The dispatch schedule covers the whole horizon.
+            }
+          }
+        </p>
+
+        <div class="tiles">
+          <div class="tile">
+            <span class="tile-label">SOC now</span>
+            <span class="tile-value">{{ num(f.soc_now) }} %</span>
+            <span class="tile-note">limits {{ num(f.physics.soc_min) }} – {{ num(f.physics.soc_max) }} %</span>
+          </div>
+          @for (h of [1, 4]; track h) {
+            @if (at(h); as a) {
+              <div class="tile">
+                <span class="tile-label">In {{ h }} h · {{ liveLabels[bandMethod] }}</span>
+                <span class="tile-value">{{ num(a.p50) }} %</span>
+                <span class="tile-note">P10–P90 {{ num(a.p10) }} – {{ num(a.p90) }} %</span>
+              </div>
+            }
+          }
+          @if (at(endHours); as a) {
+            <div class="tile">
+              <span class="tile-label">End · +{{ endHours }} h</span>
+              <span class="tile-value">{{ num(a.p50) }} %</span>
+              <span class="tile-note">P10–P90 {{ num(a.p10) }} – {{ num(a.p90) }} %</span>
+            </div>
+          }
+          <div class="tile warn-tile">
+            <span class="tile-label">Worst-case low · P10</span>
+            <span class="tile-value">{{ num(f.derived.min_soc_p10) }} %</span>
+            <span class="tile-note">min limit at {{ timeOf(f.derived.time_to_min_p10) }} {{ inHours(f.derived.time_to_min_p10) }}</span>
+          </div>
+          <div class="tile">
+            <span class="tile-label">Reaches SOC max · P50</span>
+            <span class="tile-value small-value">{{ f.derived.time_to_max_p50 ? f.derived.time_to_max_p50.slice(11, 16) : '—' }}</span>
+            <span class="tile-note">{{ f.derived.time_to_max_p50 ? inHours(f.derived.time_to_max_p50) : 'not within the horizon' }}</span>
+          </div>
+          <div class="tile energy">
+            <span class="tile-label">Dischargeable now</span>
+            <span class="tile-value">{{ kwh(f.derived.discharge_kwh_p50[0]) }}</span>
+            <span class="tile-note">at the end: {{ kwh(f.derived.discharge_kwh_p50[f.derived.discharge_kwh_p50.length - 1]) }} (P10
+              {{ kwh(f.derived.discharge_kwh_p10[f.derived.discharge_kwh_p10.length - 1]) }})</span>
+          </div>
+          <div class="tile energy">
+            <span class="tile-label">Charge headroom now</span>
+            <span class="tile-value">{{ kwh(f.derived.charge_headroom_kwh_p50[0]) }}</span>
+            <span class="tile-note">at the end: {{ kwh(f.derived.charge_headroom_kwh_p50[f.derived.charge_headroom_kwh_p50.length - 1]) }}</span>
+          </div>
+        </div>
+
+        @if (socCfg) {
+          <app-chart-canvas [config]="socCfg" [height]="340" />
+        }
+        <h4 class="sub-title">Setpoint · {{ planLabel.replace('Plan · ', '') }} <span class="muted small">(what the forecast assumes the EMS will command)</span></h4>
+        @if (planCfg) {
+          <app-chart-canvas [config]="planCfg" [height]="160" />
+        }
+        <p class="muted small">Energy: dischargeable = (SOC − min) × the EMS's discharge capacity ({{ f.physics.cap_dis_kwh | number: '1.0-0' }} kWh per
+          100 %); headroom = (max − SOC) × its charge capacity ({{ f.physics.cap_chg_kwh | number: '1.0-0' }} kWh). Fitted round trip
+          {{ num(f.physics.round_trip * 100) }} %.</p>
+
+        @if (upcoming.length) {
+          <h4 class="sub-title">Dispatch commands in view</h4>
+          <table class="data-table cmd-table">
+            <thead><tr><th>From</th><th>Until</th><th>Mode</th><th class="num">kW</th><th>Source</th></tr></thead>
+            <tbody>
+              @for (c of upcoming; track c.start) {
+                <tr><td class="nowrap">{{ timeOf(c.start) }}</td><td class="nowrap">{{ timeOf(c.end) }}</td><td>{{ c.mode }}</td>
+                  <td class="num">{{ num(c.kw, 0) }}</td><td>{{ c.source }}</td></tr>
+              }
+            </tbody>
+          </table>
+        }
+        }
+      }
+    </div>
+  }
+
+  @if (tab === 'backtest') {
+    <div class="card view-card">
+      <div class="view-controls">
+        <div class="seg model-seg">
+          @for (m of btMethods; track m) {
+            <button type="button" [class.on]="btMethod === m" (click)="btMethod = m; buildBacktest()">
+              <span class="swatch line" [style.background]="methodColors[m]"></span>{{ methodLabels[m] }}
+            </button>
+          }
+        </div>
+        <div class="toggles">
+          <label><input type="checkbox" [(ngModel)]="btCompare" (ngModelChange)="buildBacktest()" /> Other methods' P50</label>
+        </div>
+      </div>
+      @if (!origins.length) {
+        <div class="empty-state">Loading backtest origins…</div>
+      } @else {
+        <div class="origin-row">
+          <button type="button" class="btn btn-secondary" [disabled]="originIdx === 0" (click)="stepOrigin(-1)">◀</button>
+          <select class="filter-select" [ngModel]="originIdx" (ngModelChange)="setOrigin($event)">
+            @for (o of origins; track o; let i = $index) {
+              <option [ngValue]="i">Forecast from {{ originLabel(o) }}</option>
+            }
+          </select>
+          <button type="button" class="btn btn-secondary" [disabled]="originIdx >= origins.length - 1" (click)="stepOrigin(1)">▶</button>
+          <span class="muted small">{{ originIdx + 1 }} / {{ origins.length }} stored origins in the test period</span>
+        </div>
+        @if (btError) {
+          <div class="empty-state error">{{ btError }}</div>
+        }
+        @if (btCfg) {
+          <app-chart-canvas [config]="btCfg" [height]="320" />
+        }
+        @if (btPlanCfg) {
+          <app-chart-canvas [config]="btPlanCfg" [height]="140" />
+        }
+        @if (btScores.length) {
+          <h4 class="sub-title">This origin</h4>
+          <table class="data-table bt-table">
+            <thead><tr><th>Method</th><th class="num">MAE (SOC pts)</th><th class="num">Error at end</th><th class="num">Inside P10–P90</th></tr></thead>
+            <tbody>
+              @for (s of btScores; track s.method; let first = $first) {
+                <tr [class.best]="first">
+                  <td><span class="swatch line" [style.background]="methodColors[s.method]"></span> {{ methodLabels[s.method] }}</td>
+                  <td class="num">{{ num(s.mae, 2) }}</td>
+                  <td class="num">{{ num(s.end, 2) }}</td>
+                  <td class="num">{{ num(s.cover, 0) }} %</td>
+                </tr>
+              }
+            </tbody>
+          </table>
+        }
+      }
+    </div>
+  }
+}

@@ -1,0 +1,67 @@
+.section-card {
+  margin-top: 20px;
+}
+
+.section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.section-head h3 {
+  margin: 0;
+  font-size: 15px;
+}
+
+.contact-name {
+  font-weight: 600;
+}
+
+.contacts-table tbody tr {
+  cursor: default;
+}
+
+.editing-row td {
+  padding: 0;
+  background: #fafafb;
+}
+
+.contact-editor {
+  margin-bottom: 14px;
+  padding: 16px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  background: #fafafb;
+}
+
+.editing-row .contact-editor {
+  margin: 8px;
+}
+
+.contact-editor-title {
+  margin-bottom: 10px;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.primary-toggle {
+  --box: #63f8ba;
+  --tick: #10312a;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+
+.link-btn {
+  padding: 0;
+  border: none;
+  background: none;
+  color: #0e8f66;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}

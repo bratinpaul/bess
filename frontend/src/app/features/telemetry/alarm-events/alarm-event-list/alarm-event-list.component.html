@@ -1,0 +1,423 @@
+<div class="page-header">
+  <div>
+    <h2>Alarms</h2>
+    <p class="subtitle">Alarm log from the BMS, PCS, HVAC and EMS · times are plant local time</p>
+  </div>
+  <div class="header-actions">
+    <label class="toggle-switch" title="Show the upload section">
+      <input data-perm="write" type="checkbox" [(ngModel)]="showUpload" [ngModelOptions]="{ standalone: true }" />
+      <span class="track" aria-hidden="true"><span class="thumb"></span></span>
+      Upload file
+    </label>
+  </div>
+</div>
+
+@if (showUpload) {
+  <!-- bulk load -->
+  <div class="card telemetry-upload-card">
+    <div class="telemetry-section-header">
+      <h3>Upload Alarm Log</h3>
+      <p class="subtitle">
+        Excel or CSV only · alarms that already exist (same alarm ID and start time) are updated · assets are linked to master data
+      </p>
+    </div>
+
+    <div class="upload-row">
+      <input type="file" accept=".xlsx,.xlsm,.csv" (change)="onFileSelected($event)" #fileInput />
+      <button type="button" class="btn btn-primary" [disabled]="!selectedFile || uploading" (click)="upload()">
+        {{ uploading ? 'Uploading…' : 'Upload' }}
+      </button>
+    </div>
+
+    @if (uploadError) {
+      <div class="form-error">{{ uploadError }}</div>
+    }
+
+    @if (uploadResult) {
+      <div class="upload-summary">
+        <div class="upload-stat">
+          <span class="upload-stat-value">{{ uploadResult.total_rows }}</span>
+          <span class="upload-stat-label">Rows in file</span>
+        </div>
+        <div class="upload-stat">
+          <span class="upload-stat-value">{{ uploadResult.inserted }}</span>
+          <span class="upload-stat-label">Inserted</span>
+        </div>
+        <div class="upload-stat">
+          <span class="upload-stat-value">{{ uploadResult.updated }}</span>
+          <span class="upload-stat-label">Updated</span>
+        </div>
+        <div class="upload-stat" [class.upload-stat-error]="uploadResult.error_count > 0">
+          <span class="upload-stat-value">{{ uploadResult.error_count }}</span>
+          <span class="upload-stat-label">Rows skipped</span>
+        </div>
+        <div class="upload-stat">
+          <span class="upload-stat-value">{{ uploadResult.assets_linked }}</span>
+          <span class="upload-stat-label">Assets linked</span>
+        </div>
+      </div>
+      @if (uploadResult.sheet || uploadResult.ignored_columns.length) {
+        <p class="upload-note">
+          @if (uploadResult.sheet) {
+            Read sheet <strong>{{ uploadResult.sheet }}</strong>.
+          }
+          @if (uploadResult.ignored_columns.length) {
+            Ignored column{{ uploadResult.ignored_columns.length === 1 ? '' : 's' }}: {{ uploadResult.ignored_columns.join(', ') }}.
+          }
+        </p>
+      }
+
+      @if (uploadResult.errors.length > 0) {
+        <div class="upload-errors">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Row</th>
+                <th>Alarm ID</th>
+                <th>Errors</th>
+              </tr>
+            </thead>
+            <tbody>
+              @for (rowError of visibleUploadErrors; track rowError.row) {
+                <tr>
+                  <td class="mono">{{ rowError.row }}</td>
+                  <td class="mono">{{ rowError.alarm_id || '—' }}</td>
+                  <td>{{ rowError.errors.join('; ') }}</td>
+                </tr>
+              }
+            </tbody>
+          </table>
+          @if (uploadResult.errors.length > 10) {
+            <button type="button" class="link-btn" (click)="showAllUploadErrors = !showAllUploadErrors">
+              {{ showAllUploadErrors ? 'Show fewer' : 'Show all ' + uploadResult.errors.length + ' skipped rows' }}
+            </button>
+          }
+        </div>
+      }
+    }
+  </div>
+}
+
+<!-- summary of the filtered alarms -->
+@if (stats) {
+  <div class="alarm-kpis">
+    <div class="alarm-kpi">
+      <span class="alarm-kpi-value">{{ stats.total }}</span>
+      <span class="alarm-kpi-label">Alarms</span>
+    </div>
+    <button type="button" class="alarm-kpi active-kpi" [class.selected]="status === 'active'" [class.has-active]="stats.active > 0"
+      (click)="status = status === 'active' ? '' : 'active'; applyFilters()" title="Show only active alarms">
+      <span class="alarm-kpi-value">
+        @if (stats.active > 0) {
+          <span class="pulse-dot"></span>
+        }
+        {{ stats.active }}
+      </span>
+      <span class="alarm-kpi-label">Active (uncleared)</span>
+    </button>
+    <div class="alarm-kpi">
+      <span class="alarm-kpi-value">{{ stats.acknowledged }}</span>
+      <span class="alarm-kpi-label">Acknowledged</span>
+    </div>
+    <button type="button" class="alarm-kpi critical-kpi" [class.selected]="severityLevel === 3"
+      (click)="severityLevel = severityLevel === 3 ? null : 3; applyFilters()" title="Show only critical alarms">
+      <span class="alarm-kpi-value">{{ stats.critical }}</span>
+      <span class="alarm-kpi-label">Critical</span>
+    </button>
+    <div class="alarm-kpi">
+      <span class="alarm-kpi-value">{{ stats.mean_minutes_to_clear !== null ? (stats.mean_minutes_to_clear | number: '1.0-1') : '—' }}</span>
+      <span class="alarm-kpi-label">Mean time to clear (min)</span>
+    </div>
+    <div class="alarm-kpi severity-mix">
+      <div class="severity-bar">
+        @for (entry of stats.by_severity | keyvalue: null; track entry.key; let i = $index) {
+          @if (entry.value > 0) {
+            <span class="severity-bar-part" [attr.data-level]="i" [style.flex-grow]="entry.value"
+              [title]="entry.key + ': ' + entry.value"></span>
+          }
+        }
+      </div>
+      <span class="alarm-kpi-label">
+        @for (entry of stats.by_severity | keyvalue: null; track entry.key; let last = $last) {
+          {{ entry.key }} {{ entry.value }}{{ last ? '' : ' · ' }}
+        }
+      </span>
+    </div>
+  </div>
+}
+
+<div class="view-tabs" role="tablist" aria-label="Alarm view">
+  <button type="button" role="tab" class="view-tab" [class.active]="activeTab === 'tabular'"
+    [attr.aria-selected]="activeTab === 'tabular'" (click)="setTab('tabular')">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+      <rect x="3.5" y="4.5" width="17" height="15" rx="1.5" stroke="currentColor" stroke-width="1.6" />
+      <path d="M3.5 9.5h17M3.5 14.5h17M9.5 9.5v10" stroke="currentColor" stroke-width="1.6" />
+    </svg>
+    Tabular
+  </button>
+  <button type="button" role="tab" class="view-tab" [class.active]="activeTab === 'graphical'"
+    [attr.aria-selected]="activeTab === 'graphical'" (click)="setTab('graphical')">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+      <path d="M3 19.5h18" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
+      <path d="M6 16v-5M11 16V7M16 16v-7M20 16v-3" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
+    </svg>
+    Graphical
+  </button>
+</div>
+
+<!-- source tabs + filters, shared by both views -->
+<ng-template #filterBar>
+  <div class="source-tabs" role="tablist" aria-label="Filter by source">
+    <button type="button" class="source-tab" [class.active]="!source" (click)="setSource('')">All</button>
+    @for (s of sources; track s) {
+      <button type="button" class="source-tab" [class.active]="source === s" (click)="setSource(s)">
+        {{ s }}
+        @if (stats && !source) {
+          <span class="source-tab-count">{{ stats.by_source[s] || 0 }}</span>
+        }
+      </button>
+    }
+  </div>
+
+  <div class="toolbar alarm-filters">
+    <div class="search-box">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+        <circle cx="11" cy="11" r="7" stroke="currentColor" stroke-width="1.6" />
+        <path d="m20 20-3.5-3.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
+      </svg>
+      <input type="text" placeholder="Alarm ID, code, asset, description, acknowledged by…" [(ngModel)]="search"
+        (ngModelChange)="onSearchChange()" />
+    </div>
+    <select class="filter-select" [(ngModel)]="severityLevel" (ngModelChange)="applyFilters()" aria-label="Severity">
+      <option [ngValue]="null">All severities</option>
+      @for (s of lookups?.severities ?? []; track s.severity_level) {
+        <option [ngValue]="s.severity_level">{{ s.severity_name }}</option>
+      }
+    </select>
+    <select class="filter-select" [(ngModel)]="status" (ngModelChange)="applyFilters()" aria-label="Status">
+      <option value="">Active and cleared</option>
+      <option value="active">Active only</option>
+      <option value="cleared">Cleared only</option>
+    </select>
+    <select class="filter-select" [(ngModel)]="acknowledged" (ngModelChange)="applyFilters()" aria-label="Acknowledged">
+      <option [ngValue]="null">Acknowledged or not</option>
+      <option [ngValue]="true">Acknowledged</option>
+      <option [ngValue]="false">Not acknowledged</option>
+    </select>
+    @if ((lookups?.systems?.length ?? 0) > 1 || systemId !== null) {
+      <select class="filter-select" [(ngModel)]="systemId" (ngModelChange)="applyFilters()" aria-label="Battery system">
+        <option [ngValue]="null">All battery systems</option>
+        @for (s of lookups?.systems ?? []; track s.battery_system_id) {
+          <option [ngValue]="s.battery_system_id">{{ s.system_name }}</option>
+        }
+      </select>
+    }
+    <label class="date-filter">
+      From <input type="date" [(ngModel)]="start" (change)="applyFilters()" />
+    </label>
+    <label class="date-filter">
+      To <input type="date" [(ngModel)]="end" (change)="applyFilters()" />
+    </label>
+    @if (hasFilters) {
+      <button type="button" class="link-btn" (click)="clearFilters()">Clear filters</button>
+    }
+  </div>
+
+</ng-template>
+
+@if (activeTab === 'graphical') {
+  <div class="card graph-filters">
+    <ng-container [ngTemplateOutlet]="filterBar" />
+    <app-chart-selector [options]="chartOptions" storageKey="bess.alarmGraphs.charts" (hiddenChange)="hiddenCharts = $event" />
+  </div>
+  <app-alarm-event-graphs
+    [analytics]="analytics"
+    [loading]="analyticsLoading"
+    [error]="analyticsError"
+    [hidden]="hiddenCharts"
+    (sourceSelect)="setSource($event)"
+    (severitySelect)="filterBySeverity($event)"
+    (daySelect)="filterByDay($event)"
+    (alarmOpen)="openAlarm($event)" />
+} @else {
+<!-- alarm log -->
+<div class="card">
+  <ng-container [ngTemplateOutlet]="filterBar" />
+
+  <div class="table-bar">
+    <span class="table-bar-info">
+      @if (!loading && !error) {
+        {{ total }} alarms · {{ visibleColumns.length }} of {{ allColumns.length }} columns
+      }
+    </span>
+    <app-column-picker
+      [columns]="allColumns"
+      [defaultKeys]="defaultColumnKeys"
+      storageKey="bess.alarmTable.columns"
+      (visibleChange)="visibleColumns = $event" />
+  </div>
+
+  @if (loading && items.length === 0) {
+    <div class="empty-state">Loading alarms…</div>
+  } @else if (error) {
+    <div class="empty-state error">{{ error }}</div>
+  } @else if (total === 0) {
+    <div class="empty-state">
+      {{ hasFilters ? 'No alarms match the current filters.' : 'No alarms yet. Upload the Alarms sheet above or click "Add Alarm".' }}
+    </div>
+  } @else {
+    <div class="table-scroll telemetry-table-scroll">
+      <table class="data-table telemetry-table alarm-table" [class.refreshing]="loading">
+        <thead>
+          <tr>
+            @for (column of visibleColumns; track column.key) {
+              <th [class.num]="column.kind === 'number'" [class.sticky-col]="column.locked">{{ column.label }}</th>
+            }
+            <th class="actions-col"></th>
+          </tr>
+        </thead>
+        <tbody>
+          @for (item of items; track item.alarm_id) {
+            <tr (click)="view(item)" [class.active-row]="item.status === 'Active'">
+              @for (column of visibleColumns; track column.key) {
+                @switch (column.key) {
+                  @case ('alarm_id') {
+                    <td class="mono sticky-col">{{ item.alarm_id }}</td>
+                  }
+                  @case ('start_time') {
+                    <td>{{ plantTime(item.start_time) }}</td>
+                  }
+                  @case ('duration') {
+                    <td>
+                      @if (item.status === 'Active') {
+                        <span class="active-badge"><span class="pulse-dot"></span>Active</span>
+                      } @else {
+                        {{ formatDuration(item.duration_min) }}
+                      }
+                    </td>
+                  }
+                  @case ('source') {
+                    <td><span class="source-chip" [attr.data-source]="item.source">{{ item.source }}</span></td>
+                  }
+                  @case ('alarm') {
+                    <td class="alarm-cell">
+                      <div class="mono alarm-code">{{ item.alarm_code }}</div>
+                      <div class="alarm-desc">{{ item.description }}</div>
+                    </td>
+                  }
+                  @case ('severity') {
+                    <td><span class="severity-badge" [attr.data-level]="item.severity_level">{{ item.severity_name }}</span></td>
+                  }
+                  @case ('asset') {
+                    <td class="asset-cell">
+                      <div class="asset-code">{{ item.linked_asset_name || item.asset_code || '—' }}</div>
+                      @if (item.asset_type) {
+                        <div class="asset-type">{{ item.asset_type }}</div>
+                      }
+                    </td>
+                  }
+                  @case ('trigger_threshold') {
+                    <td class="num">
+                      @if (item.trigger_value !== null || item.threshold_value !== null) {
+                        <strong>{{ item.trigger_value ?? '—' }}</strong>
+                        <span class="muted"> / {{ item.threshold_value ?? '—' }} {{ item.unit }}</span>
+                      } @else {
+                        —
+                      }
+                    </td>
+                  }
+                  @case ('acknowledged') {
+                    <td>
+                      @if (item.acknowledged_by) {
+                        <div>{{ item.acknowledged_by }}</div>
+                        <div class="muted small">{{ plantTime(item.acknowledged_at) }}</div>
+                      } @else {
+                        <span class="muted">—</span>
+                      }
+                    </td>
+                  }
+                  @case ('status') {
+                    <td>
+                      @if (item.status === 'Active') {
+                        <span class="active-badge"><span class="pulse-dot"></span>Active</span>
+                      } @else {
+                        Cleared
+                      }
+                    </td>
+                  }
+                  @case ('probable_cause') {
+                    <td class="wrap-cell">{{ item.probable_cause || '—' }}</td>
+                  }
+                  @default {
+                    <td [class.num]="column.kind === 'number'">{{ cell(item, column) }}</td>
+                  }
+                }
+              }
+              <td class="actions-col">
+                <button class="btn btn-secondary btn-icon" title="Edit" (click)="edit(item, $event)">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+                    <path d="M4 20h4l10.5-10.5a2.1 2.1 0 0 0-3-3L5 17v3Z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" />
+                  </svg>
+                </button>
+                <button class="btn btn-danger btn-icon" title="Delete" (click)="confirmDelete(item, $event)">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+                    <path
+                      d="M5 7h14M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2m2 0-1 13a1 1 0 0 1-1 1H8a1 1 0 0 1-1-1L6 7"
+                      stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
+                  </svg>
+                </button>
+              </td>
+            </tr>
+          }
+        </tbody>
+      </table>
+    </div>
+
+    <div class="pagination">
+      <div class="page-size">
+        <label for="pageSize">Rows per page</label>
+        <select id="pageSize" [ngModel]="pageSize" (ngModelChange)="setPageSize($event)">
+          @for (size of pageSizeOptions; track size) {
+            <option [ngValue]="size">{{ size }}</option>
+          }
+        </select>
+      </div>
+      <div class="page-range">{{ rangeStart }}–{{ rangeEnd }} of {{ total }}</div>
+      <div class="page-controls">
+        <button class="btn btn-secondary btn-icon" [disabled]="currentPage === 1" (click)="goToPage(currentPage - 1)" title="Previous page">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+            <path d="M15 6l-6 6 6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+          </svg>
+        </button>
+        <span class="page-indicator">Page {{ currentPage }} of {{ totalPages }}</span>
+        <button class="btn btn-secondary btn-icon" [disabled]="currentPage === totalPages" (click)="goToPage(currentPage + 1)" title="Next page">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+            <path d="M9 6l6 6-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+          </svg>
+        </button>
+      </div>
+    </div>
+  }
+</div>
+}
+
+@if (itemToDelete) {
+  <div class="modal-backdrop" (click)="itemToDelete = null">
+    <div class="modal" (click)="$event.stopPropagation()">
+      <h3>Delete alarm?</h3>
+      <p>
+        This will permanently delete <strong>{{ itemToDelete.alarm_id }}</strong>
+        ({{ itemToDelete.source }} · {{ itemToDelete.alarm_code }}, {{ plantTime(itemToDelete.start_time) }}). This action cannot be undone.
+      </p>
+      @if (deleteError) {
+        <div class="form-error">{{ deleteError }}</div>
+      }
+      <div class="modal-actions">
+        <button class="btn btn-secondary" (click)="itemToDelete = null" [disabled]="deleting">Cancel</button>
+        <button class="btn btn-danger-solid" (click)="deleteConfirmed()" [disabled]="deleting">
+          {{ deleting ? 'Deleting…' : 'Delete' }}
+        </button>
+      </div>
+    </div>
+  </div>
+}

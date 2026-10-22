@@ -1,0 +1,221 @@
+<div class="page-header">
+  <div>
+    <h2>SOH Estimator</h2>
+    <p class="subtitle">
+      Estimate battery State of Health.
+    </p>
+  </div>
+  <a class="link training-link" routerLink="/ml/training">Open SOH Model Training →</a>
+</div>
+
+<!-- model choice -->
+<div class="card picker-card">
+  <div class="picker-row">
+    <div class="field picker-field">
+      <label for="model">Model</label>
+      <select id="model" [ngModel]="modelKey" (ngModelChange)="selectModel($event)" [disabled]="!models.length">
+        @if (baseModels.length) {
+          <optgroup label="Base models (plant-agnostic)">
+            @for (m of baseModels; track m.key) {
+              <option [value]="m.key">{{ optionLabel(m) }}</option>
+            }
+          </optgroup>
+        }
+        @for (g of plantGroups; track g.label) {
+          <optgroup [label]="'Plant-specific · ' + g.label">
+            @for (m of g.models; track m.key) {
+              <option [value]="m.key">{{ optionLabel(m) }}</option>
+            }
+          </optgroup>
+        }
+      </select>
+      @if (modelsError) {
+        <span class="field-error">{{ modelsError }}</span>
+      }
+    </div>
+  </div>
+</div>
+
+@if (modelsLoaded && !models.length && !modelsError) {
+  <div class="card">
+    <div class="empty-state">
+      No trained SOH model yet. <a routerLink="/ml/training">Train one on the SOH Model Training page</a>.
+    </div>
+  </div>
+} @else if (modelInfoError) {
+  <div class="card"><div class="empty-state error">{{ modelInfoError }}</div></div>
+} @else if (loadingModelInfo && !modelInfo) {
+  <div class="card"><div class="empty-state">Loading model…</div></div>
+}
+@if (modelInfoError ? null : modelInfo; as info) {
+  <!-- inputs -->
+  <div class="card estimator-form-card">
+    <div class="form-head">
+      <div class="telemetry-section-header">
+        <h3>SOH Estimator </h3>
+      </div>
+      <div class="input-actions">
+        <button type="button" class="btn btn-secondary" [disabled]="loadingSample || !system?.has_telemetry" (click)="loadSample()"
+          [title]="system ? 'The newest reading of ' + system.system_name : 'Choose a battery system'">
+          {{ loadingSample ? 'Loading…' : 'Load latest reading' }}
+        </button>
+        <button type="button" class="btn btn-secondary" [disabled]="loadingMeans || !system?.has_telemetry" (click)="fillMeans()"
+          [title]="system ? 'Average of ' + system.system_name + ' over the model\'s training data' : 'Choose a battery system'">
+          {{ loadingMeans ? 'Averaging…' : 'Training averages' }}
+        </button>
+        <button type="button" class="link-btn" (click)="clear()">Clear</button>
+      </div>
+    </div>
+
+    <div class="system-pickers">
+      <div class="field">
+        <label for="site">Site</label>
+        <select id="site" [(ngModel)]="siteId" (ngModelChange)="onSiteChange()" [disabled]="!systems.length">
+          @for (s of sites; track s.site_id) {
+            <option [ngValue]="s.site_id">{{ s.site_name }}</option>
+          }
+        </select>
+      </div>
+      <div class="field">
+        <label for="system">Battery System</label>
+        <select id="system" [(ngModel)]="systemId" (ngModelChange)="onSystemChange()" [disabled]="!siteSystems.length">
+          @for (b of siteSystems; track b.battery_system_id) {
+            <option [ngValue]="b.battery_system_id">{{ b.system_name }}{{ b.has_telemetry ? '' : ' (no telemetry)' }}</option>
+          }
+        </select>
+      </div>
+      <p class="system-note">
+        @if (systemsError) {
+          <span class="field-error">{{ systemsError }}</span>
+        } @else if (system?.has_telemetry) {
+          Telemetry {{ system!.first_ts?.slice(0, 10) }} – {{ system!.last_ts?.slice(0, 10) }}.
+          <em>Load latest reading</em> and <em>Training averages</em> use this battery system only.
+        } @else if (system) {
+          <span class="field-error">{{ system.system_name }} has no BMS telemetry yet — enter the inputs by hand.</span>
+        }
+      </p>
+    </div>
+    @if (inputSource) {
+      <p class="source-note">
+        Inputs: {{ inputSource }}
+        @if (recordedSoh !== null) {
+          · recorded SOH <strong>{{ recordedSoh | number: '1.2-3' }}%</strong>
+        }
+      </p>
+    }
+    @if (sampleError) {
+      <div class="form-error">{{ sampleError }}</div>
+    }
+
+    <form [formGroup]="form" (ngSubmit)="predict()">
+      @for (group of groups; track group.name) {
+        <div class="feature-group">
+          <h4>{{ group.name }}</h4>
+          <div class="input-grid">
+            @for (field of group.fields; track field.key) {
+              <div class="field" [class.outside]="outside(field)">
+                <label [for]="'f_' + field.key">
+                  {{ field.label }}@if (field.unit) { ({{ field.unit }}) }
+                  @if (field.optional) { <span class="optional-tag">optional</span> }
+                </label>
+                <input [id]="'f_' + field.key" type="number" [step]="field.step" [formControlName]="field.key"
+                  (input)="markEdited()" [placeholder]="field.mean === null ? '' : 'avg ' + round(field.mean)" />
+                <span class="field-meta">
+                  @if (field.min !== null) {
+                    range {{ round(field.min) }} – {{ round(field.max!) }}
+                  } @else {
+                    no training values
+                  }
+                  @if (field.importance !== null && field.importance > 0) {
+                    · importance {{ pct(field.importance) }}
+                  }
+                </span>
+                @if (outside(field)) {
+                  <span class="outside-note">outside the training range</span>
+                }
+              </div>
+            }
+          </div>
+        </div>
+      }
+
+      @if (predictError) {
+        <div class="form-error">{{ predictError }}</div>
+      }
+      <div class="form-actions">
+        @if (outsideCount) {
+          <span class="outside-summary">{{ outsideCount }} input{{ outsideCount === 1 ? '' : 's' }} outside the training range</span>
+        }
+        <button type="submit" class="btn btn-primary" [disabled]="predicting">
+          {{ predicting ? 'Estimating…' : 'Predict SOH' }}
+        </button>
+      </div>
+    </form>
+
+    @if (result) {
+      <div class="predict-result">
+        <div>
+          <span class="predict-result-label">Estimated SOH</span>
+          <span class="predict-result-value">{{ result.predicted_soh_pct | number: '1.2-3' }}%</span>
+          <span class="predict-result-version">model {{ result.model_version }}</span>
+        </div>
+        @if (recordedSoh !== null) {
+          <div class="compare-actual">
+            <span class="predict-result-label">{{ inputSource?.includes('average') ? 'Recorded SOH (average)' : 'Recorded SOH' }}</span>
+            <span class="actual-value">{{ recordedSoh | number: '1.2-3' }}%</span>
+            <span class="predict-result-version">
+              difference {{ (result.predicted_soh_pct - recordedSoh) >= 0 ? '+' : '' }}{{ result.predicted_soh_pct - recordedSoh | number: '1.3-3' }} pts
+            </span>
+          </div>
+        }
+      </div>
+      @if (result.out_of_range.length) {
+        <div class="warn-line">
+          Extrapolating — {{ result.out_of_range.length }} input{{ result.out_of_range.length === 1 ? ' was' : 's were' }}
+          outside the training range:
+          @for (o of result.out_of_range; track o.feature; let last = $last) {
+            {{ label(o.feature) }} {{ round(o.value) }} (trained {{ round(o.min) }}–{{ round(o.max) }}){{ last ? '' : ';' }}
+          }
+        </div>
+      }
+    }
+  </div>
+
+  <!-- predictions this session -->
+  @if (history.length) {
+    <div class="card history-card">
+      <div class="telemetry-section-header">
+        <h3>Predictions this session</h3>
+        <p class="subtitle">Switch models and predict again to compare them.</p>
+      </div>
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>Time</th>
+            <th>Model</th>
+            <th>Site · system</th>
+            <th>Inputs</th>
+            <th class="num">Estimated SOH</th>
+            <th class="num">Recorded SOH</th>
+            <th class="num">Difference</th>
+            <th class="num">Out of range</th>
+          </tr>
+        </thead>
+        <tbody>
+          @for (h of history; track h.at) {
+            <tr>
+              <td>{{ h.at | date: 'HH:mm:ss' }}</td>
+              <td>{{ h.modelLabel }}</td>
+              <td class="small">{{ h.system }}</td>
+              <td class="small">{{ h.source }}</td>
+              <td class="num">{{ h.predicted | number: '1.3-3' }}%</td>
+              <td class="num">{{ h.actual === null ? '—' : (h.actual | number: '1.3-3') + '%' }}</td>
+              <td class="num">{{ h.actual === null ? '—' : ((h.predicted - h.actual) | number: '1.3-3') }}</td>
+              <td class="num">{{ h.outOfRange || '—' }}</td>
+            </tr>
+          }
+        </tbody>
+      </table>
+    </div>
+  }
+}

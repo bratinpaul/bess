@@ -1,0 +1,62 @@
+<div class="page-header">
+  <div>
+    <h2>Map View</h2>
+    <p class="subtitle">Battery energy storage sites across India</p>
+  </div>
+</div>
+
+@if (error) {
+  <div class="card">
+    <div class="empty-state error">{{ error }}</div>
+  </div>
+}
+
+<div class="summary-row" [hidden]="!!error">
+  <div class="summary-card">
+    <div class="summary-icon">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+        <path
+          d="M12 21s7-6.2 7-11.4A7 7 0 0 0 5 9.6C5 14.8 12 21 12 21Z"
+          stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" />
+        <circle cx="12" cy="9.5" r="2.4" stroke="currentColor" stroke-width="1.6" />
+      </svg>
+    </div>
+    <div>
+      <div class="summary-label">No. of Sites</div>
+      <div class="summary-value">{{ loading ? '—' : summary?.site_count }}</div>
+    </div>
+  </div>
+
+  <div class="summary-card">
+    <div class="summary-icon">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+        <path d="M13 2 4 14h7l-1 8 9-12h-7l1-8Z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" />
+      </svg>
+    </div>
+    <div>
+      <div class="summary-label">Total Power</div>
+      <div class="summary-value">{{ loading ? '—' : (summary?.total_power_mw | number: '1.0-2') }} <span class="summary-unit">MW</span></div>
+    </div>
+  </div>
+
+  <div class="summary-card">
+    <div class="summary-icon">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+        <rect x="2.5" y="7" width="17" height="10" rx="2" stroke="currentColor" stroke-width="1.6" />
+        <path d="M21.5 10.5v3" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
+        <path d="M6.5 9.5v5M10.5 9.5v5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
+      </svg>
+    </div>
+    <div>
+      <div class="summary-label">Total Energy</div>
+      <div class="summary-value">{{ loading ? '—' : (summary?.total_energy_mwh | number: '1.0-2') }} <span class="summary-unit">MWh</span></div>
+    </div>
+  </div>
+</div>
+
+<div class="card map-card" [hidden]="!!error">
+  <div #mapContainer class="map-container"></div>
+  @if (loading) {
+    <div class="map-loading">Loading sites…</div>
+  }
+</div>

@@ -1,0 +1,154 @@
+@if (error) {
+  <div class="card graph-state error">{{ error }}</div>
+} @else if (!analytics && loading) {
+  <div class="card graph-state">Loading graphs…</div>
+} @else if (analytics && analytics.total === 0) {
+  <div class="card graph-state">No alarms match the current filters, so there is nothing to chart.</div>
+} @else if (analytics && hidden.size >= 10) {
+  <div class="card graph-state">No charts selected. Tick some in the chart selector above.</div>
+} @else if (analytics) {
+  <div class="graph-grid" [class.refreshing]="loading">
+    @if (shown('daily')) {
+      <section class="card graph-card wide">
+        <header>
+          <h3>Alarms per day</h3>
+          <p>
+            Stacked by severity
+            @if (peakDay && peakDay.count > 0) {
+              · busiest day {{ formatDay(peakDay.date) }} with {{ peakDay.count }}
+            }
+            · click a day to filter
+          </p>
+        </header>
+        @if (daily) {
+          <app-chart-canvas [config]="daily" [height]="280" />
+        }
+      </section>
+    }
+
+    @if (shown('bySource')) {
+      <section class="card graph-card">
+        <header>
+          <h3>Alarms by source</h3>
+          <p>Click a bar to filter by that source</p>
+        </header>
+        @if (bySource) {
+          <app-chart-canvas [config]="bySource" />
+        }
+      </section>
+    }
+
+    @if (shown('bySeverity')) {
+      <section class="card graph-card">
+        <header>
+          <h3>Alarms by severity</h3>
+          <p>Click a bar to filter by that severity</p>
+        </header>
+        @if (bySeverity) {
+          <app-chart-canvas [config]="bySeverity" />
+        }
+      </section>
+    }
+
+    @if (shown('topCodes')) {
+      <section class="card graph-card">
+        <header>
+          <h3>Top alarm codes</h3>
+          <p>The most frequent alarms · the top 3 make up {{ topShare }}% of all alarms</p>
+        </header>
+        <div class="html-legend">
+          @for (s of sourceLegend; track s.label) {
+            <span><i [style.background]="s.color"></i>{{ s.label }}</span>
+          }
+        </div>
+        @if (topCodes) {
+          <app-chart-canvas [config]="topCodes" [height]="codesHeight" />
+        }
+      </section>
+    }
+
+    @if (shown('byType')) {
+      <section class="card graph-card">
+        <header>
+          <h3>Alarms by type</h3>
+          <p>{{ analytics.by_type.length }} alarm types</p>
+        </header>
+        @if (byType) {
+          <app-chart-canvas [config]="byType" [height]="typeHeight" />
+        }
+      </section>
+    }
+
+    @if (shown('topAssets')) {
+      <section class="card graph-card">
+        <header>
+          <h3>Assets with the most alarms</h3>
+          <p>Top {{ analytics.top_assets.length }}, by master-data asset</p>
+        </header>
+        <div class="html-legend">
+          @for (s of sourceLegend; track s.label) {
+            <span><i [style.background]="s.color"></i>{{ s.label }}</span>
+          }
+        </div>
+        @if (topAssets) {
+          <app-chart-canvas [config]="topAssets" [height]="assetsHeight" />
+        }
+      </section>
+    }
+
+    @if (shown('hourOfDay')) {
+      <section class="card graph-card">
+        <header>
+          <h3>Alarms by time of day</h3>
+          <p>
+            When alarms start
+            @if (peakHour && peakHour.count > 0) {
+              · peak {{ hourLabel(peakHour.hour) }} with {{ peakHour.count }}
+            }
+          </p>
+        </header>
+        @if (hourOfDay) {
+          <app-chart-canvas [config]="hourOfDay" />
+        }
+      </section>
+    }
+
+    @if (shown('clearTime')) {
+      <section class="card graph-card">
+        <header>
+          <h3>Time to clear by source</h3>
+          <p>Mean and longest duration of cleared alarms</p>
+        </header>
+        @if (clearTime) {
+          <app-chart-canvas [config]="clearTime" />
+        }
+      </section>
+    }
+
+    @if (shown('acknowledgement')) {
+      <section class="card graph-card">
+        <header>
+          <h3>Acknowledgement by severity</h3>
+          <p>{{ ackRate }}% of alarms acknowledged · hover for mean time to acknowledge</p>
+        </header>
+        @if (acknowledgement) {
+          <app-chart-canvas [config]="acknowledgement" [height]="220" />
+        }
+      </section>
+    }
+
+    @if (shown('durations')) {
+      <section class="card graph-card wide">
+        <header>
+          <h3>Alarm duration over time</h3>
+          <p>Each dot is a cleared alarm · click a dot to open it</p>
+        </header>
+        @if (durations) {
+          <app-chart-canvas [config]="durations" [height]="300" />
+        } @else {
+          <div class="graph-state inline">No cleared alarms in the current filters.</div>
+        }
+      </section>
+    }
+  </div>
+}

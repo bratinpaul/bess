@@ -1,0 +1,455 @@
+<div class="page-header">
+  <div>
+    <h2>Dispatch Events</h2>
+    <p class="subtitle">EMS dispatch instructions · setpoint &gt; 0 charges, &lt; 0 discharges · times are plant local time</p>
+  </div>
+  <div class="header-actions">
+    <label class="toggle-switch" title="Show the upload section">
+      <input data-perm="write" type="checkbox" [(ngModel)]="showUpload" [ngModelOptions]="{ standalone: true }" />
+      <span class="track" aria-hidden="true"><span class="thumb"></span></span>
+      Upload file
+    </label>
+  </div>
+</div>
+
+@if (showUpload) {
+  <!-- bulk load -->
+  <div class="card telemetry-upload-card">
+    <div class="telemetry-section-header">
+      <h3>Upload Dispatch Log</h3>
+      <p class="subtitle">
+        Excel or CSV only · dispatches that already exist (same dispatch ID and effective-from time) are updated ·
+        EMS, mode and grid service must exist in master data · one EMS runs one dispatch at a time
+      </p>
+    </div>
+
+    <div class="upload-row">
+      <input type="file" accept=".xlsx,.xlsm,.csv" (change)="onFileSelected($event)" #fileInput />
+      <button type="button" class="btn btn-primary" [disabled]="!selectedFile || uploading" (click)="upload()">
+        {{ uploading ? 'Uploading…' : 'Upload' }}
+      </button>
+    </div>
+
+    @if (uploadError) {
+      <div class="form-error">{{ uploadError }}</div>
+    }
+
+    @if (uploadResult) {
+      <div class="upload-summary">
+        <div class="upload-stat">
+          <span class="upload-stat-value">{{ uploadResult.total_rows }}</span>
+          <span class="upload-stat-label">Rows in file</span>
+        </div>
+        <div class="upload-stat">
+          <span class="upload-stat-value">{{ uploadResult.inserted }}</span>
+          <span class="upload-stat-label">Inserted</span>
+        </div>
+        <div class="upload-stat">
+          <span class="upload-stat-value">{{ uploadResult.updated }}</span>
+          <span class="upload-stat-label">Updated</span>
+        </div>
+        <div class="upload-stat" [class.upload-stat-error]="uploadResult.error_count > 0">
+          <span class="upload-stat-value">{{ uploadResult.error_count }}</span>
+          <span class="upload-stat-label">Rows skipped</span>
+        </div>
+      </div>
+      @if (uploadResult.closed_dispatches.length) {
+        <p class="upload-note">
+          Newer dispatches ended the running one{{ uploadResult.closed_dispatches.length === 1 ? '' : 's' }}:
+          {{ uploadResult.closed_dispatches.join('; ') }}.
+        </p>
+      }
+      @if (uploadResult.sheet || uploadResult.ignored_columns.length) {
+        <p class="upload-note">
+          @if (uploadResult.sheet) {
+            Read sheet <strong>{{ uploadResult.sheet }}</strong>.
+          }
+          @if (uploadResult.ignored_columns.length) {
+            Ignored column{{ uploadResult.ignored_columns.length === 1 ? '' : 's' }}: {{ uploadResult.ignored_columns.join(', ') }}.
+          }
+        </p>
+      }
+
+      @if (uploadResult.errors.length > 0) {
+        <div class="upload-errors">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Row</th>
+                <th>Dispatch ID</th>
+                <th>Errors</th>
+              </tr>
+            </thead>
+            <tbody>
+              @for (rowError of visibleUploadErrors; track rowError.row) {
+                <tr>
+                  <td class="mono">{{ rowError.row }}</td>
+                  <td class="mono">{{ rowError.dispatch_id || '—' }}</td>
+                  <td>{{ rowError.errors.join('; ') }}</td>
+                </tr>
+              }
+            </tbody>
+          </table>
+          @if (uploadResult.errors.length > 10) {
+            <button type="button" class="link-btn" (click)="showAllUploadErrors = !showAllUploadErrors">
+              {{ showAllUploadErrors ? 'Show fewer' : 'Show all ' + uploadResult.errors.length + ' skipped rows' }}
+            </button>
+          }
+        </div>
+      }
+    }
+  </div>
+}
+
+<!-- summary of the filtered dispatches (the workbook's Summary overview) -->
+@if (stats) {
+  <div class="kpis">
+    <div class="kpi">
+      <span class="kpi-value">{{ stats.total }}</span>
+      <span class="kpi-label">Dispatch events</span>
+    </div>
+    <button type="button" class="kpi active-kpi" [class.selected]="status === 'Active'" [class.has-active]="stats.active > 0"
+      (click)="toggleStatus('Active')" title="Show only active dispatches">
+      <span class="kpi-value">
+        @if (stats.active > 0) {
+          <span class="live-dot"></span>
+        }
+        {{ stats.active }}
+      </span>
+      <span class="kpi-label">Active (ongoing)</span>
+    </button>
+    <button type="button" class="kpi" [class.selected]="status === 'Aborted'" [class.has-aborted]="stats.aborted > 0"
+      (click)="toggleStatus('Aborted')" title="Show only aborted dispatches">
+      <span class="kpi-value">{{ stats.aborted }}</span>
+      <span class="kpi-label">Aborted</span>
+    </button>
+    <div class="kpi">
+      <span class="kpi-value">{{ stats.avg_duration_min !== null ? (stats.avg_duration_min | number: '1.0-0') : '—' }}</span>
+      <span class="kpi-label">Avg duration (min)</span>
+    </div>
+    <div class="kpi">
+      <span class="kpi-value">{{ stats.import_mwh | number: '1.1-1' }}</span>
+      <span class="kpi-label">Energy imported (MWh)</span>
+    </div>
+    <div class="kpi">
+      <span class="kpi-value">{{ stats.export_mwh | number: '1.1-1' }}</span>
+      <span class="kpi-label">Energy exported (MWh)</span>
+    </div>
+    <button type="button" class="kpi" [class.selected]="mode === 'FREQUENCY_REGULATION'"
+      (click)="setMode(mode === 'FREQUENCY_REGULATION' ? '' : 'FREQUENCY_REGULATION')" title="Show only frequency-regulation dispatches">
+      <span class="kpi-value">{{ stats.by_mode['FREQUENCY_REGULATION'] || 0 }}</span>
+      <span class="kpi-label">Frequency-regulation events</span>
+    </button>
+    <button type="button" class="kpi" [class.selected]="gridService === 'ARBITRAGE'"
+      (click)="toggleGridService('ARBITRAGE')" title="Show only arbitrage dispatches">
+      <span class="kpi-value">{{ stats.by_service['ARBITRAGE'] || 0 }}</span>
+      <span class="kpi-label">Arbitrage events</span>
+    </button>
+    <div class="kpi">
+      <span class="kpi-value" [class.negative]="stats.revenue_usd < 0">{{ stats.revenue_usd | currency: 'USD' : 'symbol' : '1.0-0' }}</span>
+      <span class="kpi-label">Market revenue</span>
+    </div>
+  </div>
+}
+
+<div class="view-tabs" role="tablist" aria-label="Dispatch view">
+  <button type="button" role="tab" class="view-tab" [class.active]="activeTab === 'tabular'"
+    [attr.aria-selected]="activeTab === 'tabular'" (click)="setTab('tabular')">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+      <rect x="3.5" y="4.5" width="17" height="15" rx="1.5" stroke="currentColor" stroke-width="1.6" />
+      <path d="M3.5 9.5h17M3.5 14.5h17M9.5 9.5v10" stroke="currentColor" stroke-width="1.6" />
+    </svg>
+    Tabular
+  </button>
+  <button type="button" role="tab" class="view-tab" [class.active]="activeTab === 'graphical'"
+    [attr.aria-selected]="activeTab === 'graphical'" (click)="setTab('graphical')">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+      <path d="M3 19.5h18" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
+      <path d="M6 16v-5M11 16V7M16 16v-7M20 16v-3" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
+    </svg>
+    Graphical
+  </button>
+</div>
+
+<!-- mode tabs + filters, shared by both views -->
+<ng-template #filterBar>
+  <div class="mode-tabs" role="tablist" aria-label="Filter by dispatch mode">
+    <button type="button" class="mode-tab" [class.active]="!mode" (click)="setMode('')">All</button>
+    @for (m of modeTabs; track m) {
+      <button type="button" class="mode-tab" [class.active]="mode === m" (click)="setMode(m)">
+        <span class="mode-swatch" [attr.data-mode]="m"></span>
+        {{ modeLabel(m) }}
+        @if (stats && !mode) {
+          <span class="mode-tab-count">{{ stats.by_mode[m] || 0 }}</span>
+        }
+      </button>
+    }
+  </div>
+
+  <div class="toolbar dispatch-filters">
+    <div class="search-box">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+        <circle cx="11" cy="11" r="7" stroke="currentColor" stroke-width="1.6" />
+        <path d="m20 20-3.5-3.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
+      </svg>
+      <input type="text" placeholder="Dispatch ID, mode, command, source, note…" [(ngModel)]="search"
+        (ngModelChange)="onSearchChange()" />
+    </div>
+    <select class="filter-select" [(ngModel)]="gridService" (ngModelChange)="applyFilters()" aria-label="Grid service">
+      <option value="">All grid services</option>
+      @for (s of lookups?.services ?? []; track s.code) {
+        <option [value]="s.code">{{ s.code }}</option>
+      }
+    </select>
+    <select class="filter-select" [(ngModel)]="command" (ngModelChange)="applyFilters()" aria-label="Command">
+      <option value="">All commands</option>
+      @for (c of lookups?.command_codes ?? []; track c) {
+        <option [value]="c">{{ c }}</option>
+      }
+    </select>
+    <select class="filter-select" [(ngModel)]="source" (ngModelChange)="applyFilters()" aria-label="Issued by">
+      <option value="">All sources</option>
+      @for (s of lookups?.sources ?? []; track s) {
+        <option [value]="s">{{ s }}</option>
+      }
+    </select>
+    <select class="filter-select" [(ngModel)]="status" (ngModelChange)="applyFilters()" aria-label="Status">
+      <option value="">All statuses</option>
+      @for (s of lookups?.statuses ?? []; track s) {
+        <option [value]="s">{{ s }}</option>
+      }
+    </select>
+    <select class="filter-select" [(ngModel)]="accepted" (ngModelChange)="applyFilters()" aria-label="Accepted">
+      <option [ngValue]="null">Accepted or not</option>
+      <option [ngValue]="true">Accepted</option>
+      <option [ngValue]="false">Rejected</option>
+    </select>
+    @if ((lookups?.ems?.length ?? 0) > 1 || emsId !== null) {
+      <select class="filter-select" [(ngModel)]="emsId" (ngModelChange)="applyFilters()" aria-label="EMS">
+        <option [ngValue]="null">All EMS</option>
+        @for (e of lookups?.ems ?? []; track e.ems_id) {
+          <option [ngValue]="e.ems_id">{{ e.ems_code }}</option>
+        }
+      </select>
+    }
+    <label class="date-filter">
+      From <input type="date" [(ngModel)]="start" (change)="applyFilters()" />
+    </label>
+    <label class="date-filter">
+      To <input type="date" [(ngModel)]="end" (change)="applyFilters()" />
+    </label>
+    @if (hasFilters) {
+      <button type="button" class="link-btn" (click)="clearFilters()">Clear filters</button>
+    }
+  </div>
+
+</ng-template>
+
+@if (activeTab === 'graphical') {
+  <div class="card graph-filters">
+    <ng-container [ngTemplateOutlet]="filterBar" />
+    <app-chart-selector [options]="chartOptions" storageKey="bess.dispatchGraphs.charts" (hiddenChange)="hiddenCharts = $event" />
+  </div>
+  <app-dispatch-event-graphs
+    [analytics]="analytics"
+    [loading]="analyticsLoading"
+    [error]="analyticsError"
+    [hidden]="hiddenCharts"
+    (modeSelect)="setMode($event)"
+    (daySelect)="filterByDay($event)"
+    (dispatchOpen)="openDispatch($event)" />
+} @else {
+<!-- dispatch log -->
+<div class="card">
+  <ng-container [ngTemplateOutlet]="filterBar" />
+
+  <div class="table-bar">
+    <span class="table-bar-info">
+      @if (!loading && !error) {
+        {{ total }} dispatches · {{ visibleColumns.length }} of {{ allColumns.length }} columns
+      }
+    </span>
+    <app-column-picker
+      [columns]="allColumns"
+      [defaultKeys]="defaultColumnKeys"
+      storageKey="bess.dispatchTable.columns"
+      (visibleChange)="visibleColumns = $event" />
+  </div>
+
+  @if (loading && items.length === 0) {
+    <div class="empty-state">Loading dispatch events…</div>
+  } @else if (error) {
+    <div class="empty-state error">{{ error }}</div>
+  } @else if (total === 0) {
+    <div class="empty-state">
+      {{ hasFilters ? 'No dispatch events match the current filters.' : 'No dispatch events yet. Upload the Dispatch Events sheet above or click "Add Dispatch".' }}
+    </div>
+  } @else {
+    <div class="table-scroll telemetry-table-scroll">
+      <table class="data-table telemetry-table dispatch-table" [class.refreshing]="loading">
+        <thead>
+          <tr>
+            @for (column of visibleColumns; track column.key) {
+              <th [class.num]="column.kind === 'number'" [class.sticky-col]="column.locked">{{ column.label }}</th>
+            }
+            <th class="actions-col"></th>
+          </tr>
+        </thead>
+        <tbody>
+          @for (item of items; track item.dispatch_id) {
+            <tr (click)="view(item)" [class.active-row]="item.status === 'Active'" [class.rejected-row]="!item.accepted">
+              @for (column of visibleColumns; track column.key) {
+                @switch (column.key) {
+                  @case ('dispatch_id') {
+                    <td class="mono sticky-col">{{ item.dispatch_id }}</td>
+                  }
+                  @case ('effective') {
+                    <td>
+                      {{ plantTime(item.effective_from) }}
+                      @if (item.effective_to) {
+                        <span class="muted">→ {{ endLabel(item) }}</span>
+                      }
+                    </td>
+                  }
+                  @case ('duration') {
+                    <td>
+                      @if (item.status === 'Active') {
+                        <span class="live-badge"><span class="live-dot"></span>Running</span>
+                      } @else {
+                        {{ formatDuration(item.duration_min) }}
+                      }
+                    </td>
+                  }
+                  @case ('mode') {
+                    <td class="mode-cell">
+                      <span class="mode-chip" [attr.data-mode]="item.dispatch_mode">{{ modeLabel(item.dispatch_mode) }}</span>
+                      <div class="sub">{{ item.command_code }} · {{ item.grid_service }} · {{ item.source || '—' }}</div>
+                    </td>
+                  }
+                  @case ('setpoint') {
+                    <td>
+                      <span class="setpoint" [attr.data-dir]="direction(item)">
+                        @switch (direction(item)) {
+                          @case ('charge') { <span class="arrow" aria-hidden="true">▲</span> Charge }
+                          @case ('discharge') { <span class="arrow" aria-hidden="true">▼</span> Discharge }
+                          @default { Hold }
+                        }
+                      </span>
+                      @if (direction(item) !== 'none') {
+                        <div class="sub">{{ absKw(item) | number: '1.0-0' }} kW</div>
+                      }
+                    </td>
+                  }
+                  @case ('soc') {
+                    <td class="num">
+                      @if (item.soc_start_pct !== null && item.soc_end_pct !== null) {
+                        {{ num(item.soc_start_pct) | number: '1.0-1' }} → <strong>{{ num(item.soc_end_pct) | number: '1.0-1' }}</strong> %
+                      } @else {
+                        —
+                      }
+                      @if (item.target_soc_pct !== null) {
+                        <div class="sub">target {{ num(item.target_soc_pct) | number: '1.0-1' }} %</div>
+                      }
+                    </td>
+                  }
+                  @case ('energy') {
+                    <td class="num">
+                      {{ num(item.import_kwh) | number: '1.0-1' }} / {{ num(item.export_kwh) | number: '1.0-1' }}
+                      <div class="sub">net {{ num(item.net_energy_kwh) | number: '1.0-1' }}</div>
+                    </td>
+                  }
+                  @case ('avg_price_mwh') {
+                    <td class="num">{{ item.avg_price_mwh !== null ? (num(item.avg_price_mwh) | number: '1.2-2') : '—' }}</td>
+                  }
+                  @case ('revenue_usd') {
+                    <td class="num" [class.negative]="(num(item.revenue_usd) ?? 0) < 0">
+                      {{ item.revenue_usd !== null ? (num(item.revenue_usd) | currency: 'USD') : '—' }}
+                    </td>
+                  }
+                  @case ('status') {
+                    <td>
+                      <span class="status-chip" [attr.data-status]="item.status">{{ item.status }}</span>
+                      @if (!item.accepted) {
+                        <div class="sub rejected">Rejected</div>
+                      }
+                    </td>
+                  }
+                  @case ('accepted') {
+                    <td [class.negative]="!item.accepted">{{ item.accepted ? 'Yes' : 'No — rejected' }}</td>
+                  }
+                  @case ('note') {
+                    <td class="wrap-cell">{{ item.note || '—' }}</td>
+                  }
+                  @default {
+                    <td [class.num]="column.kind === 'number'">{{ cell(item, column) }}</td>
+                  }
+                }
+              }
+              <td class="actions-col">
+                <button class="btn btn-secondary btn-icon" title="Edit" (click)="edit(item, $event)">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+                    <path d="M4 20h4l10.5-10.5a2.1 2.1 0 0 0-3-3L5 17v3Z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" />
+                  </svg>
+                </button>
+                <button class="btn btn-danger btn-icon" title="Delete" (click)="confirmDelete(item, $event)">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+                    <path
+                      d="M5 7h14M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2m2 0-1 13a1 1 0 0 1-1 1H8a1 1 0 0 1-1-1L6 7"
+                      stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
+                  </svg>
+                </button>
+              </td>
+            </tr>
+          }
+        </tbody>
+      </table>
+    </div>
+
+    <div class="pagination">
+      <div class="page-size">
+        <label for="pageSize">Rows per page</label>
+        <select id="pageSize" [ngModel]="pageSize" (ngModelChange)="setPageSize($event)">
+          @for (size of pageSizeOptions; track size) {
+            <option [ngValue]="size">{{ size }}</option>
+          }
+        </select>
+      </div>
+      <div class="page-range">{{ rangeStart }}–{{ rangeEnd }} of {{ total }}</div>
+      <div class="page-controls">
+        <button class="btn btn-secondary btn-icon" [disabled]="currentPage === 1" (click)="goToPage(currentPage - 1)" title="Previous page">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+            <path d="M15 6l-6 6 6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+          </svg>
+        </button>
+        <span class="page-indicator">Page {{ currentPage }} of {{ totalPages }}</span>
+        <button class="btn btn-secondary btn-icon" [disabled]="currentPage === totalPages" (click)="goToPage(currentPage + 1)" title="Next page">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+            <path d="M9 6l6 6-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+          </svg>
+        </button>
+      </div>
+    </div>
+  }
+</div>
+}
+
+@if (itemToDelete) {
+  <div class="modal-backdrop" (click)="itemToDelete = null">
+    <div class="modal" (click)="$event.stopPropagation()">
+      <h3>Delete dispatch?</h3>
+      <p>
+        This will permanently delete <strong>{{ itemToDelete.dispatch_id }}</strong>
+        ({{ modeLabel(itemToDelete.dispatch_mode) }}, {{ plantTime(itemToDelete.effective_from) }}). This action cannot be undone.
+      </p>
+      @if (deleteError) {
+        <div class="form-error">{{ deleteError }}</div>
+      }
+      <div class="modal-actions">
+        <button class="btn btn-secondary" (click)="itemToDelete = null" [disabled]="deleting">Cancel</button>
+        <button class="btn btn-danger-solid" (click)="deleteConfirmed()" [disabled]="deleting">
+          {{ deleting ? 'Deleting…' : 'Delete' }}
+        </button>
+      </div>
+    </div>
+  </div>
+}

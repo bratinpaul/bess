@@ -1,0 +1,379 @@
+<div class="page-header">
+  <div>
+    <h2>SOC Estimator</h2>
+    <p class="subtitle">A trustworthy state of charge per battery system: coulomb-counting drift removed by the EKF + LightGBM
+      estimator, with its P10–P90 band, the correction applied and when it last recalibrated.</p>
+  </div>
+  <a class="link training-link" routerLink="/ml/soc-estimation-model">Open SOC Estimation Model →</a>
+</div>
+
+<div class="card picker-card">
+  <div class="picker-row">
+    <div class="field picker-field">
+      <label for="model">Model run</label>
+      <select id="model" [ngModel]="modelKey" (ngModelChange)="selectModel($event)" [disabled]="!models.length">
+        <option value="active">Default run</option>
+        @for (m of models; track m.run_id) {
+          <option [value]="'' + m.run_id">{{ optionLabel(m) }}</option>
+        }
+      </select>
+      @if (modelsError) {
+        <span class="field-error">{{ modelsError }}</span>
+      }
+    </div>
+    @if (model; as m) {
+      <div class="field picker-field">
+        <label for="sys">Battery system</label>
+        <select id="sys" [ngModel]="systemId" (ngModelChange)="selectSystem($event)">
+          @for (id of m.system_ids; track id) {
+            <option [ngValue]="id">{{ systemName(id) }}</option>
+          }
+        </select>
+      </div>
+    }
+  </div>
+</div>
+
+@if (modelsLoaded && !models.length && !modelsError) {
+  <div class="card">
+    <div class="empty-state">No SOC estimation model yet. <a routerLink="/ml/soc-estimation-model">Build one on the SOC Estimation Model page</a>.</div>
+  </div>
+}
+
+@if (model) {
+  <div class="tab-row">
+    <button type="button" class="tab" [class.on]="tab === 'estimate'" (click)="setTab('estimate')">Estimate</button>
+    <button type="button" class="tab" [class.on]="tab === 'timeline'" (click)="setTab('timeline')">Run timeline</button>
+    <button type="button" class="tab" [class.on]="tab === 'step'" (click)="setTab('step')">Single step</button>
+  </div>
+
+  <!-- ============================================================ estimate -->
+  @if (tab === 'estimate') {
+    <div class="card view-card">
+      <div class="view-controls">
+        <div class="control-group">
+          <span class="control-label">When</span>
+          <div class="seg">
+            <button type="button" [class.on]="mode === 'live'" (click)="mode = 'live'; runEstimate()">Newest reading (live)</button>
+            <button type="button" [class.on]="mode === 'asof'" (click)="mode = 'asof'">As of…</button>
+          </div>
+          @if (mode === 'asof') {
+            <input type="datetime-local" [(ngModel)]="asOf" />
+          }
+        </div>
+        <div class="toggles">
+          <label>History
+            <select [(ngModel)]="historyH">
+              @for (h of historyOptions; track h) {
+                <option [ngValue]="h">{{ h }} h</option>
+              }
+            </select>
+          </label>
+          <button type="button" class="btn btn-primary" [disabled]="loading" (click)="runEstimate()">{{ loading ? 'Estimating…' : 'Estimate' }}</button>
+          @if (mode === 'live') {
+            <button type="button" class="link-btn" [disabled]="loading" (click)="runEstimate(true)"
+              title="Drop the carried EKF state and re-initialise from the last two days">Reset state</button>
+          }
+        </div>
+      </div>
+
+      @if (loading && !est) {
+        <div class="empty-state">Estimating…</div>
+      } @else if (error) {
+        <div class="empty-state error">{{ error }}</div>
+      } @else if (est) {
+        @if (est; as e) {
+        <p class="muted small">
+          @if (e.mode === 'live') {
+            Live: the EKF state carried for run #{{ e.run_id }} was advanced to the newest reading ({{ timeOf(e.ts) }}, plant time) and saved.
+          } @else {
+            Replay as of {{ timeOf(e.ts) }}: the filter re-ran from 48 h before the window (nothing saved).
+          }
+        </p>
+        @for (msg of e.messages; track msg) {
+          <div class="warn-line">⚠ {{ msg }}</div>
+        }
+
+        <div class="tiles">
+          <div class="tile">
+            <div class="tile-label">Corrected SOC</div>
+            <div class="tile-value">{{ num(e.soc_corrected_pct, 1) }} %</div>
+            <div class="tile-note">P10–P90 {{ num(e.p10, 1) }} – {{ num(e.p90, 1) }} %</div>
+          </div>
+          <div class="tile">
+            <div class="tile-label">Coulomb counting</div>
+            <div class="tile-value">{{ num(e.soc_coulomb_pct, 1) }} %</div>
+            <div class="tile-note">BMS reported {{ num(e.soc_bms_pct, 1) }} %</div>
+          </div>
+          <div class="tile">
+            <div class="tile-label">Drift correction</div>
+            <div class="tile-value">{{ signed(e.drift_correction_pct, 2) }} pts</div>
+            <div class="tile-note">corrected − coulomb</div>
+          </div>
+          <div class="tile">
+            <div class="tile-label">Recalibrated</div>
+            <div class="tile-value">{{ e.recalibrated ? 'Yes · ' + (e.recal_kind === 'FULL_CHARGE' ? 'full charge' : 'rested OCV') : 'No' }}</div>
+            <div class="tile-note">last {{ timeOf(e.last_recal_ts) }} · {{ hours(e.flags.hours_since_recal) }} ago</div>
+          </div>
+          <div class="tile">
+            <div class="tile-label">EKF</div>
+            <div class="tile-value">{{ num(e.ekf.soc, 1) }} %</div>
+            <div class="tile-note">bias {{ signed(e.ekf.bias_a, 2) }} A · gain {{ num(e.ekf.gain, 3) }} · {{ e.ekf.direction.toLowerCase() }}</div>
+          </div>
+          <div class="tile" [class.muted-tile]="e.ocv_soc === null">
+            <div class="tile-label">OCV-implied SOC</div>
+            <div class="tile-value">{{ e.ocv_soc === null ? '—' : num(e.ocv_soc, 1) + ' %' }}</div>
+            <div class="tile-note">{{ e.inputs['at_rest'] ? 'at rest ' + num($any(e.inputs['rest_duration_min']), 0) + ' min' : 'under current — no OCV' }}</div>
+          </div>
+        </div>
+
+        <div class="panel-subhead">
+          <h4 class="sub-title" style="margin: 0">SOC · last {{ historyH }} h</h4>
+          <div class="toggles">
+            @for (m of order; track m) {
+              <label><input type="checkbox" [checked]="estMethods.has(m)" (change)="toggleEst(m)" />
+                <span class="swatch line" [style.background]="colors[m]"></span>{{ m === 'ocv_lookup' ? 'OCV-implied SOC' : labels[m] }}</label>
+            }
+            <label>Band
+              <select [(ngModel)]="estBand" (ngModelChange)="buildEstimate()">
+                @for (b of banded; track b) {
+                  <option [ngValue]="b">{{ labels[b] }}</option>
+                }
+              </select>
+            </label>
+          </div>
+        </div>
+        @if (estChart) {
+          <app-chart-canvas [config]="estChart" [height]="340" />
+        }
+        <p class="muted small">Markers: ▲ FULL_CHARGE anchor, ● REST_OCV anchor (soc_reference) — the independent truths.</p>
+        @if (driftChart) {
+          <h4 class="sub-title">Correction applied to coulomb counting</h4>
+          <app-chart-canvas [config]="driftChart" [height]="200" />
+          <p class="muted small">Negative = coulomb counting reads high (the sensor offset adds charge that never went in); it
+            grows between recalibrations and snaps back at a rested OCV or full charge.</p>
+        }
+
+        <div class="io-grid">
+          <div>
+            <h4 class="sub-title">I/O contract output</h4>
+            <pre class="contract">{{ contract(e) }}</pre>
+          </div>
+          <div>
+            <h4 class="sub-title">Inputs at {{ timeOf(e.ts) }}</h4>
+            <table class="data-table compact">
+              <tbody>
+                @for (k of inputKeys(); track k) {
+                  <tr>
+                    <td class="mono small">{{ k }}</td>
+                    <td class="num">{{ e.inputs[k] === null ? '—' : e.inputs[k] }}</td>
+                  </tr>
+                }
+              </tbody>
+            </table>
+            <button type="button" class="link-btn" (click)="fillFromEstimate()">Use as the next single step →</button>
+          </div>
+        </div>
+        }
+      }
+    </div>
+  }
+
+  <!-- ============================================================ timeline -->
+  @if (tab === 'timeline') {
+    <div class="card view-card">
+      <div class="view-controls">
+        <div class="control-group">
+          <span class="control-label">Window</span>
+          <input type="datetime-local" [(ngModel)]="tlFrom" />
+          <span>→</span>
+          <input type="datetime-local" [(ngModel)]="tlTo" />
+          <button type="button" class="btn btn-primary" [disabled]="tlLoading" (click)="loadTimeline()">Show</button>
+          <button type="button" class="link-btn" (click)="shiftDays(-1)">← day</button>
+          <button type="button" class="link-btn" (click)="shiftDays(1)">day →</button>
+        </div>
+        <div class="toggles">
+          <label><input type="checkbox" [(ngModel)]="tlTruth" (ngModelChange)="buildTimeline()" /> True SOC (sample)</label>
+          <label>Band
+            <select [(ngModel)]="tlBand" (ngModelChange)="buildTimeline()">
+              @for (b of banded; track b) {
+                <option [ngValue]="b">{{ labels[b] }}</option>
+              }
+            </select>
+          </label>
+        </div>
+      </div>
+      <div class="toggles method-toggles">
+        @for (m of order; track m) {
+          <label><input type="checkbox" [checked]="tlMethods.has(m)" (change)="toggleTl(m)" />
+            <span class="swatch line" [style.background]="colors[m]"></span>{{ labels[m] }}</label>
+        }
+      </div>
+      @if (range) {
+        <p class="muted small">Run #{{ model.run_id }} covers {{ timeOf(range.from) }} → {{ timeOf(range.to) }}; the test period starts
+          {{ timeOf(range.test_from) }} (the dashed line). Before it, the corrections are scored in-sample.</p>
+      }
+      @if (tlLoading) {
+        <div class="empty-state">Loading…</div>
+      } @else if (tlError) {
+        <div class="empty-state error">{{ tlError }}</div>
+      } @else if (!tlPoints.length) {
+        <div class="empty-state">No rows in this window.</div>
+      } @else {
+        @if (tlChart) {
+          <app-chart-canvas [config]="tlChart" [height]="360" />
+        }
+        @if (hasTruth) {
+          <table class="data-table compact stats-table">
+            <thead>
+              <tr>
+                <th>In this window</th>
+                @for (s of windowStats; track s.m) {
+                  <th class="num"><span class="swatch line" [style.background]="colors[s.m]"></span>{{ labels[s.m] }}</th>
+                }
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>RMSE vs true SOC</td>
+                @for (s of windowStats; track s.m) {
+                  <td class="num">{{ num(s.rmse) }}</td>
+                }
+              </tr>
+              <tr>
+                <td>Max |error|</td>
+                @for (s of windowStats; track s.m) {
+                  <td class="num">{{ num(s.max) }}</td>
+                }
+              </tr>
+            </tbody>
+          </table>
+          @if (errChart) {
+            <h4 class="sub-title">Error vs true SOC</h4>
+            <app-chart-canvas [config]="errChart" [height]="240" />
+          }
+        }
+        @if (biasChart) {
+          <h4 class="sub-title">EKF residual sensor bias</h4>
+          <app-chart-canvas [config]="biasChart" [height]="180" />
+          <p class="muted small">Learnt at each rested-OCV update on top of the BMS's own offset estimate; it is what removes the drift
+            between recalibrations.</p>
+        }
+      }
+    </div>
+  }
+
+  <!-- ============================================================ single step -->
+  @if (tab === 'step') {
+    <div class="card view-card">
+      <p class="muted small">One EKF + correction step per the I/O contract: the previous state plus this interval's feature
+        vector. Stateless — nothing is saved. Prefill it from an estimate on the Estimate tab, then step forward with
+        “Carry state”.</p>
+      <div class="step-grid">
+        <section>
+          <h4 class="sub-title">Previous state</h4>
+          <div class="input-grid">
+            <div class="field"><label>SOC (%)</label><input type="number" min="0" max="100" step="0.1" [(ngModel)]="form.soc" /></div>
+            <div class="field"><label>SOC sd (%)</label><input type="number" min="0.01" step="0.05" [(ngModel)]="form.sigma_soc" /></div>
+            <div class="field"><label>Sensor bias (A)</label><input type="number" step="0.05" [(ngModel)]="form.bias" /></div>
+            <div class="field"><label>Capacity gain</label><input type="number" min="0.5" max="1.5" step="0.001" [(ngModel)]="form.gain" /></div>
+            <div class="field">
+              <label>Last current direction</label>
+              <select [(ngModel)]="form.direction">
+                <option value="CHARGE">Charge</option>
+                <option value="DISCHARGE">Discharge</option>
+                <option value="MEAN">Unknown (mean curve)</option>
+              </select>
+            </div>
+            <div class="field"><label>Last recalibration</label><input type="datetime-local" [(ngModel)]="form.last_recal_ts" /></div>
+          </div>
+          <h4 class="sub-title">Interval</h4>
+          <div class="input-grid">
+            <div class="field"><label>Time (plant)</label><input type="datetime-local" [(ngModel)]="form.ts" /></div>
+            <div class="field"><label>Δt (min)</label><input type="number" min="1" max="1440" step="1" [(ngModel)]="form.dt_min" /></div>
+            <div class="field">
+              <label>Anchor method</label>
+              <select [(ngModel)]="form.anchor_method">
+                <option value="">None</option>
+                <option value="FULL_CHARGE">FULL_CHARGE (hard reset)</option>
+                <option value="REST_OCV">REST_OCV (label only)</option>
+              </select>
+            </div>
+            @if (form.anchor_method) {
+              <div class="field"><label>Anchor SOC (%)</label><input type="number" min="0" max="100" step="0.1" [(ngModel)]="form.anchor_soc_pct" /></div>
+            }
+          </div>
+        </section>
+        <section>
+          <h4 class="sub-title">Feature vector</h4>
+          <div class="input-grid">
+            @for (f of featureFields; track f.key) {
+              @if (f.key !== 'ocv_rested_v' || form.at_rest) {
+                <div class="field">
+                  <label>{{ f.label }}@if (f.required) { <span class="req">*</span> }</label>
+                  <input type="number" [step]="f.step" [(ngModel)]="$any(form)[f.key]" />
+                </div>
+              }
+            }
+            <div class="field check-field">
+              <label><input type="checkbox" [(ngModel)]="form.at_rest" /> At rest</label>
+            </div>
+          </div>
+          @if (!form.at_rest) {
+            <p class="muted small">Rested OCV only counts at rest (and after the model's relaxation time).</p>
+          }
+        </section>
+      </div>
+      @if (stepError) {
+        <div class="form-error">{{ stepError }}</div>
+      }
+      <div class="form-actions">
+        @if (stepProblem) {
+          <span class="problem">{{ stepProblem }}</span>
+        }
+        <button type="button" class="btn btn-secondary" (click)="form = blankForm(); stepResult = null">Clear</button>
+        <button type="button" class="btn btn-primary" [disabled]="!!stepProblem || stepping" (click)="runStep()">{{ stepping ? 'Stepping…' : 'Run step' }}</button>
+      </div>
+
+      @if (stepResult; as r) {
+        @for (msg of r.messages; track msg) {
+          <div class="warn-line">⚠ {{ msg }}</div>
+        }
+        <div class="tiles">
+          <div class="tile">
+            <div class="tile-label">Corrected SOC</div>
+            <div class="tile-value">{{ num(r.soc_corrected_pct, 2) }} %</div>
+            <div class="tile-note">P10–P90 {{ num(r.p10, 2) }} – {{ num(r.p90, 2) }} %</div>
+          </div>
+          <div class="tile">
+            <div class="tile-label">Drift correction</div>
+            <div class="tile-value">{{ signed(r.drift_correction_pct, 2) }} pts</div>
+            <div class="tile-note">vs coulomb {{ num(r.soc_coulomb_pct, 2) }} %</div>
+          </div>
+          <div class="tile">
+            <div class="tile-label">EKF</div>
+            <div class="tile-value">{{ num(r.ekf.soc, 2) }} %</div>
+            <div class="tile-note">sd {{ num(r.sigma_soc, 2) }} · bias {{ signed(r.ekf.bias_a, 2) }} A · gain {{ num(r.ekf.gain, 3) }}</div>
+          </div>
+          <div class="tile">
+            <div class="tile-label">Recalibrated</div>
+            <div class="tile-value">{{ r.recalibrated ? 'Yes · ' + (r.recal_kind === 'FULL_CHARGE' ? 'full charge' : 'rested OCV') : 'No' }}</div>
+            <div class="tile-note">
+              @if (r.ekf.innovation_mv !== null) { OCV innovation {{ signed(r.ekf.innovation_mv, 1) }} mV } @else { no measurement update }
+            </div>
+          </div>
+        </div>
+        <div class="io-grid">
+          <div>
+            <h4 class="sub-title">I/O contract output</h4>
+            <pre class="contract">{{ contract(r) }}</pre>
+          </div>
+          <div class="carry">
+            <button type="button" class="btn btn-secondary" (click)="carryState()">Carry state → next step</button>
+            <p class="muted small">Moves the output state (SOC, sd, bias, gain, direction, last recalibration) into the form and advances the time by Δt.</p>
+          </div>
+        </div>
+      }
+    </div>
+  }
+}

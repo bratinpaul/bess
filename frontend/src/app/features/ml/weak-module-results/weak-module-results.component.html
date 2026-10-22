@@ -1,0 +1,244 @@
+<div class="page-header">
+  <div>
+    <h2>Weak Modules</h2>
+    <p class="subtitle">
+      Anomaly detection results: modules flagged by Isolation Forest and DBSCAN on their voltage / temperature deviation
+      from the system and from their pack. Run new detections on <a routerLink="/ml/weak-module-model">Weak Module Model</a>.
+    </p>
+  </div>
+</div>
+
+<div class="card picker">
+  <label for="run">Run</label>
+  <select id="run" [ngModel]="runId" (ngModelChange)="selectRun($event)" [disabled]="!runs.length">
+    @for (r of runs; track r.run_id) {
+      <option [ngValue]="r.run_id">{{ runLabel(r) }}</option>
+    }
+  </select>
+</div>
+
+@if (error) {
+  <div class="card empty-state error">{{ error }}</div>
+} @else if (!loading && !runs.length) {
+  <div class="card empty-state">
+    No detection runs yet. <a routerLink="/ml/weak-module-model">Run one on the Weak Module Model page</a>.
+  </div>
+} @else if (loading && !run) {
+  <div class="card empty-state">Loading…</div>
+}
+
+@if (run; as r) {
+  <!-- summary -->
+  <div class="metric-grid summary">
+    <div class="metric-tile weak">
+      <span class="metric-label">Weak modules</span>
+      <span class="metric-value">{{ r.n_weak }}</span>
+      <span class="metric-note">flagged by both models</span>
+    </div>
+    <div class="metric-tile suspect">
+      <span class="metric-label">Suspect</span>
+      <span class="metric-value">{{ r.n_suspect }}</span>
+      <span class="metric-note">flagged by one model</span>
+    </div>
+    <div class="metric-tile">
+      <span class="metric-label">Modules analysed</span>
+      <span class="metric-value">{{ r.n_modules }}</span>
+      <span class="metric-note">{{ r.n_packs }} packs · {{ r.n_rows | number }} module-{{ r.grain }} rows</span>
+    </div>
+    <div class="metric-tile">
+      <span class="metric-label">Isolation Forest</span>
+      <span class="metric-value">{{ r.if_anomalies }}</span>
+      <span class="metric-note">anomalous rows ({{ r.params.isolation_forest?.['contamination'] | percent: '1.0-1' }} expected)</span>
+    </div>
+    <div class="metric-tile">
+      <span class="metric-label">DBSCAN</span>
+      <span class="metric-value">{{ r.db_noise }}</span>
+      <span class="metric-note">noise rows · {{ r.db_clusters }} cluster(s) · eps {{ r.eps_used | number: '1.2-2' }}
+        @if (minSamples) {
+          · min {{ minSamples }}
+        }</span>
+    </div>
+    <div class="metric-tile">
+      <span class="metric-label">Model agreement</span>
+      <span class="metric-value">{{ agreement === null ? '—' : (agreement | percent: '1.0-0') }}</span>
+      <span class="metric-note">of rows flagged by either, both flagged</span>
+    </div>
+  </div>
+
+  @for (w of r.warnings; track w) {
+    <div class="warn-line">{{ w }}</div>
+  }
+
+  <div class="results-grid">
+    <!-- heatmap -->
+    <section class="card chart-card">
+      <div class="chart-head">
+        <div>
+          <h4>Module map</h4>
+          <p class="muted small">Combined anomaly score per module · W = weak, S = suspect · click a module</p>
+        </div>
+        <div class="ramp-legend">
+          <span>0</span><i></i><span>1</span>
+        </div>
+      </div>
+      <div class="heatmap" role="grid">
+        <div class="heat-row head">
+          <span class="heat-pack"></span>
+          @for (p of positions; track p) {
+            <span class="heat-pos">M{{ p }}</span>
+          }
+        </div>
+        @for (row of heatRows; track row.pack) {
+          <div class="heat-row">
+            <span class="heat-pack">{{ packShort(row.pack) }}</span>
+            @for (c of row.cells; track c.position) {
+              @if (c.module; as m) {
+                <button type="button" class="heat-cell" [class.sel]="selected?.module_id === m.module_id"
+                  [attr.data-verdict]="m.verdict" [style.background]="heatColor(m.combined_score)"
+                  [style.color]="heatInk(m.combined_score)" (click)="selectModule(m)"
+                  [title]="m.serial_number + ' · ' + verdictLabel(m.verdict) + ' · score ' + m.combined_score.toFixed(2)">
+                  {{ m.verdict === 'WEAK' ? 'W' : m.verdict === 'SUSPECT' ? 'S' : '' }}
+                </button>
+              } @else {
+                <span class="heat-cell empty"></span>
+              }
+            }
+          </div>
+        }
+      </div>
+    </section>
+
+    <!-- scatter -->
+    <section class="card chart-card">
+      <div class="chart-head">
+        <div>
+          <h4>Voltage vs temperature deviation from the pack</h4>
+          <p class="muted small">One point per module-{{ r.grain }}, coloured by which model flagged it</p>
+        </div>
+      </div>
+      @if (scatterChart) {
+        <app-chart-canvas [config]="scatterChart" [height]="300" />
+      }
+    </section>
+  </div>
+
+  <!-- ranked list -->
+  <section class="card list-card">
+    <div class="history-head">
+      <div>
+        <h3>{{ showAll ? 'All modules' : 'Weak and suspect modules' }}</h3>
+        <p class="muted small">Ranked by combined score · a model flags a module when at least
+          {{ r.params.min_anomalous_share | percent }} of its rows are anomalous</p>
+      </div>
+      <label class="check-field">
+        <input type="checkbox" [(ngModel)]="showAll" /> Show all modules
+      </label>
+    </div>
+    @if (!flagged.length) {
+      <div class="empty-state">No weak or suspect modules in this run.</div>
+    } @else {
+      <div class="table-scroll">
+        <table class="data-table rank-table">
+          <thead>
+            <tr>
+              <th class="num">Rank</th>
+              <th>Module</th>
+              <th>Pack</th>
+              <th>Verdict</th>
+              <th class="num">Score</th>
+              <th class="num">IF rows</th>
+              <th class="num">DBSCAN noise</th>
+              <th>First flagged</th>
+              <th>Why</th>
+            </tr>
+          </thead>
+          <tbody>
+            @for (m of flagged; track m.module_id) {
+              <tr [class.selected]="selected?.module_id === m.module_id" (click)="selectModule(m)">
+                <td class="num">{{ m.rank }}</td>
+                <td class="mono">{{ m.serial_number }}</td>
+                <td class="pack">{{ packShort(m.pack_number) }} · M{{ m.position }}</td>
+                <td><span class="verdict" [attr.data-verdict]="m.verdict">{{ verdictLabel(m.verdict) }}</span></td>
+                <td class="num"><strong>{{ m.combined_score | number: '1.2-2' }}</strong></td>
+                <td class="num" [class.hit]="m.if_flag">{{ pct(m.if_anomaly_share) }}</td>
+                <td class="num" [class.hit]="m.db_flag">{{ pct(m.db_noise_share) }}</td>
+                <td class="nowrap">{{ day(m.first_anomaly) }}</td>
+                <td class="reasons">
+                  @for (x of m.reasons; track x.feature) {
+                    <div>{{ x.text }} <span class="muted small">({{ x.label }}, z {{ x.z > 0 ? '+' : '' }}{{ x.z }})</span></div>
+                  }
+                </td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      </div>
+    }
+  </section>
+
+  <!-- drill-down -->
+  @if (selected; as m) {
+    <section class="card list-card">
+      <div class="history-head">
+        <div>
+          <h3>
+            {{ m.serial_number }}
+            <span class="verdict" [attr.data-verdict]="m.verdict">{{ verdictLabel(m.verdict) }}</span>
+          </h3>
+          <p class="muted small">
+            Hourly deviation from its pack vs the other modules of {{ packShort(m.pack_number) }} (grey band: 10th–90th
+            percentile) · rank {{ m.rank }} of {{ r.n_modules }}
+          </p>
+        </div>
+      </div>
+      @if (seriesLoading) {
+        <div class="empty-state">Loading…</div>
+      } @else if (voltageChart && tempChart) {
+        <div class="chart-grid">
+          <div class="chart-box">
+            <h4>Voltage vs pack</h4>
+            <app-chart-canvas [config]="voltageChart" [height]="240" />
+          </div>
+          <div class="chart-box">
+            <h4>Temperature vs pack</h4>
+            <app-chart-canvas [config]="tempChart" [height]="240" />
+          </div>
+        </div>
+        <dl class="settings means">
+          @for (x of m.reasons; track x.feature) {
+            <dt>{{ x.label }}</dt>
+            <dd>{{ x.value | number: '1.1-3' }} · {{ x.text }}</dd>
+          }
+        </dl>
+      }
+    </section>
+  }
+
+  <!-- score a new period -->
+  @if (r.run_kind === 'train') {
+    <section class="card list-card">
+      <h3 class="panel-title">Score another period with this model</h3>
+      <p class="muted small">Isolation Forest scores the new rows with the saved model; DBSCAN clusters them again with
+        this run's eps and min rows. Leave a date empty for the start / end of the data.</p>
+      <div class="score-row">
+        <div class="field">
+          <label for="sf">From</label>
+          <input id="sf" type="date" [(ngModel)]="scoreFrom" />
+        </div>
+        <div class="field">
+          <label for="st">To</label>
+          <input id="st" type="date" [(ngModel)]="scoreTo" />
+        </div>
+        <button data-perm="ml.run:execute" type="button" class="btn btn-secondary" [disabled]="scoring" (click)="scoreNew()">
+          {{ scoring ? 'Scoring…' : 'Score period' }}
+        </button>
+        @if (scoreError) {
+          <span class="problem">{{ scoreError }}</span>
+        }
+      </div>
+    </section>
+  } @else if (r.parent_run_id) {
+    <p class="muted small">Scored with the model of <a [routerLink]="[]" [queryParams]="{ run: r.parent_run_id }"
+      (click)="selectRun(r.parent_run_id)">run #{{ r.parent_run_id }}</a>.</p>
+  }
+}

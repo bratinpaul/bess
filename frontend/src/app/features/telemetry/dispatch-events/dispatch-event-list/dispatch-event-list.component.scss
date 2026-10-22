@@ -1,0 +1,317 @@
+.upload-note {
+  margin: 10px 0 0;
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+
+.link-btn {
+  padding: 0;
+  border: none;
+  background: none;
+  color: #0e8f66;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.muted {
+  color: var(--color-text-muted);
+}
+
+.nowrap {
+  white-space: nowrap;
+}
+
+.negative {
+  color: #b91c1c;
+}
+
+// ---- KPI strip
+.kpis {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(112px, 1fr));
+  gap: 12px;
+  margin: 20px 0;
+}
+
+.kpi {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 14px 16px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  background: #fff;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+}
+
+button.kpi {
+  cursor: pointer;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+button.kpi:hover {
+  border-color: #63f8ba;
+  box-shadow: 0 2px 8px rgba(16, 24, 40, 0.06);
+}
+
+.kpi.selected {
+  border-color: #0e8f66;
+  box-shadow: inset 0 0 0 1px #0e8f66;
+}
+
+.kpi-value {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 20px;
+  font-weight: 700;
+  line-height: 1.1;
+  white-space: nowrap;
+}
+
+.kpi-label {
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+
+.active-kpi.has-active .kpi-value {
+  color: #0e7a58;
+}
+
+.has-aborted .kpi-value {
+  color: #b91c1c;
+}
+
+// ---- "running" marker for the active dispatch
+.live-dot {
+  position: relative;
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #0e8f66;
+}
+
+.live-dot::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: #0e8f66;
+  animation: live 1.6s ease-out infinite;
+}
+
+@keyframes live {
+  from {
+    opacity: 0.6;
+    transform: scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: scale(2.6);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .live-dot::after {
+    animation: none;
+  }
+}
+
+.live-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 2px 10px 2px 8px;
+  border-radius: 999px;
+  background: rgba(99, 248, 186, 0.25);
+  color: #0e6b4d;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+// ---- mode tabs + filters
+.mode-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 16px 20px 0;
+}
+
+.mode-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  background: #fff;
+  color: inherit;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.mode-tab:hover {
+  border-color: #63f8ba;
+}
+
+.mode-tab.active {
+  border-color: #63f8ba;
+  background: rgba(99, 248, 186, 0.22);
+  color: #0e6b4d;
+}
+
+.mode-tab-count {
+  min-width: 20px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.06);
+  font-size: 11px;
+  text-align: center;
+}
+
+.mode-swatch {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  background: #64748b;
+}
+
+.mode-swatch[data-mode='STANDBY'] {
+  background: #eda100;
+}
+
+.mode-swatch[data-mode='ENERGY_ARBITRAGE'] {
+  background: #eb6834;
+}
+
+.mode-swatch[data-mode='FREQUENCY_REGULATION'] {
+  background: #2a78d6;
+}
+
+.mode-swatch[data-mode='SCHEDULED_CHARGE'] {
+  background: #1baf7a;
+}
+
+.mode-swatch[data-mode='IDLE'] {
+  background: #4a3aa7;
+}
+
+.dispatch-filters {
+  flex-wrap: wrap;
+  justify-content: flex-start;
+  gap: 10px;
+}
+
+.dispatch-filters .search-box {
+  flex: 1 1 240px;
+  max-width: 340px;
+}
+
+.filter-select,
+.date-filter input {
+  height: 38px;
+  padding: 0 10px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  background: var(--color-bg);
+  color: var(--color-text);
+  font: inherit;
+  font-size: 13px;
+}
+
+.filter-select:focus,
+.date-filter input:focus {
+  outline: none;
+  border-color: #63f8ba;
+}
+
+.date-filter {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+
+// ---- table
+.dispatch-table.refreshing {
+  opacity: 0.55;
+  transition: opacity 0.15s ease;
+}
+
+// keep the sticky column's divider when marking the running dispatch
+.dispatch-table tr.active-row td:first-child {
+  box-shadow: inset 3px 0 0 #0e8f66, 1px 0 0 var(--color-border);
+}
+
+.dispatch-table tr.rejected-row td {
+  color: var(--color-text-muted);
+}
+
+.dispatch-table .num {
+  text-align: right;
+}
+
+.sub {
+  margin-top: 2px;
+  font-size: 11px;
+  color: var(--color-text-muted);
+  white-space: nowrap;
+}
+
+.sub.rejected {
+  color: #b91c1c;
+  font-weight: 600;
+}
+
+.mode-cell {
+  min-width: 190px;
+}
+
+// charge / discharge: arrow + word carry the direction, colour only reinforces it
+.setpoint {
+  font-weight: 600;
+}
+
+.setpoint[data-dir='charge'] {
+  color: #0e7a58;
+}
+
+.setpoint[data-dir='discharge'] {
+  color: #b45309;
+}
+
+.setpoint[data-dir='none'] {
+  color: var(--color-text-muted);
+  font-weight: 500;
+}
+
+.arrow {
+  font-size: 10px;
+}
+
+/* graphical view: the shared filters sit in their own card above the charts */
+.graph-filters {
+  margin-bottom: 16px;
+}
+
+// the chart selector sits under the filters, as on the other telemetry graph pages
+.graph-filters app-chart-selector {
+  display: block;
+  border-top: 1px solid var(--color-border);
+}
+
+// the telemetry table keeps cells on one line; the note may wrap
+.dispatch-table td.wrap-cell {
+  min-width: 220px;
+  max-width: 360px;
+  white-space: normal;
+}

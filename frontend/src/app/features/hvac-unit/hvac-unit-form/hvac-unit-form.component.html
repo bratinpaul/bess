@@ -1,0 +1,78 @@
+<div class="page-header">
+  <div>
+    <a class="back-link" routerLink="/hvac-units">← Back to HVAC units</a>
+    <h2>{{ isEditMode ? 'Edit HVAC Unit' : 'Add HVAC Unit' }}</h2>
+  </div>
+  @if (isEditMode && itemId) {
+    <app-asset-links assetType="hvac_unit" [assetId]="itemId" [name]="savedCode" [systemId]="savedSystemId" />
+  }
+</div>
+
+<div class="card">
+  @if (loading) {
+    <div class="empty-state">Loading…</div>
+  } @else {
+    <form [formGroup]="form" (ngSubmit)="submit()">
+      @if (error) {
+        <div class="form-error">{{ error }}</div>
+      }
+
+      <div class="form-grid">
+        <div class="field">
+          <label for="battery_system_id">Battery System *</label>
+          <select id="battery_system_id" formControlName="battery_system_id">
+            <option [ngValue]="null" disabled>Select a battery system</option>
+            @for (system of batterySystems; track system.battery_system_id) {
+              <option [ngValue]="system.battery_system_id">{{ system.system_name }}</option>
+            }
+          </select>
+          @if (invalid('battery_system_id')) {
+            <span class="field-error">Battery system is required.</span>
+          }
+        </div>
+
+        <div class="field">
+          <label for="hvac_code">HVAC Code *</label>
+          <input id="hvac_code" type="text" formControlName="hvac_code" placeholder="e.g. HVAC-02" />
+          @if (invalid('hvac_code')) {
+            <span class="field-error">Code is required (max 100 characters).</span>
+          } @else {
+            <span class="field-hint">Must be unique.</span>
+          }
+        </div>
+
+        <div class="field">
+          <label for="manufacturer">Manufacturer</label>
+          <input id="manufacturer" type="text" formControlName="manufacturer" />
+        </div>
+
+        <div class="field">
+          <label for="model">Model</label>
+          <input id="model" type="text" formControlName="model" />
+        </div>
+
+        <div class="field">
+          <label for="hvac_type">Type</label>
+          <input id="hvac_type" type="text" formControlName="hvac_type" placeholder="e.g. Precision Air Conditioning" />
+        </div>
+
+        <div class="field">
+          <label for="cooling_capacity_kw">Cooling Capacity (kW)</label>
+          <input id="cooling_capacity_kw" type="number" formControlName="cooling_capacity_kw" min="0" step="0.1" />
+        </div>
+
+        <div class="field">
+          <label for="status">Status</label>
+          <input id="status" type="text" formControlName="status" placeholder="e.g. operational" />
+        </div>
+      </div>
+
+      <div class="form-actions">
+        <a class="btn btn-secondary" routerLink="/hvac-units">Cancel</a>
+        <button type="submit" class="btn btn-primary" [disabled]="saving">
+          {{ saving ? 'Saving…' : 'Save Unit' }}
+        </button>
+      </div>
+    </form>
+  }
+</div>

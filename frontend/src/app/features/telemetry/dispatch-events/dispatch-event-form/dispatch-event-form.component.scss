@@ -1,0 +1,62 @@
+.card {
+  padding: 24px;
+  max-width: 920px;
+}
+
+.form-section-title {
+  margin: 22px 0 10px;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+}
+
+.form-section-title:first-of-type {
+  margin-top: 0;
+}
+
+.form-grid.three {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.input-with-action {
+  display: flex;
+  gap: 8px;
+}
+
+.input-with-action input {
+  flex: 1;
+  min-width: 0;
+}
+
+// derived value shown in the shape of an input, but not editable
+.readonly-value {
+  display: flex;
+  align-items: center;
+  height: 38px;
+  padding: 0 12px;
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius);
+  color: var(--color-text-muted);
+  font-weight: 600;
+}
+
+.check-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 26px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.setpoint-hint[data-dir='charge'] {
+  color: #0e7a58;
+  font-weight: 600;
+}
+
+.setpoint-hint[data-dir='discharge'] {
+  color: #b45309;
+  font-weight: 600;
+}

@@ -1,0 +1,99 @@
+.unit-list {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.feature-group.dim {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.field select,
+.field input {
+  width: 100%;
+}
+
+.check-field label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 500;
+}
+
+.check-field input {
+  width: auto;
+}
+
+.section-title {
+  margin: 22px 0 10px;
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-text-muted);
+}
+
+.mini-title {
+  margin: 14px 0 6px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.best-chip {
+  margin-left: 6px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: rgba(99, 248, 186, 0.3);
+  color: #0b6b4c;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.score-split {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+  gap: 8px 24px;
+  margin-bottom: 8px;
+}
+
+.compare-table tr.sep td {
+  border-top: 2px solid var(--color-border);
+}
+
+.coef-table td,
+.coef-table th {
+  padding: 5px 8px;
+  font-size: 12px;
+}
+
+.head-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.cycle-scroll {
+  max-height: 360px;
+  overflow: auto;
+}
+
+.cycle-table td,
+.cycle-table th {
+  padding: 5px 8px;
+  font-size: 12px;
+}
+
+.cycle-table tr.dim td {
+  opacity: 0.55;
+}
+
+.metric-grid {
+  margin-bottom: 4px;
+}
+
+.swatch {
+  display: inline-block;
+  margin-right: 4px;
+  vertical-align: baseline;
+}

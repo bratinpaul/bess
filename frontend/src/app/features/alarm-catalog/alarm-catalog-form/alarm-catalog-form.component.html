@@ -1,0 +1,117 @@
+<div class="page-header">
+  <div>
+    <a class="back-link" routerLink="/alarm-catalog">← Back to alarm catalog</a>
+    <h2>{{ isEditMode ? 'Edit Alarm' : 'Add Alarm' }}</h2>
+  </div>
+</div>
+
+<div class="card">
+  @if (loading) {
+    <div class="empty-state">Loading…</div>
+  } @else {
+    <form [formGroup]="form" (ngSubmit)="submit()">
+      @if (error) {
+        <div class="form-error">{{ error }}</div>
+      }
+
+      <h3 class="form-section-title">Alarm</h3>
+      <div class="form-grid">
+        <div class="field">
+          <label for="source">Source *</label>
+          <select id="source" formControlName="source">
+            <option [ngValue]="null" disabled>Select a source</option>
+            @for (s of sources; track s) {
+              <option [ngValue]="s">{{ s }}</option>
+            }
+          </select>
+          @if (invalid('source')) {
+            <span class="field-error">Source is required.</span>
+          }
+        </div>
+
+        <div class="field">
+          <label for="alarm_code">Alarm Code *</label>
+          <input id="alarm_code" type="text" formControlName="alarm_code" placeholder="e.g. HighCellTemp" />
+          @if (invalid('alarm_code')) {
+            <span class="field-error">Alarm code is required (max 100 characters).</span>
+          } @else {
+            <span class="field-hint">Unique within its source.</span>
+          }
+        </div>
+
+        <div class="field">
+          <label for="alarm_type">Alarm Type *</label>
+          <input id="alarm_type" type="text" formControlName="alarm_type" list="alarmTypeOptions" placeholder="e.g. Thermal" />
+          <datalist id="alarmTypeOptions">
+            @for (t of alarmTypes; track t) {
+              <option [value]="t"></option>
+            }
+          </datalist>
+          @if (invalid('alarm_type')) {
+            <span class="field-error">Alarm type is required (max 50 characters).</span>
+          }
+        </div>
+
+        <div class="field">
+          <label for="severity_level">Severity *</label>
+          <select id="severity_level" formControlName="severity_level">
+            <option [ngValue]="null" disabled>Select a severity</option>
+            @for (s of severities; track s.severity_level) {
+              <option [ngValue]="s.severity_level">{{ s.severity_level }} · {{ s.severity_name }}</option>
+            }
+          </select>
+          @if (invalid('severity_level')) {
+            <span class="field-error">Severity is required.</span>
+          }
+        </div>
+
+        <div class="field">
+          <label for="asset_type">Asset Type</label>
+          <input id="asset_type" type="text" formControlName="asset_type" list="assetTypeOptions" placeholder="e.g. Module" />
+          <datalist id="assetTypeOptions">
+            @for (t of assetTypes; track t) {
+              <option [value]="t"></option>
+            }
+          </datalist>
+        </div>
+      </div>
+
+      <h3 class="form-section-title">Details</h3>
+      <div class="form-grid">
+        <div class="field span-2">
+          <label for="description">Description *</label>
+          <textarea id="description" rows="2" formControlName="description"></textarea>
+          @if (invalid('description')) {
+            <span class="field-error">Description is required (max 500 characters).</span>
+          }
+        </div>
+
+        <div class="field span-2">
+          <label for="probable_cause">Probable Cause</label>
+          <textarea id="probable_cause" rows="2" formControlName="probable_cause"></textarea>
+        </div>
+
+        <div class="field">
+          <label for="threshold">Threshold</label>
+          <input id="threshold" type="number" step="any" formControlName="threshold" />
+          <span class="field-hint">Leave empty for event alarms (e.g. communication faults).</span>
+        </div>
+
+        <div class="field">
+          <label for="unit">Unit</label>
+          <input id="unit" type="text" formControlName="unit" placeholder="e.g. degC, mV, Hz" />
+          @if (invalid('unit')) {
+            <span class="field-error">Max 20 characters.</span>
+          }
+        </div>
+      </div>
+
+      <div class="form-actions">
+        <a class="btn btn-secondary" routerLink="/alarm-catalog">Cancel</a>
+        <button type="submit" class="btn btn-primary" [disabled]="saving">
+          {{ saving ? 'Saving…' : 'Save Alarm' }}
+        </button>
+      </div>
+    </form>
+  }
+</div>

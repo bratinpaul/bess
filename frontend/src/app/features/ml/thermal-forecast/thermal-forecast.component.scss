@@ -1,0 +1,122 @@
+.control-group {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.control-label {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--color-text-muted);
+}
+
+.filter-select {
+  padding: 6px 8px;
+}
+
+.filter-select.narrow {
+  min-width: 0;
+}
+
+.note-warn {
+  color: #875800;
+  font-weight: 600;
+}
+
+.target-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(440px, 1fr));
+  gap: 14px;
+  margin: 12px 0;
+}
+
+@media (max-width: 600px) {
+  .target-cards {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.t-card {
+  min-width: 0;
+  padding: 14px 16px;
+  border: 1px solid var(--color-border);
+  border-left: 4px solid #1baf7a;
+  border-radius: var(--radius);
+}
+
+.t-card[data-status='WATCH'] {
+  border-left-color: #eda100;
+}
+
+.t-card[data-status='ALERT'] {
+  border-left-color: #b2471b;
+}
+
+.t-card[data-status='STALE'] {
+  border-left-color: #8a8f98;
+  background: var(--color-bg);
+}
+
+.t-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+
+  h3 {
+    margin: 0;
+    font-size: 15px;
+  }
+}
+
+.status-pill {
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 700;
+  background: rgba(27, 175, 122, 0.14);
+  color: #0e6b4d;
+}
+
+.status-pill[data-status='WATCH'] {
+  background: rgba(237, 161, 0, 0.16);
+  color: #875800;
+}
+
+.status-pill[data-status='ALERT'] {
+  background: rgba(178, 71, 27, 0.14);
+  color: #8e2a1f;
+}
+
+.status-pill[data-status='STALE'] {
+  background: rgba(100, 108, 120, 0.14);
+  color: #475569;
+}
+
+.t-values {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 18px;
+  margin: 10px 0 8px;
+
+  > div {
+    display: flex;
+    flex-direction: column;
+  }
+
+  strong {
+    font-size: 17px;
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+.tile-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-text-muted);
+}

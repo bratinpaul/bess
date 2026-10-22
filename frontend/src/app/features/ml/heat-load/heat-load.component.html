@@ -1,0 +1,310 @@
+<div class="page-header hl-header">
+  <div>
+    <h2>Heat Load &amp; Thermal Design</h2>
+    <p class="subtitle">
+      The heat the HVAC must reject - battery ohmic + entropic heat, PCS loss, aux electronics, solar and envelope gains - against
+      the measured reference; the cooling plant it calls for at the worst credible condition; and the look-ahead for pre-cooling.
+      Compute runs on <a routerLink="/ml/heat-load-model">Heat Load Model</a>.
+    </p>
+  </div>
+  <div class="hl-controls">
+    <div class="field">
+      <label for="run">Run</label>
+      <select id="run" [ngModel]="runId" (ngModelChange)="selectRun($event)">
+        @for (r of runs; track r.run_id) {
+          <option [ngValue]="r.run_id">{{ runLabel(r) }}</option>
+        }
+      </select>
+    </div>
+    <div class="field">
+      <label for="sys">Battery system</label>
+      <select id="sys" [(ngModel)]="systemId" (ngModelChange)="onSystem()">
+        @for (x of systems; track x.id) {
+          <option [ngValue]="x.id">{{ x.name }}</option>
+        }
+      </select>
+    </div>
+  </div>
+</div>
+
+@if (error) {
+  <div class="card empty-state error">{{ error }}</div>
+}
+@if (!error && !runs.length) {
+  <div class="card empty-state">No completed heat-load run yet - compute one on <a routerLink="/ml/heat-load-model">Heat Load Model</a>.</div>
+}
+
+@if (s; as s) {
+  @if (warnings.length) {
+    <div class="hl-warnings">
+      <button type="button" class="link-btn" (click)="showWarnings = !showWarnings">⚠ {{ warnings.length }} data note(s) for {{ s.system_name }} {{ showWarnings ? '▴' : '▾' }}</button>
+      @if (showWarnings) {
+        <ul>
+          @for (x of warnings; track $index) {
+            <li>{{ x.slice(s.system_name.length + 2) }}</li>
+          }
+        </ul>
+      }
+    </div>
+  }
+
+  <div class="metric-grid hl-tiles">
+    <div class="metric-card"><div class="metric-body"><span class="metric-label">Measured peak</span><span class="metric-value">{{ num(obs('measured_peak_kw'), 1) }}<span class="metric-unit">kW</span></span><span class="metric-sub">{{ s.measured_reference === 'cooling_delivered' ? 'cooling delivered' : 'HVAC heat-load reading' }} · mean {{ num(s.design.duty.mean_kw, 1) }} kW (model)</span></div></div>
+    <div class="metric-card"><div class="metric-body"><span class="metric-label">Calibrated model</span><span class="metric-value">{{ num(s.calibration.test.r2, 3) }}<span class="metric-unit">R² test</span></span><span class="metric-sub">MAE {{ num(s.calibration.test.mae_kw, 2) }} kW · nameplate physics {{ num(s.calibration.nameplate_test.mae_kw, 2) }} kW</span></div></div>
+    <div class="metric-card" [class.hl-warn]="Math.abs(s.closure.residual_pct_of_measured ?? 0) > 15"><div class="metric-body"><span class="metric-label">Balance closure</span><span class="metric-value">{{ num(s.closure.residual_pct_of_measured, 1) }}<span class="metric-unit">%</span></span><span class="metric-sub">nameplate Q<sub>total</sub> − stored − measured, mean {{ num(s.closure.mean_residual_kw, 2) }} kW</span></div></div>
+    <div class="metric-card"><div class="metric-body"><span class="metric-label">Design capacity</span><span class="metric-value">{{ num(s.design.required_capacity_kw, 1) }}<span class="metric-unit">kW</span></span><span class="metric-sub">peak {{ num(s.design.q_peak_kw, 1) }} kW at EOL + {{ s.design.margin_pct }} % · {{ s.design.units_installed_n_plus ?? '—' }} units (N+{{ s.design.redundancy ?? 0 }})</span></div></div>
+    <div class="metric-card" [class.hl-warn]="(obs('installed_capacity_kw') ?? 1e9) < s.design.required_capacity_kw"><div class="metric-body"><span class="metric-label">Installed</span><span class="metric-value">{{ num(obs('installed_capacity_kw'), 0) }}<span class="metric-unit">kW</span></span><span class="metric-sub">{{ num(obs('master_unit_capacity_kw'), 0) }} kW × {{ num(obs('units_running_max'), 0) }} units running · delivered peak {{ num(obs('cooling_delivered_peak_kw'), 0) }} kW</span></div></div>
+    <div class="metric-card"><div class="metric-body"><span class="metric-label">60-min forecast</span><span class="metric-value">{{ num(score(60, 'p50_mae'), 2) }}<span class="metric-unit">kW MAE</span></span><span class="metric-sub">persistence {{ num(score(60, 'persistence_mae'), 2) }} kW · P10–P90 cover {{ pct(score(60, 'coverage_p10_p90'), 0) }} %</span></div></div>
+  </div>
+
+  <div class="view-tabs" role="tablist" aria-label="Heat-load view">
+    <button type="button" role="tab" class="view-tab" [class.active]="tab === 'balance'" (click)="setTab('balance')">Heat balance</button>
+    <button type="button" role="tab" class="view-tab" [class.active]="tab === 'design'" (click)="setTab('design')">Thermal design</button>
+    <button type="button" role="tab" class="view-tab" [class.active]="tab === 'forecast'" (click)="setTab('forecast')">Forecast</button>
+    <button type="button" role="tab" class="view-tab" [class.active]="tab === 'ledger'" (click)="setTab('ledger')">Ledger</button>
+  </div>
+
+  <!-- ================================================================ HEAT BALANCE -->
+  @if (tab === 'balance') {
+    <div class="card chart-card">
+      <div class="hl-card-head">
+        <h3>Heat sources vs the measured reference · {{ day }}</h3>
+        <div class="hl-step">
+          <button type="button" class="btn btn-secondary btn-icon" title="Previous day" (click)="stepDay(-1)">‹</button>
+          <select [(ngModel)]="day" (ngModelChange)="loadDay()">
+            @for (d of days; track d) {
+              <option [ngValue]="d">{{ d }}</option>
+            }
+          </select>
+          <button type="button" class="btn btn-secondary btn-icon" title="Next day" (click)="stepDay(1)">›</button>
+        </div>
+      </div>
+      @if (dayChart) {
+        <app-chart-canvas [config]="dayChart" [height]="320" />
+      }
+      <p class="hl-note">Bars: the nameplate heat terms per 5-min interval (entropic heat goes negative on the half-cycle where it cools). Lines: the measured reference and the calibrated model.</p>
+    </div>
+    <div class="hl-two">
+      <div class="card chart-card">
+        <h3>Daily mean heat by source</h3>
+        @if (dailyChart) {
+          <app-chart-canvas [config]="dailyChart" [height]="270" />
+        }
+      </div>
+      <div class="card chart-card">
+        <h3>Daily peak heat</h3>
+        @if (peakChart) {
+          <app-chart-canvas [config]="peakChart" [height]="270" />
+        }
+      </div>
+    </div>
+    <div class="card chart-card">
+      <h3>Which half-cycle runs hotter · mean kW over the window</h3>
+      <div class="table-scroll">
+        <table class="data-table">
+          <thead><tr><th>Term</th><th class="num">Charge</th><th class="num">Discharge</th><th class="num">Idle</th></tr></thead>
+          <tbody>
+            @for (r of dirRows; track r.key) {
+              <tr [class.hl-total]="r.key === 'q_total_kw' || r.key === 'measured_kw'">
+                <td>@if (color[r.key]) {<span class="hl-swatch" [style.background]="color[r.key]"></span>}{{ r.label }}</td>
+                <td class="num mono">{{ num(r.v('CHARGE'), 2) }}</td>
+                <td class="num mono">{{ num(r.v('DISCHARGE'), 2) }}</td>
+                <td class="num mono">{{ num(r.v('IDLE'), 2) }}</td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      </div>
+      <p class="hl-note">The entropic term (I·T·dU/dT, {{ num(condNum('dudt_mv_per_k'), 2) }} mV/K per cell from the OCV curve) heats one half-cycle and cools the other; a pure I²R model can't tell which runs hotter. The calibration keeps {{ pct(s.calibration.coef.rev, 0) }} % of the entropic term; battery ohmic factors charge {{ num(s.calibration.coef.irr_chg, 2) }} / discharge {{ num(s.calibration.coef.irr_dis, 2) }}, PCS {{ num(s.calibration.coef.pcs, 2) }}.</p>
+    </div>
+  }
+
+  <!-- ================================================================ DESIGN -->
+  @if (tab === 'design') {
+    <div class="hl-two">
+      <div class="card chart-card">
+        <h3>Design heat load at the coincident worst case</h3>
+        @if (designChart) {
+          <app-chart-canvas [config]="designChart" [height]="300" />
+        }
+        <dl class="hl-dl">
+          <dt>Condition</dt><dd>{{ num(condNum('power_kw'), 0) }} kW sustained ({{ num(condNum('current_a'), 0) }} A, C-rate {{ num(condNum('c_rate'), 2) }}) · SOC {{ num(condNum('soc_pct'), 0) }} % · cells {{ num(condNum('cell_temp_c'), 0) }} °C</dd>
+          <dt>Ambient</dt><dd>{{ num(condNum('ambient_c'), 1) }} °C ({{ cond('ambient_source') }}) · {{ num(condNum('ghi_wm2'), 0) }} W/m² · setpoint {{ num(condNum('internal_setpoint_c'), 0) }} °C · coincidence {{ num(condNum('coincidence'), 2) }}</dd>
+          <dt>End of life</dt><dd>resistance {{ num(condNum('eol_resistance_pct'), 0) }} % of BOL → ×{{ num(condNum('eol_multiplier'), 2) }} vs today (SOH {{ num(condNum('soh_now_pct'), 2) }} %)</dd>
+          <dt>Sizing</dt><dd><strong>{{ s.design.sizing_direction.toLowerCase() }}</strong> sizes the plant: {{ num(s.design.q_peak_kw, 1) }} kW (BOL {{ num(s.design.q_peak_bol_kw, 1) }} kW) × {{ 1 + s.design.margin_pct / 100 }} = <strong>{{ num(s.design.required_capacity_kw, 1) }} kW</strong></dd>
+          <dt>Units</dt><dd>{{ num(s.design.unit_capacity_kw, 1) }} kW rated → {{ num(s.design.unit_capacity_at_design_kw, 1) }} kW at {{ num(condNum('ambient_c'), 0) }} °C · {{ s.design.units_n ?? '—' }} needed + {{ s.design.redundancy ?? 0 }} redundant = <strong>{{ s.design.units_installed_n_plus ?? '—' }}</strong> ({{ num(s.design.installed_capacity_kw, 0) }} kW)</dd>
+          <dt>Factors</dt><dd>{{ cond('calibrated') ? 'calibrated scale factors (battery + PCS weakly identified individually)' : 'nameplate physics' }} · external gains from the {{ cond('external_gains') }} envelope</dd>
+        </dl>
+      </div>
+      <div class="card chart-card">
+        <h3>Does the design bracket the installed HVAC?</h3>
+        @if (bracketChart) {
+          <app-chart-canvas [config]="bracketChart" [height]="260" />
+        }
+        <p class="hl-note">The window's measured peak is the floor (at today's resistance and weather); the requirement adds end-of-life
+          resistance, design ambient and solar, and margin. The sample's installed rating and the telemetry's delivered peak are the two
+          capacity figures it should sit between.</p>
+        <table class="data-table hl-terms">
+          <thead><tr><th>Term</th><th class="num">Charge</th><th class="num">Discharge</th></tr></thead>
+          <tbody>
+            @for (t of designTerms; track t.key) {
+              <tr><td><span class="hl-swatch" [style.background]="t.color"></span>{{ t.label }}</td>
+                <td class="num mono">{{ num($any(s.design.cases.CHARGE.terms)[t.key], 1) }}</td>
+                <td class="num mono">{{ num($any(s.design.cases.DISCHARGE.terms)[t.key], 1) }}</td></tr>
+            }
+            <tr class="hl-total"><td>Q<sub>peak</sub></td><td class="num mono">{{ num(s.design.cases.CHARGE.q_peak_kw, 1) }}</td><td class="num mono">{{ num(s.design.cases.DISCHARGE.q_peak_kw, 1) }}</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <div class="hl-two">
+      <div class="card chart-card">
+        <h3>Load-duration curve</h3>
+        @if (ldcChart) {
+          <app-chart-canvas [config]="ldcChart" [height]="270" />
+        }
+        <p class="hl-note">Peak sets the equipment; the duty profile sets the running cost. {{ num(s.design.duty.hours_above_design, 1) }} h above the required capacity in the window.</p>
+      </div>
+      <div class="card chart-card">
+        <h3>Duty histogram</h3>
+        @if (histChart) {
+          <app-chart-canvas [config]="histChart" [height]="270" />
+        }
+      </div>
+    </div>
+    <div class="metric-grid hl-tiles">
+      <div class="metric-card"><div class="metric-body"><span class="metric-label">Annual heat to reject</span><span class="metric-value">{{ num(s.design.duty.annual_heat_mwh, 1) }}<span class="metric-unit">MWh<sub>th</sub></span></span><span class="metric-sub">{{ num(s.design.duty.heat_kwh / 1000, 1) }} MWh in {{ num(s.design.duty.hours / 24, 0) }} days × {{ num(s.design.duty.annualization_factor, 1) }}</span></div></div>
+      <div class="metric-card"><div class="metric-body"><span class="metric-label">Annual chiller energy</span><span class="metric-value">{{ num(s.design.duty.annual_chiller_mwh, 1) }}<span class="metric-unit">MWh<sub>e</sub></span></span><span class="metric-sub">COP = {{ num(s.design.duty.cop_fit.intercept, 2) }} {{ s.design.duty.cop_fit.slope_per_c >= 0 ? '+' : '−' }} {{ num(Math.abs(s.design.duty.cop_fit.slope_per_c), 3) }}·T<sub>amb</sub> ({{ s.design.duty.cop_fit.n }} cooling intervals)</span></div></div>
+      @for (b of s.design.duty.part_load_vs_design; track b.band) {
+        <div class="metric-card"><div class="metric-body"><span class="metric-label">Load {{ b.band }} of design</span><span class="metric-value">{{ pct(b.share, 1) }}<span class="metric-unit">% of time</span></span></div></div>
+      }
+      @if (s.design.hot_spot['dt_max_c'] !== undefined) {
+        <div class="metric-card"><div class="metric-body"><span class="metric-label">Cell ΔT (hot-spot check)</span><span class="metric-value">{{ num(s.design.hot_spot['dt_p99_c'], 1) }}<span class="metric-unit">°C p99</span></span><span class="metric-sub">max {{ num(s.design.hot_spot['dt_max_c'], 1) }} °C · {{ num(s.design.hot_spot['hours_dt_over_5c'], 0) }} h above 5 °C · cell max {{ num(s.design.hot_spot['cell_max_peak_c'], 1) }} °C</span></div></div>
+      }
+    </div>
+    <p class="hl-note">The annual figures scale the observed window to 8,760 h - a representative year needs a year of dispatch × weather. A module hot spot can demand cooling the pack-average heat load hides; ΔT correlates {{ num(s.design.hot_spot['corr_with_heat'], 2) }} with the heat load here.</p>
+  }
+
+  <!-- ================================================================ FORECAST -->
+  @if (tab === 'forecast') {
+    <div class="hl-two">
+      <div class="card chart-card">
+        <h3>Error by horizon · {{ s.forecast.issues }} issues</h3>
+        @if (maeChart) {
+          <app-chart-canvas [config]="maeChart" [height]="250" />
+        }
+        <p class="hl-note">Plan: {{ run?.params?.plan_source }} · RC time constant τ = {{ s.forecast.tau_min }} min (fitted on the training issues).</p>
+      </div>
+      <div class="card chart-card">
+        <h3>Scores</h3>
+        <table class="data-table">
+          <thead><tr><th>Horizon</th><th class="num">Persistence</th><th class="num">Physics</th><th class="num">Hybrid P50</th><th class="num">Skill</th><th class="num">P10–P90</th><th class="num">High-load recall</th></tr></thead>
+          <tbody>
+            @for (h of horizons; track h) {
+              <tr>
+                <td class="mono">{{ h }} min</td>
+                <td class="num mono">{{ num(score(h, 'persistence_mae'), 2) }}</td>
+                <td class="num mono">{{ num(score(h, 'physics_mae'), 2) }}</td>
+                <td class="num mono"><strong>{{ num(score(h, 'p50_mae'), 2) }}</strong></td>
+                <td class="num mono">{{ pct(score(h, 'skill_vs_persistence'), 0) }} %</td>
+                <td class="num mono">{{ pct(score(h, 'coverage_p10_p90'), 0) }} %</td>
+                <td class="num mono">{{ pct(score(h, 'high_load_recall_p90'), 0) }} %</td>
+              </tr>
+            }
+          </tbody>
+        </table>
+        <p class="hl-note">MAE in kW. High-load recall: intervals above {{ num(s.forecast.high_load_threshold_kw, 1) }} kW (training P90) the P90 forecast flagged - what pre-cooling acts on.</p>
+      </div>
+    </div>
+    <div class="card chart-card">
+      <div class="hl-card-head">
+        <h3>Fixed-horizon forecast vs actual</h3>
+        <div class="hl-step">
+          <select [(ngModel)]="horizon" (ngModelChange)="loadSeries()">
+            @for (h of horizons; track h) {
+              <option [ngValue]="h">{{ h }} min ahead</option>
+            }
+          </select>
+          <input type="date" [(ngModel)]="fcFrom" (ngModelChange)="loadSeries()" />
+          <input type="date" [(ngModel)]="fcTo" (ngModelChange)="loadSeries()" />
+        </div>
+      </div>
+      @if (seriesChart) {
+        <app-chart-canvas [config]="seriesChart" [height]="300" />
+        <app-chart-canvas [config]="planChart!" [height]="140" />
+      } @else {
+        <div class="empty-state">No forecast points in the chosen days (the backtest covers the test share from {{ s.test_from | date: 'yyyy-MM-dd' }}).</div>
+      }
+    </div>
+    <div class="card chart-card">
+      <div class="hl-card-head">
+        <h3>One issue: the look-ahead a pre-cooling decision would see</h3>
+        <div class="hl-step">
+          <button type="button" class="btn btn-secondary btn-icon" title="Previous issue" (click)="stepIssue(-1)">‹</button>
+          <select [(ngModel)]="issue" (ngModelChange)="loadTrajectory()">
+            @for (i of issues; track i) {
+              <option [ngValue]="i">{{ time(i) }}</option>
+            }
+          </select>
+          <button type="button" class="btn btn-secondary btn-icon" title="Next issue" (click)="stepIssue(1)">›</button>
+        </div>
+      </div>
+      @if (trajChart) {
+        <app-chart-canvas [config]="trajChart" [height]="260" />
+      }
+    </div>
+  }
+
+  <!-- ================================================================ LEDGER -->
+  @if (tab === 'ledger') {
+    <div class="card chart-card">
+      <div class="hl-card-head">
+        <h3>Heat ledger · {{ day }}</h3>
+        <div class="hl-step">
+          <button type="button" class="btn btn-secondary btn-icon" title="Previous day" (click)="stepDay(-1)">‹</button>
+          <select [(ngModel)]="day" (ngModelChange)="loadDay()">
+            @for (d of days; track d) {
+              <option [ngValue]="d">{{ d }}</option>
+            }
+          </select>
+          <button type="button" class="btn btn-secondary btn-icon" title="Next day" (click)="stepDay(1)">›</button>
+        </div>
+      </div>
+      <div class="table-scroll hl-ledger">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>Time</th><th>Dir.</th><th class="num">Ohmic</th><th class="num">Entropic</th><th class="num">PCS</th><th class="num">Aux</th><th class="num">Solar</th>
+              <th class="num">Envelope</th><th class="num">Stored</th><th class="num">Q total</th><th class="num">Model</th><th class="num">Measured</th><th class="num">Residual</th>
+              <th class="num">T amb</th><th class="num">T encl.</th><th class="num">ΔT cell</th><th class="num">GHI</th>
+            </tr>
+          </thead>
+          <tbody>
+            @for (r of ledger; track r.ts) {
+              <tr>
+                <td class="mono">{{ r.ts.slice(11, 16) }}</td>
+                <td>{{ r.direction.toLowerCase() }}</td>
+                <td class="num mono">{{ num(r.q_batt_irr_kw, 2) }}</td>
+                <td class="num mono">{{ num(r.q_batt_rev_kw, 2) }}</td>
+                <td class="num mono">{{ num(r.q_pcs_kw, 2) }}</td>
+                <td class="num mono">{{ num(r.q_aux_kw, 2) }}</td>
+                <td class="num mono">{{ num(r.q_solar_kw, 2) }}</td>
+                <td class="num mono">{{ num(r.q_env_kw, 2) }}</td>
+                <td class="num mono">{{ num(r.q_storage_kw, 2) }}</td>
+                <td class="num mono">{{ num(r.q_total_kw, 2) }}</td>
+                <td class="num mono">{{ num(r.q_model_kw, 2) }}</td>
+                <td class="num mono">{{ num(r.measured_kw, 2) }}</td>
+                <td class="num mono">{{ num(r.residual_kw, 2) }}</td>
+                <td class="num mono">{{ num(r.t_amb_c, 1) }}</td>
+                <td class="num mono">{{ num(r.t_enc_c, 1) }}</td>
+                <td class="num mono">{{ num(r.dt_cell_c, 1) }}</td>
+                <td class="num mono">{{ num(r.ghi_wm2, 0) }}{{ r.ghi_source === 'clear_sky' ? '*' : '' }}</td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      </div>
+      <p class="hl-note">kW thermal per 5-min interval. Residual = Q total − stored − measured. * clear-sky irradiance estimate.</p>
+    </div>
+  }
+}

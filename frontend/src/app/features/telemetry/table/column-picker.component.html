@@ -1,0 +1,49 @@
+<button
+  type="button"
+  class="btn btn-secondary btn-columns"
+  aria-haspopup="true"
+  [attr.aria-expanded]="open"
+  (click)="open = !open">
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+    <rect x="3.5" y="4.5" width="17" height="15" rx="1.5" stroke="currentColor" stroke-width="1.6" />
+    <path d="M9.5 4.5v15M14.5 4.5v15" stroke="currentColor" stroke-width="1.6" />
+  </svg>
+  Columns
+  <span class="column-count">{{ visibleCount }}</span>
+  <svg class="caret" [class.open]="open" width="12" height="12" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+    <path d="M6 9l6 6 6-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+  </svg>
+</button>
+
+@if (open) {
+  <div class="column-panel" role="dialog" aria-label="Choose table columns">
+    <div class="column-panel-head">
+      <span>Show columns</span>
+      <div class="column-panel-actions">
+        <button type="button" class="text-btn" (click)="selectAll()">Select all</button>
+        <button type="button" class="text-btn" [disabled]="isDefault" (click)="reset()">Default</button>
+      </div>
+    </div>
+    <div class="column-panel-body">
+      @for (group of groups; track group.name) {
+        <div class="column-group">
+          <div class="column-group-name">{{ group.name }}</div>
+          @for (column of group.columns; track column.key) {
+            <label class="column-option" [class.locked]="column.locked">
+              <input
+                type="checkbox"
+                class="box"
+                [checked]="isSelected(column)"
+                [disabled]="column.locked"
+                (change)="toggle(column)" />
+              <span>{{ column.label }}</span>
+              @if (column.locked) {
+                <span class="locked-tag">always</span>
+              }
+            </label>
+          }
+        </div>
+      }
+    </div>
+  </div>
+}

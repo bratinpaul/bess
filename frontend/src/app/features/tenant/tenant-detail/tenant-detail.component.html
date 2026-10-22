@@ -1,0 +1,254 @@
+<div class="page-header">
+  <div>
+    <a class="back-link" routerLink="/tenants">← Back to tenants</a>
+    @if (tenant) {
+      <h2>{{ tenant.name }}</h2>
+    }
+  </div>
+  @if (tenant) {
+    <a class="btn btn-primary" [routerLink]="['/tenants', tenant.tenant_id, 'edit']">Edit Tenant</a>
+  }
+</div>
+
+<div class="card detail-card">
+  @if (loading) {
+    <div class="empty-state">Loading…</div>
+  } @else if (error) {
+    <div class="empty-state error">{{ error }}</div>
+  } @else if (tenant) {
+    <dl class="detail-grid">
+      <div class="detail-item">
+        <dt>Name</dt>
+        <dd>{{ tenant.name }}</dd>
+      </div>
+      <div class="detail-item">
+        <dt>Legal Name</dt>
+        <dd>{{ tenant.legal_name || '—' }}</dd>
+      </div>
+      <div class="detail-item">
+        <dt>Type</dt>
+        <dd>{{ tenant.tenant_type || '—' }}</dd>
+      </div>
+      <div class="detail-item">
+        <dt>Status</dt>
+        <dd><span class="status-badge tenant-status" [attr.data-status]="tenant.status">{{ tenant.status | titlecase }}</span></dd>
+      </div>
+      <div class="detail-item span-2">
+        <dt>Address</dt>
+        <dd>
+          @if (addressLines.length) {
+            @for (line of addressLines; track $index) {
+              <div>{{ line }}</div>
+            }
+          } @else {
+            —
+          }
+        </dd>
+      </div>
+      <div class="detail-item">
+        <dt>Phone</dt>
+        <dd>{{ tenant.phone || '—' }}</dd>
+      </div>
+      <div class="detail-item">
+        <dt>Email</dt>
+        <dd>
+          @if (tenant.email) {
+            <a [href]="'mailto:' + tenant.email">{{ tenant.email }}</a>
+          } @else {
+            —
+          }
+        </dd>
+      </div>
+      <div class="detail-item">
+        <dt>Created</dt>
+        <dd>{{ tenant.created_at | date: 'yyyy-MM-dd HH:mm' }}</dd>
+      </div>
+      <div class="detail-item">
+        <dt>Last Updated</dt>
+        <dd>{{ tenant.updated_at | date: 'yyyy-MM-dd HH:mm' }}</dd>
+      </div>
+    </dl>
+  }
+</div>
+
+@if (tenant) {
+  <!-- contacts (tenant_contact) -->
+  <div class="card detail-card section-card">
+    <div class="section-head">
+      <h3>Contacts ({{ tenant.contacts.length }})</h3>
+      @if (editingContact === null) {
+        <button type="button" class="btn btn-secondary" (click)="startAddContact()">+ Add contact</button>
+      }
+    </div>
+
+    @if (editingContact === 'new') {
+      <ng-container *ngTemplateOutlet="contactEditor"></ng-container>
+    }
+
+    @if (tenant.contacts.length === 0 && editingContact !== 'new') {
+      <div class="empty-state">No contacts yet.</div>
+    } @else if (tenant.contacts.length) {
+      <table class="data-table contacts-table">
+        <thead>
+          <tr>
+            <th>Name</th>
+            <th>Role</th>
+            <th>Phone</th>
+            <th>Email</th>
+            <th></th>
+            <th class="actions-col"></th>
+          </tr>
+        </thead>
+        <tbody>
+          @for (c of tenant.contacts; track c.contact_id) {
+            @if (isEditing(c)) {
+              <tr class="editing-row">
+                <td colspan="6"><ng-container *ngTemplateOutlet="contactEditor"></ng-container></td>
+              </tr>
+            } @else {
+              <tr>
+                <td class="contact-name">{{ c.contact_name }}</td>
+                <td>{{ c.role || '—' }}</td>
+                <td>{{ c.phone || '—' }}</td>
+                <td>
+                  @if (c.email) {
+                    <a [href]="'mailto:' + c.email">{{ c.email }}</a>
+                  } @else {
+                    —
+                  }
+                </td>
+                <td>
+                  @if (c.is_primary) {
+                    <span class="status-badge">Primary</span>
+                  } @else if (editingContact === null) {
+                    <button type="button" class="link-btn" (click)="makePrimary(c)">Make primary</button>
+                  }
+                </td>
+                <td class="actions-col">
+                  @if (editingContact === null) {
+                    <button class="btn btn-secondary btn-icon" title="Edit contact" (click)="startEditContact(c)">
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+                        <path d="M4 20h4l10.5-10.5a2.1 2.1 0 0 0-3-3L5 17v3Z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" />
+                      </svg>
+                    </button>
+                    <button class="btn btn-danger btn-icon" title="Delete contact" (click)="confirmDeleteContact(c)">
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+                        <path
+                          d="M5 7h14M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2m2 0-1 13a1 1 0 0 1-1 1H8a1 1 0 0 1-1-1L6 7"
+                          stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
+                      </svg>
+                    </button>
+                  }
+                </td>
+              </tr>
+            }
+          }
+        </tbody>
+      </table>
+    }
+  </div>
+
+  <!-- owned sites (tenant_site) -->
+  <div class="card detail-card section-card">
+    <div class="section-head">
+      <h3>Owned Sites ({{ tenant.sites.length }})</h3>
+    </div>
+    @if (tenant.sites.length === 0) {
+      <div class="empty-state">This tenant doesn't own any sites. Add it as an owner from a site's Edit page.</div>
+    } @else {
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>Site Code</th>
+            <th>Site Name</th>
+            <th>Ownership</th>
+            <th>Role</th>
+          </tr>
+        </thead>
+        <tbody>
+          @for (s of tenant.sites; track s.site_id) {
+            <tr [routerLink]="['/sites', s.site_id]">
+              <td class="mono">{{ s.site_code }}</td>
+              <td>{{ s.site_name }}</td>
+              <td>{{ s.ownership_pct !== null ? (s.ownership_pct | number: '1.0-2') + '%' : '—' }}</td>
+              <td>
+                @if (s.is_primary_owner) {
+                  <span class="status-badge">Primary owner</span>
+                } @else {
+                  Co-owner
+                }
+              </td>
+            </tr>
+          }
+        </tbody>
+      </table>
+    }
+  </div>
+}
+
+<ng-template #contactEditor>
+  <form class="contact-editor" [formGroup]="contactForm" (ngSubmit)="saveContact()">
+    <div class="contact-editor-title">{{ editingContact === 'new' ? 'New contact' : 'Edit contact' }}</div>
+    @if (contactError) {
+      <div class="form-error">{{ contactError }}</div>
+    }
+    <div class="form-grid">
+      <div class="field">
+        <label for="contact_name">Name *</label>
+        <input id="contact_name" type="text" formControlName="contact_name" />
+        @if (contactInvalid('contact_name')) {
+          <span class="field-error">Name is required.</span>
+        }
+      </div>
+      <div class="field">
+        <label for="contact_role">Role</label>
+        <input id="contact_role" type="text" formControlName="role" placeholder="e.g. Site manager, Billing" />
+        @if (contactInvalid('role')) {
+          <span class="field-error">Max 50 characters.</span>
+        }
+      </div>
+      <div class="field">
+        <label for="contact_phone">Phone</label>
+        <input id="contact_phone" type="tel" formControlName="phone" />
+        @if (contactInvalid('phone')) {
+          <span class="field-error">Digits, spaces and + ( ) - . only, 5–30 characters.</span>
+        }
+      </div>
+      <div class="field">
+        <label for="contact_email">Email</label>
+        <input id="contact_email" type="email" formControlName="email" />
+        @if (contactInvalid('email')) {
+          <span class="field-error">Enter a valid email address.</span>
+        }
+      </div>
+      <div class="field span-2">
+        <label class="primary-toggle">
+          <input type="checkbox" class="box" formControlName="is_primary" />
+          Primary contact
+          <span class="field-hint">(replaces the current primary contact)</span>
+        </label>
+      </div>
+    </div>
+    <div class="form-actions">
+      <button type="button" class="btn btn-secondary" (click)="cancelContact()" [disabled]="savingContact">Cancel</button>
+      <button type="submit" class="btn btn-primary" [disabled]="savingContact">
+        {{ savingContact ? 'Saving…' : 'Save Contact' }}
+      </button>
+    </div>
+  </form>
+</ng-template>
+
+@if (contactToDelete) {
+  <div class="modal-backdrop" (click)="contactToDelete = null">
+    <div class="modal" (click)="$event.stopPropagation()">
+      <h3>Delete contact?</h3>
+      <p>This will permanently delete <strong>{{ contactToDelete.contact_name }}</strong>.</p>
+      <div class="modal-actions">
+        <button class="btn btn-secondary" (click)="contactToDelete = null" [disabled]="deletingContact">Cancel</button>
+        <button class="btn btn-danger-solid" (click)="deleteContactConfirmed()" [disabled]="deletingContact">
+          {{ deletingContact ? 'Deleting…' : 'Delete' }}
+        </button>
+      </div>
+    </div>
+  </div>
+}

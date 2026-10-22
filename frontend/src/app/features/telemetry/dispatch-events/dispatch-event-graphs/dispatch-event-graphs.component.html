@@ -1,0 +1,243 @@
+@if (error) {
+  <div class="card graph-state error">{{ error }}</div>
+} @else if (!analytics && loading) {
+  <div class="card graph-state">Loading graphs…</div>
+} @else if (analytics && analytics.total === 0) {
+  <div class="card graph-state">No dispatch events match the current filters, so there is nothing to chart.</div>
+} @else if (analytics && hidden.size >= 15) {
+  <div class="card graph-state">No charts selected. Tick some in the chart selector above.</div>
+} @else if (analytics) {
+  <ng-template #modeKey>
+    <div class="html-legend">
+      @for (m of modeLegend; track m.code) {
+        <span><i [style.background]="m.color"></i>{{ m.label }}</span>
+      }
+    </div>
+  </ng-template>
+
+  <div class="graph-grid" [class.refreshing]="loading">
+    <!-- the workbook's Summary charts -->
+    @if (shown('dailyRevenue')) {
+      <section class="card graph-card wide">
+        <header>
+          <h3>Daily market revenue ($)</h3>
+          <p>
+            {{ usd(totalRevenue) }} over {{ analytics.days.length }} days
+            @if (bestDay) {
+              · best day {{ formatDay(bestDay.date) }} with {{ usd(bestDay.revenue) }}
+            }
+            · click a day to filter
+          </p>
+        </header>
+        @if (dailyRevenue) {
+          <app-chart-canvas [config]="dailyRevenue" [height]="260" />
+        }
+      </section>
+    }
+
+    @if (shown('eventsByMode')) {
+      <section class="card graph-card">
+        <header>
+          <h3>Events by dispatch mode</h3>
+          <p>Click a bar to filter by that mode</p>
+        </header>
+        @if (eventsByMode) {
+          <app-chart-canvas [config]="eventsByMode" />
+        }
+      </section>
+    }
+
+    @if (shown('dailyEvents')) {
+      <section class="card graph-card">
+        <header>
+          <h3>Daily dispatch events</h3>
+          <p>By issued date, stacked by mode · {{ avgEventsPerDay }} a day on average</p>
+        </header>
+        <ng-container [ngTemplateOutlet]="modeKey" />
+        @if (dailyEvents) {
+          <app-chart-canvas [config]="dailyEvents" [height]="236" />
+        }
+      </section>
+    }
+
+    <!-- time and energy -->
+    @if (shown('modeHours')) {
+      <section class="card graph-card wide">
+        <header>
+          <h3>Time in each mode per day</h3>
+          <p>
+            Hours per calendar day; dispatches that cross midnight are split
+            @if (analytics.open_dispatches > 0) {
+              · {{ analytics.open_dispatches }} running dispatch{{ analytics.open_dispatches === 1 ? '' : 'es' }} not counted (no end yet)
+            }
+          </p>
+        </header>
+        <ng-container [ngTemplateOutlet]="modeKey" />
+        @if (modeHours) {
+          <app-chart-canvas [config]="modeHours" [height]="260" />
+        }
+      </section>
+    }
+
+    @if (shown('dailyEnergy')) {
+      <section class="card graph-card wide">
+        <header>
+          <h3>Daily energy charged vs discharged</h3>
+          <p>Charge (import) above the line, discharge (export) below · by issued date · click a day to filter</p>
+        </header>
+        @if (dailyEnergy) {
+          <app-chart-canvas [config]="dailyEnergy" [height]="260" />
+        }
+      </section>
+    }
+
+    @if (shown('hourlyEnergy')) {
+      <section class="card graph-card">
+        <header>
+          <h3>Charge &amp; discharge by hour of day</h3>
+          <p>
+            Energy spread over the hours each dispatch ran
+            @if (chargeHours) {
+              · charges most at {{ chargeHours }}
+            }
+            @if (dischargeHours) {
+              · discharges most at {{ dischargeHours }}
+            }
+          </p>
+        </header>
+        @if (hourlyEnergy) {
+          <app-chart-canvas [config]="hourlyEnergy" />
+        }
+      </section>
+    }
+
+    @if (shown('hourlyPrice')) {
+      <section class="card graph-card">
+        <header>
+          <h3>Average market price by hour of day</h3>
+          <p>
+            Time-weighted
+            @if (cheapestHour !== null && dearestHour !== null) {
+              · cheapest at {{ hourLabel(cheapestHour) }}, dearest at {{ hourLabel(dearestHour) }}
+            }
+          </p>
+        </header>
+        @if (hourlyPrice) {
+          <app-chart-canvas [config]="hourlyPrice" />
+        }
+      </section>
+    }
+
+    <!-- over time -->
+    @if (shown('setpoint')) {
+      <section class="card graph-card wide">
+        <header>
+          <h3>Power setpoint schedule</h3>
+          <p>
+            Each step is one dispatch, coloured by mode · above zero charges, below discharges · click to open a dispatch
+            @if (spanDays > 3) {
+              · filter to a day or two to see individual steps
+            }
+          </p>
+        </header>
+        <ng-container [ngTemplateOutlet]="modeKey" />
+        @if (setpoint) {
+          <app-chart-canvas [config]="setpoint" [height]="260" />
+        }
+      </section>
+    }
+
+    @if (shown('soc')) {
+      <section class="card graph-card wide">
+        <header>
+          <h3>SOC through the dispatches</h3>
+          <p>
+            SOC at the start and end of each dispatch, with the target SOC it was given
+            @if (spanDays > 3) {
+              · filter to a day or two for detail
+            }
+          </p>
+        </header>
+        @if (soc) {
+          <app-chart-canvas [config]="soc" [height]="240" />
+        } @else {
+          <div class="graph-state inline">No SOC values in the current filters.</div>
+        }
+      </section>
+    }
+
+    <!-- by mode / issuer -->
+    @if (shown('priceScatter')) {
+      <section class="card graph-card">
+        <header>
+          <h3>Setpoint vs market price</h3>
+          <p>Each dot is a dispatch · arbitrage charges when power is cheap and sells when it's dear · click to open</p>
+        </header>
+        <ng-container [ngTemplateOutlet]="modeKey" />
+        @if (priceScatter) {
+          <app-chart-canvas [config]="priceScatter" [height]="276" />
+        }
+      </section>
+    }
+
+    @if (shown('revenueByMode')) {
+      <section class="card graph-card">
+        <header>
+          <h3>Revenue by dispatch mode</h3>
+          <p>Negative where the mode buys energy (charging, standby and idle consumption)</p>
+        </header>
+        @if (revenueByMode) {
+          <app-chart-canvas [config]="revenueByMode" [height]="300" />
+        }
+      </section>
+    }
+
+    @if (shown('energyByMode')) {
+      <section class="card graph-card">
+        <header>
+          <h3>Energy by dispatch mode</h3>
+          <p>Charged and discharged, MWh</p>
+        </header>
+        @if (energyByMode) {
+          <app-chart-canvas [config]="energyByMode" [height]="276" />
+        }
+      </section>
+    }
+
+    @if (shown('durationByMode')) {
+      <section class="card graph-card">
+        <header>
+          <h3>Dispatch duration by mode</h3>
+          <p>Mean length of a completed dispatch · hover for the longest</p>
+        </header>
+        @if (durationByMode) {
+          <app-chart-canvas [config]="durationByMode" [height]="276" />
+        }
+      </section>
+    }
+
+    @if (shown('cumulativeRevenue')) {
+      <section class="card graph-card">
+        <header>
+          <h3>Cumulative market revenue</h3>
+          <p>Running total over the period</p>
+        </header>
+        @if (cumulativeRevenue) {
+          <app-chart-canvas [config]="cumulativeRevenue" />
+        }
+      </section>
+    }
+
+    @if (shown('issuers')) {
+      <section class="card graph-card">
+        <header>
+          <h3>Dispatches by issuer</h3>
+          <p>Who issued the commands</p>
+        </header>
+        @if (issuers) {
+          <app-chart-canvas [config]="issuers" />
+        }
+      </section>
+    }
+  </div>
+}

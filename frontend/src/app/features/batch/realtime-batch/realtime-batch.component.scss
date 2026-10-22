@@ -1,0 +1,345 @@
+.run-btn {
+  min-width: 160px;
+  justify-content: center;
+}
+
+.spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(16, 49, 42, 0.25);
+  border-top-color: #10312a;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+.spinner.dark {
+  display: inline-block;
+  vertical-align: -2px;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spinner {
+    animation: none;
+  }
+}
+
+.muted {
+  color: var(--color-text-muted);
+}
+
+.small {
+  font-size: 12px;
+}
+
+.bad {
+  color: #b91c1c;
+  font-weight: 600;
+}
+
+.link-btn {
+  padding: 0;
+  border: none;
+  background: none;
+  color: #0e8f66;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.card-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.card-head h3 {
+  margin: 0;
+  font-size: 15px;
+}
+
+// ---- status cards
+.status-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+@media (max-width: 1200px) {
+  .status-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+.status-card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  padding: 14px 16px;
+}
+
+.status-label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+}
+
+.status-value {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.status-value.warn {
+  color: #b45309;
+}
+
+.status-note {
+  overflow: hidden;
+  font-size: 12px;
+  color: var(--color-text-muted);
+  text-overflow: ellipsis;
+}
+
+.path {
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #9aa1ab;
+}
+
+.dot.on {
+  background: #0e8f66;
+  box-shadow: 0 0 0 3px rgba(99, 248, 186, 0.35);
+}
+
+// ---- status chips (text carries the meaning; colour reinforces it)
+.batch-status {
+  display: inline-block;
+  padding: 2px 9px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.batch-status[data-status='SUCCESS'] {
+  background: rgba(99, 248, 186, 0.25);
+  color: #0e6b4d;
+}
+
+.batch-status[data-status='PARTIAL'] {
+  background: rgba(237, 161, 0, 0.18);
+  color: #875800;
+}
+
+.batch-status[data-status='FAILED'] {
+  background: rgba(220, 38, 38, 0.12);
+  color: #b91c1c;
+}
+
+// ---- inbox + run result
+.inbox-card,
+.run-card {
+  margin-bottom: 16px;
+  padding: 18px 20px;
+}
+
+.run-card {
+  border-left: 4px solid #3fcf95;
+}
+
+.run-card.failed {
+  border-left-color: #dc2626;
+}
+
+.run-card p {
+  margin: 0 0 10px;
+}
+
+.run-files {
+  margin: 0 0 12px;
+  padding: 0;
+  list-style: none;
+}
+
+.run-files li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+  font-size: 13px;
+}
+
+.run-output {
+  max-height: 280px;
+  margin: 10px 0 0;
+  padding: 12px 14px;
+  overflow: auto;
+  border-radius: var(--radius);
+  background: #1f2124;
+  color: #e6e8ea;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+
+// ---- history
+.history-card {
+  padding: 18px 0 0;
+}
+
+.history-card > .card-head {
+  padding: 0 20px;
+}
+
+.history-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 0 20px 14px;
+}
+
+.status-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.status-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  background: #fff;
+  color: inherit;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.status-tab:hover {
+  border-color: #63f8ba;
+}
+
+.status-tab.active {
+  border-color: #63f8ba;
+  background: rgba(99, 248, 186, 0.22);
+  color: #0e6b4d;
+}
+
+.status-tab .count {
+  min-width: 20px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.06);
+  font-size: 11px;
+  text-align: center;
+}
+
+.swatch {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+}
+
+.swatch[data-status='SUCCESS'] {
+  background: #0e8f66;
+}
+
+.swatch[data-status='PARTIAL'] {
+  background: #eda100;
+}
+
+.swatch[data-status='FAILED'] {
+  background: #dc2626;
+}
+
+.history-bar .search-box {
+  width: 260px;
+}
+
+.history-table.refreshing {
+  opacity: 0.6;
+}
+
+.history-table .num,
+.feed-table .num {
+  text-align: right;
+}
+
+.log-row {
+  cursor: pointer;
+}
+
+.log-row.open td {
+  background: rgba(99, 248, 186, 0.08);
+}
+
+.detail-row > td {
+  padding: 0;
+  background: var(--color-bg);
+}
+
+.log-detail {
+  padding: 14px 20px 18px;
+}
+
+.feed-table {
+  margin-bottom: 12px;
+  background: #fff;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+}
+
+.feed-table .notes {
+  max-width: 460px;
+  font-size: 12px;
+  white-space: normal;
+}
+
+.detail-list {
+  display: grid;
+  grid-template-columns: 140px 1fr;
+  gap: 6px 14px;
+  margin: 0;
+  font-size: 13px;
+}
+
+.detail-list dt {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+}
+
+.detail-list dd {
+  margin: 0;
+}

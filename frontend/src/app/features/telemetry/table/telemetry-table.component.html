@@ -1,0 +1,59 @@
+<div class="table-scroll telemetry-table-scroll">
+  <table class="data-table telemetry-table">
+    <thead>
+      <tr>
+        @for (column of columns; track column.key) {
+          <th [class.num]="column.kind === 'number'" [class.sticky-col]="column.kind === 'timestamp'">
+            {{ column.label }}
+          </th>
+        }
+        @if (actions) {
+          <th class="actions-col"></th>
+        }
+      </tr>
+    </thead>
+    <tbody>
+      @for (row of rows; track $index) {
+        <tr>
+          @for (column of columns; track column.key) {
+            @switch (column.kind) {
+              @case ('timestamp') {
+                <td class="mono sticky-col">{{ $any(value(row, column)) | date: 'yyyy-MM-dd HH:mm:ss' }}</td>
+              }
+              @case ('alarm') {
+                <td>
+                  @if (value(row, column)) {
+                    <span class="status-badge alarm">{{ value(row, column) }}</span>
+                  } @else {
+                    0
+                  }
+                </td>
+              }
+              @case ('number') {
+                <td class="num">{{ value(row, column) ?? '—' }}</td>
+              }
+              @default {
+                <td>{{ value(row, column) || '—' }}</td>
+              }
+            }
+          }
+          @if (actions) {
+            <td class="actions-col">
+              <button type="button" class="btn btn-secondary btn-icon" title="Edit" (click)="editRow.emit(row)">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+                  <path d="M4 20h4l10.5-10.5a2.1 2.1 0 0 0-3-3L5 17v3Z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" />
+                </svg>
+              </button>
+              <button type="button" class="btn btn-danger btn-icon" title="Delete" (click)="deleteRow.emit(row)">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+                  <path d="M5 7h14M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2m2 0-1 13a1 1 0 0 1-1 1H8a1 1 0 0 1-1-1L6 7"
+                    stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
+                </svg>
+              </button>
+            </td>
+          }
+        </tr>
+      }
+    </tbody>
+  </table>
+</div>

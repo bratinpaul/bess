@@ -1,0 +1,1122 @@
+# BMS KPI definitions - read by app/services/bms_kpi (API /api/bms-kpi and `python -m app.services.bms_kpi.cli`).
+#
+# Every KPI is computed per battery system per plant-local day and stored in battery_ml.bms_kpi (one row per
+# system / day / KPI code). Edit this file and press "Calculate KPIs" on BMS Telemetry → Analytics (or run the CLI) -
+# the file is re-read on every request, no restart needed. Bump `version` when a formula changes; every stored value
+# keeps the version and file hash it was made with, and days made with another version show as "old config".
+#
+# Methods
+#   integrate      Σ column × Δt_h × scale over the samples that pass `filter`        (kW → kWh; "1" → hours)
+#   aggregate      func(column) over the samples that pass `filter`
+#                  func = min | max | avg | sum | count | first | last  (first / last = earliest / latest sample)
+#   counter_delta  max(column) − min(column) within the day                            (cumulative counters)
+#   derived        formula over other KPI codes and params (+ − × ÷, abs(), numbers); ÷ 0 gives no value
+#   query          one output column of a named SQL query in `queries` (other tables, events, trends)
+#
+# Row expressions (`column`, filter `column`) are system_telemetry columns and params combined with + − × ÷, numbers,
+# abs(x) and delta(x) (x minus the previous sample's x). Division by zero gives NULL.
+# filter: a list of {column, op, value} that must all hold; op = > >= < <= = != in "not in";
+#         value = a literal, a list (in / not in) or "$param".
+#
+# Display: group (one of `groups`), color (#rrggbb, the KPI's series colour on every chart), dashed (line charts),
+#          decimals, summary (how the range card combines the days: sum | avg | min | max | last, or formula -
+#          derived KPIs only: the formula applied to its inputs' range values), enabled.
+#
+# Sign convention (checked against cum_charge_kwh / cum_discharge_kwh): power_kw > 0 charging, < 0 discharging.
+
+version: 2
+
+# Day boundary: telemetry ts is plant wall-clock time; days are cut at local midnight in this zone.
+timezone: Asia/Kolkata
+
+# Δt per sample
+#   fixed   every sample counts `minutes` (5-min data → Δt_h = 1/12)
+#   actual  time to the next sample, capped at `max_gap_minutes` (the last sample of a range counts `minutes`)
+interval:
+  mode: fixed
+  minutes: 5
+  max_gap_minutes: 15
+
+# Samples expected per day (288 = 24 h of 5-min samples): coverage column and availability.
+expected_samples_per_day: 288
+
+# Global parameters - usable in row expressions, filters ("$name"), formulas and queries (:name).
+# Built in, no need to declare: interval_h (Δt of the fixed interval in hours), expected_samples_per_day.
+params:
+  dv_load_limit_mv: 50            # cell ΔV flag threshold under load
+  dv_rest_limit_mv: 20            # cell ΔV flag threshold at rest
+  cell_temp_limit_c: 44           # = HighCellTemp alarm threshold in the alarm catalog
+  c_rate_threshold: 0.5           # time-above-C-rate threshold
+  dod_min_event_pct: 2            # discharge events shallower than this are ignored for DoD
+  fade_window_days: 30            # trailing window for the capacity-fade trend
+  fade_min_days: 7                # fewer days in the window → no fade value
+  r_step_frac_c: 0.1              # resistance estimate: current steps ≥ this × capacity (Ah) ...
+  r_max_soc_change_pct: 3         # ... with at most this SOC change across the step
+  r_baseline_days: 7              # first N days with steps = beginning-of-life (BOL) resistance
+  availability_max_alarm_level: 2 # a sample is available when alarm_level ≤ this (3 = protection / trip)
+  soc_window_pct: 100             # full SOC range for capacity utilisation (e.g. 80 for a 10–90 % window)
+
+# Per-system parameters from master data: SQL expressions over battery_system `bs` and battery_chemistry `ch`.
+system_params:
+  usable_kwh:
+    sql: bs.rated_energy_mwh * 1000
+    unit: kWh
+    description: Rated usable energy (rated_energy_mwh); see system_overrides
+  nominal_v:
+    sql: bs.nominal_dc_voltage
+    unit: V
+    description: Nominal DC (pack) voltage
+  pack_v_max_limit:
+    sql: bs.nominal_dc_voltage / ch.nominal_cell_v * ch.max_cell_v
+    unit: V
+    description: Over-voltage protection limit = cells in series × chemistry max cell voltage
+  pack_v_min_limit:
+    sql: bs.nominal_dc_voltage / ch.nominal_cell_v * ch.min_cell_v
+    unit: V
+    description: Under-voltage protection limit = cells in series × chemistry min cell voltage
+
+# Per-system overrides of system params, by battery_system_id.
+system_overrides:
+  1:
+    # master data says 10 MWh, but the BMS's own EFC counter implies ~1,987 kWh per cycle (a 2 MWh system)
+    usable_kwh: 2000
+
+groups:
+  - code: energy
+    name: Energy & throughput
+  - code: efficiency
+    name: Efficiency
+  - code: state
+    name: State & capacity
+  - code: balancing
+    name: Cell balancing & consistency
+  - code: thermal
+    name: Thermal
+  - code: electrical
+    name: Electrical / operating
+  - code: degradation
+    name: Degradation & aging
+  - code: availability
+    name: Availability, reliability & safety
+  - code: utilization
+    name: Utilization / duty
+
+# Named SQL queries (read-only, one statement). Each returns system_id, kpi_date and one column per output field.
+# Binds: :system_ids (bigint array), :start_date / :end_date (plant-local days, inclusive), :start_ts / :end_ts
+# (timestamptz, end exclusive), :tz, every param by name. CTE `sp` = system_id + system params.
+queries:
+  lifetime_energy:
+    description: Running totals from the first telemetry sample of each system
+    sql: |
+      WITH d AS (
+          SELECT t.system_id, CAST(t.ts AT TIME ZONE :tz AS date) AS kpi_date,
+                 SUM(ABS(t.power_kw)) * :interval_h AS throughput_kwh,
+                 SUM(GREATEST(-t.power_kw, 0)) * :interval_h AS discharge_kwh
+          FROM battery_telemetry.system_telemetry t
+          WHERE t.system_id = ANY(:system_ids) AND t.ts < :end_ts
+          GROUP BY 1, 2
+      ), c AS (
+          SELECT d.system_id, d.kpi_date,
+                 SUM(d.throughput_kwh) OVER w / 1000 AS cumulative_throughput_mwh,
+                 SUM(d.discharge_kwh) OVER w / NULLIF(sp.usable_kwh, 0) AS efc_cumulative
+          FROM d JOIN sp ON sp.system_id = d.system_id
+          WINDOW w AS (PARTITION BY d.system_id ORDER BY d.kpi_date)
+      )
+      SELECT * FROM c WHERE kpi_date BETWEEN :start_date AND :end_date
+
+  discharge_events:
+    description: >-
+      Discharge events = runs of consecutive samples with power_kw < 0; DoD = SOC before the event − SOC at its end.
+      An event belongs to the day it starts.
+    sql: |
+      WITH x AS (
+          SELECT system_id, ts, soc_bms_pct, power_kw < 0 AS dis,
+                 LAG(soc_bms_pct) OVER w AS soc_before,
+                 CASE WHEN (power_kw < 0) IS DISTINCT FROM (LAG(power_kw) OVER w < 0) THEN 1 ELSE 0 END AS edge
+          FROM battery_telemetry.system_telemetry
+          WHERE system_id = ANY(:system_ids) AND ts >= :start_ts - interval '1 day' AND ts < :end_ts + interval '1 day'
+          WINDOW w AS (PARTITION BY system_id ORDER BY ts)
+      ), g AS (
+          SELECT *, SUM(edge) OVER (PARTITION BY system_id ORDER BY ts) AS grp FROM x
+      ), ev AS (
+          SELECT system_id, MIN(ts) AS t0,
+                 (ARRAY_AGG(soc_before ORDER BY ts))[1] - (ARRAY_AGG(soc_bms_pct ORDER BY ts DESC))[1] AS dod
+          FROM g WHERE dis
+          GROUP BY system_id, grp
+      )
+      SELECT system_id, CAST(t0 AT TIME ZONE :tz AS date) AS kpi_date,
+             AVG(dod) AS dod_avg_pct, MAX(dod) AS dod_max_pct, COUNT(*) AS discharge_events
+      FROM ev
+      WHERE dod >= :dod_min_event_pct AND t0 >= :start_ts AND t0 < :end_ts
+      GROUP BY 1, 2
+
+  soe:
+    description: >-
+      SOE = ∫₀^SOC OCV dSOC ÷ ∫₀^100 OCV dSOC (battery_master.ocv_curve, MEAN direction, 25 °C, the system's
+      chemistry) at the day's last SOC - the energy-weighted share of capacity left.
+    sql: |
+      WITH c AS (
+          SELECT chemistry, soc_pct, ocv_v,
+                 LEAD(soc_pct) OVER w AS soc_next, LEAD(ocv_v) OVER w AS ocv_next
+          FROM battery_master.ocv_curve
+          WHERE direction = 'MEAN' AND temp_c = 25
+          WINDOW w AS (PARTITION BY chemistry ORDER BY soc_pct)
+      ), seg AS (
+          SELECT *, SUM((soc_next - soc_pct) * (ocv_v + ocv_next) / 2)
+                        OVER (PARTITION BY chemistry ORDER BY soc_pct) - (soc_next - soc_pct) * (ocv_v + ocv_next) / 2 AS e0,
+                    SUM((soc_next - soc_pct) * (ocv_v + ocv_next) / 2) OVER (PARTITION BY chemistry) AS e_total
+          FROM c WHERE soc_next IS NOT NULL
+      ), last_soc AS (
+          SELECT t.system_id, CAST(t.ts AT TIME ZONE :tz AS date) AS kpi_date,
+                 (ARRAY_AGG(t.soc_bms_pct ORDER BY t.ts DESC))[1] AS soc
+          FROM battery_telemetry.system_telemetry t
+          WHERE t.system_id = ANY(:system_ids) AND t.ts >= :start_ts AND t.ts < :end_ts AND t.soc_bms_pct IS NOT NULL
+          GROUP BY 1, 2
+      )
+      SELECT l.system_id, l.kpi_date,
+             100 * (s.e0 + (LEAST(l.soc, s.soc_next) - s.soc_pct)
+                    * (2 * s.ocv_v + (s.ocv_next - s.ocv_v) * (LEAST(l.soc, s.soc_next) - s.soc_pct) / (s.soc_next - s.soc_pct)) / 2)
+                 / s.e_total AS soe_end_pct
+      FROM last_soc l
+      JOIN battery_master.battery_system bs ON bs.battery_system_id = l.system_id
+      JOIN seg s ON s.chemistry = bs.chemistry_code
+                AND l.soc >= s.soc_pct AND (l.soc < s.soc_next OR (s.soc_next = 100 AND l.soc <= 100))
+
+  module_thermal:
+    description: >-
+      Module temperatures (module_telemetry.cell_temp_max_c) of the system's modules (module → pack → container →
+      system): spread across modules per timestamp, and the module that ran hottest on average that day.
+    sql: |
+      WITH mt AS (
+          SELECT c.battery_system_id AS system_id, m.ts, m.module_id, m.cell_temp_max_c
+          FROM battery_telemetry.module_telemetry m
+          JOIN battery_master.battery_module bm ON bm.module_id = m.module_id
+          JOIN battery_master.battery_pack p ON p.pack_id = bm.pack_id
+          JOIN battery_master.battery_container c ON c.container_id = p.container_id
+          WHERE c.battery_system_id = ANY(:system_ids) AND m.ts >= :start_ts AND m.ts < :end_ts
+      ), per_ts AS (
+          SELECT system_id, ts, MAX(cell_temp_max_c) - MIN(cell_temp_max_c) AS spread
+          FROM mt GROUP BY 1, 2
+      ), daily AS (
+          SELECT system_id, CAST(ts AT TIME ZONE :tz AS date) AS kpi_date,
+                 MAX(spread) AS module_dt_max_c, AVG(spread) AS module_dt_avg_c
+          FROM per_ts GROUP BY 1, 2
+      ), mod_day AS (
+          SELECT system_id, CAST(ts AT TIME ZONE :tz AS date) AS kpi_date, module_id, AVG(cell_temp_max_c) AS t
+          FROM mt GROUP BY 1, 2, 3
+      ), hot AS (
+          SELECT DISTINCT ON (system_id, kpi_date) system_id, kpi_date, module_id AS hottest_module_id,
+                 t - AVG(t) OVER (PARTITION BY system_id, kpi_date) AS hottest_module_excess_c
+          FROM mod_day
+          ORDER BY system_id, kpi_date, t DESC
+      )
+      SELECT d.*, h.hottest_module_id, h.hottest_module_excess_c
+      FROM daily d JOIN hot h USING (system_id, kpi_date)
+
+  soh_trend:
+    description: >-
+      Least-squares slope of the daily (last) SOH over the trailing fade_window_days: per equivalent full cycle
+      (cumulative discharge ÷ usable kWh) and per calendar day. Reported as fade (SOH lost), so positive = losing.
+    sql: |
+      WITH d AS (
+          SELECT t.system_id, CAST(t.ts AT TIME ZONE :tz AS date) AS kpi_date,
+                 CAST((ARRAY_AGG(t.soh_pct ORDER BY t.ts DESC))[1] AS double precision) AS soh,
+                 CAST(MAX(t.cum_discharge_kwh) / NULLIF(MAX(sp.usable_kwh), 0) AS double precision) AS efc
+          FROM battery_telemetry.system_telemetry t
+          JOIN sp ON sp.system_id = t.system_id
+          WHERE t.system_id = ANY(:system_ids) AND t.ts < :end_ts
+            AND t.ts >= :start_ts - make_interval(days => CAST(:fade_window_days AS int))
+          GROUP BY 1, 2
+      ), w AS (
+          SELECT system_id, kpi_date,
+                 -REGR_SLOPE(soh, efc) OVER win * 100 AS capacity_fade_per_100_efc_pct,
+                 -REGR_SLOPE(soh, CAST(kpi_date - DATE '2000-01-01' AS double precision)) OVER win * 365
+                     AS capacity_fade_per_year_pct,
+                 COUNT(*) OVER win AS n
+          FROM d
+          WINDOW win AS (PARTITION BY system_id ORDER BY kpi_date
+                         ROWS BETWEEN CAST(:fade_window_days AS int) - 1 PRECEDING AND CURRENT ROW)
+      )
+      SELECT system_id, kpi_date, capacity_fade_per_100_efc_pct, capacity_fade_per_year_pct
+      FROM w
+      WHERE n >= :fade_min_days AND kpi_date BETWEEN :start_date AND :end_date
+
+  resistance_est:
+    description: >-
+      DC resistance estimate R = |ΔV / ΔI| on current steps (|ΔI| ≥ r_step_frac_c × capacity Ah, SOC change ≤
+      r_max_soc_change_pct), daily median in mΩ. BOL = median of the system's first r_baseline_days days with steps.
+      An estimate from operating data - not a measured (RPT / HPPC) resistance.
+    sql: |
+      WITH x AS (
+          SELECT t.system_id, t.ts,
+                 t.pack_voltage_v - LAG(t.pack_voltage_v) OVER w AS dv,
+                 t.pack_current_a - LAG(t.pack_current_a) OVER w AS di,
+                 t.soc_bms_pct - LAG(t.soc_bms_pct) OVER w AS dsoc,
+                 sp.usable_kwh * 1000 / NULLIF(sp.nominal_v, 0) AS cap_ah
+          FROM battery_telemetry.system_telemetry t
+          JOIN sp ON sp.system_id = t.system_id
+          WHERE t.system_id = ANY(:system_ids) AND t.ts < :end_ts
+          WINDOW w AS (PARTITION BY t.system_id ORDER BY t.ts)
+      ), steps AS (
+          SELECT system_id, CAST(ts AT TIME ZONE :tz AS date) AS kpi_date, ABS(dv / di) * 1000 AS r_mohm
+          FROM x
+          WHERE ABS(di) >= :r_step_frac_c * cap_ah AND ABS(dsoc) <= :r_max_soc_change_pct
+      ), d AS (
+          SELECT system_id, kpi_date, percentile_cont(0.5) WITHIN GROUP (ORDER BY r_mohm) AS r
+          FROM steps GROUP BY 1, 2
+      ), b AS (
+          SELECT system_id, percentile_cont(0.5) WITHIN GROUP (ORDER BY r) AS r_bol
+          FROM (SELECT d.*, ROW_NUMBER() OVER (PARTITION BY system_id ORDER BY kpi_date) AS rn FROM d) z
+          WHERE rn <= :r_baseline_days
+          GROUP BY 1
+      )
+      SELECT d.system_id, d.kpi_date, d.r AS r_est_mohm, (d.r / NULLIF(b.r_bol, 0) - 1) * 100 AS resistance_growth_pct
+      FROM d JOIN b ON b.system_id = d.system_id
+      WHERE d.kpi_date BETWEEN :start_date AND :end_date
+
+  alarms:
+    description: >-
+      battery_telemetry.alarm_event of the system (battery_system_id), counted on the plant-local day the alarm
+      started; source and type from battery_master.alarm_catalog. Protection trips: OV = HighCellVoltage,
+      UV = LowCellVoltage, OT = HighCellTemp / IGBT_OVERTEMP, OC = OVERLOAD.
+    sql: |
+      SELECT a.battery_system_id AS system_id, CAST(a.time AT TIME ZONE :tz AS date) AS kpi_date,
+             COUNT(*) AS alarm_count,
+             COUNT(*) FILTER (WHERE a.severity_level = 1) AS alarms_sev1,
+             COUNT(*) FILTER (WHERE a.severity_level = 2) AS alarms_sev2,
+             COUNT(*) FILTER (WHERE a.severity_level = 3) AS alarms_sev3,
+             COUNT(*) FILTER (WHERE c.source = 'BMS') AS alarms_bms,
+             COUNT(*) FILTER (WHERE c.source = 'PCS') AS alarms_pcs,
+             COUNT(*) FILTER (WHERE c.source = 'HVAC') AS alarms_hvac,
+             COUNT(*) FILTER (WHERE c.source = 'EMS') AS alarms_ems,
+             COUNT(*) FILTER (WHERE c.alarm_code = 'HighCellVoltage') AS trips_ov,
+             COUNT(*) FILTER (WHERE c.alarm_code = 'LowCellVoltage') AS trips_uv,
+             COUNT(*) FILTER (WHERE c.alarm_code IN ('HighCellTemp', 'IGBT_OVERTEMP')) AS trips_ot,
+             COUNT(*) FILTER (WHERE c.alarm_code = 'OVERLOAD') AS trips_oc
+      FROM battery_telemetry.alarm_event a
+      LEFT JOIN battery_master.alarm_catalog c ON c.alarm_catalog_id = a.alarm_catalog_id
+      WHERE a.battery_system_id = ANY(:system_ids) AND a.time >= :start_ts AND a.time < :end_ts
+      GROUP BY 1, 2
+
+kpis:
+  # ── 1. Energy & throughput ─────────────────────────────────────────────────────────────────────────────────────
+  - code: energy_charged_kwh
+    name: Energy charged
+    group: energy
+    unit: kWh
+    description: E = Σ Power_kW × Δt_h where Power_kW > 0
+    method: integrate
+    column: power_kw
+    filter:
+      - { column: power_kw, op: ">", value: 0 }
+    summary: sum
+    color: "#2f6fed"
+
+  - code: energy_discharged_kwh
+    name: Energy discharged
+    group: energy
+    unit: kWh
+    description: E = Σ |Power_kW| × Δt_h where Power_kW < 0
+    method: integrate
+    column: power_kw
+    scale: -1
+    filter:
+      - { column: power_kw, op: "<", value: 0 }
+    summary: sum
+    color: "#e8830c"
+
+  - code: throughput_kwh
+    name: Daily throughput
+    group: energy
+    unit: kWh
+    description: Σ |Power_kW| × Δt_h within the day
+    method: integrate
+    column: abs(power_kw)
+    summary: sum
+    color: "#7c5cdb"
+
+  - code: cumulative_throughput_mwh
+    name: Cumulative throughput
+    group: energy
+    unit: MWh
+    description: Lifetime Σ |Power_kW| × Δt_h ÷ 1000 from the first telemetry sample to the end of the day
+    method: query
+    query: lifetime_energy
+    decimals: 3
+    summary: last
+    color: "#7c5cdb"
+
+  - code: efc_daily
+    name: Equivalent full cycles (day)
+    group: energy
+    unit: cycles
+    description: EFC = Σ discharged kWh ÷ rated usable kWh
+    method: derived
+    formula: energy_discharged_kwh / usable_kwh
+    decimals: 3
+    summary: sum
+    color: "#12a37f"
+
+  - code: efc_cumulative
+    name: Equivalent full cycles (lifetime)
+    group: energy
+    unit: cycles
+    description: Lifetime Σ discharged kWh ÷ rated usable kWh
+    method: query
+    query: lifetime_energy
+    decimals: 2
+    summary: last
+    color: "#12a37f"
+
+  - code: efc_bms
+    name: Equivalent full cycles (BMS counter)
+    group: energy
+    unit: cycles
+    description: Cross-check - the BMS's own equiv_full_cycles at the end of the day
+    method: aggregate
+    column: equiv_full_cycles
+    func: last
+    decimals: 2
+    summary: last
+    color: "#12a37f"
+    dashed: true
+
+  # ── 2. Efficiency ──────────────────────────────────────────────────────────────────────────────────────────────
+  - code: rte_dc_pct
+    name: DC round-trip efficiency
+    group: efficiency
+    unit: "%"
+    description: >-
+      RTE_dc = E_discharge_out ÷ E_charge_in. Daily values swing when the day ends at a different SOC than it
+      started; the range card uses Σ discharged ÷ Σ charged.
+    method: derived
+    formula: energy_discharged_kwh / energy_charged_kwh * 100
+    summary: formula
+    color: "#2f6fed"
+
+  - code: energy_loss_kwh
+    name: Energy loss
+    group: efficiency
+    unit: kWh
+    description: Loss = E_charge_in − E_discharge_out
+    method: derived
+    formula: energy_charged_kwh - energy_discharged_kwh
+    summary: sum
+    color: "#e8830c"
+
+  - code: stored_energy_change_kwh
+    name: Stored energy change
+    group: efficiency
+    unit: kWh
+    description: (SOC_end − SOC_start) ÷ 100 × usable kWh - energy left in the battery, not lost
+    method: derived
+    formula: (soc_end_pct - soc_start_pct) / 100 * usable_kwh
+    summary: sum
+    color: "#7c5cdb"
+
+  - code: energy_loss_adj_kwh
+    name: Energy loss (SOC-corrected)
+    group: efficiency
+    unit: kWh
+    description: Loss − stored energy change = what was actually dissipated
+    method: derived
+    formula: energy_loss_kwh - stored_energy_change_kwh
+    summary: sum
+    color: "#e8830c"
+
+  - code: standby_loss_kwh
+    name: Standby loss
+    group: efficiency
+    unit: kWh
+    description: >-
+      SOC lost while idle (Power_kW = 0 at both ends of the interval) × usable kWh - self-discharge + auxiliaries
+      fed from the battery
+    method: aggregate
+    func: sum
+    column: -delta(soc_bms_pct) / 100 * usable_kwh
+    filter:
+      - { column: abs(power_kw) + abs(power_kw - delta(power_kw)), op: "=", value: 0 }
+    summary: sum
+    color: "#12a37f"
+
+  - code: i2r_loss_kwh
+    name: I²R / conversion loss
+    group: efficiency
+    unit: kWh
+    description: SOC-corrected loss − standby loss - losses while current flows
+    method: derived
+    formula: energy_loss_adj_kwh - standby_loss_kwh
+    summary: sum
+    color: "#2f6fed"
+
+  # ── 3. State & capacity ────────────────────────────────────────────────────────────────────────────────────────
+  - code: soc_min_pct
+    name: SOC min
+    group: state
+    unit: "%"
+    method: aggregate
+    column: soc_bms_pct
+    func: min
+    summary: min
+    color: "#e8830c"
+
+  - code: soc_avg_pct
+    name: SOC average
+    group: state
+    unit: "%"
+    method: aggregate
+    column: soc_bms_pct
+    func: avg
+    summary: avg
+    color: "#12a37f"
+
+  - code: soc_max_pct
+    name: SOC max
+    group: state
+    unit: "%"
+    method: aggregate
+    column: soc_bms_pct
+    func: max
+    summary: max
+    color: "#2f6fed"
+
+  - code: soc_range_pct
+    name: SOC range used
+    group: state
+    unit: "%"
+    description: SOC_max − SOC_min within the day
+    method: derived
+    formula: soc_max_pct - soc_min_pct
+    summary: avg
+    color: "#7c5cdb"
+
+  - code: soc_start_pct
+    name: SOC at day start
+    group: state
+    unit: "%"
+    method: aggregate
+    column: soc_bms_pct
+    func: first
+    summary: avg
+
+  - code: soc_end_pct
+    name: SOC at day end
+    group: state
+    unit: "%"
+    method: aggregate
+    column: soc_bms_pct
+    func: last
+    summary: last
+    color: "#2f6fed"
+    dashed: true
+
+  - code: soe_end_pct
+    name: SOE at day end
+    group: state
+    unit: "%"
+    description: Energy-weighted remaining capacity from the OCV profile (see query soe)
+    method: query
+    query: soe
+    summary: last
+    color: "#2f6fed"
+
+  - code: soh_end_pct
+    name: SOH
+    group: state
+    unit: "%"
+    description: SOH_% reported by the BMS at the end of the day
+    method: aggregate
+    column: soh_pct
+    func: last
+    summary: last
+    color: "#12a37f"
+
+  - code: usable_capacity_kwh
+    name: Usable capacity
+    group: state
+    unit: kWh
+    description: Rated usable kWh × SOH ÷ 100
+    method: derived
+    formula: usable_kwh * soh_end_pct / 100
+    decimals: 1
+    summary: last
+    color: "#2f6fed"
+
+  - code: usable_capacity_soh_ah
+    name: Usable capacity (Ah)
+    group: state
+    unit: Ah
+    description: Rated Ah (usable kWh × 1000 ÷ nominal V) × SOH ÷ 100
+    method: derived
+    formula: usable_kwh * 1000 / nominal_v * soh_end_pct / 100
+    decimals: 1
+    summary: last
+    color: "#e8830c"
+
+  - code: dod_avg_pct
+    name: Average DoD
+    group: state
+    unit: "%"
+    description: DoD = SOC_start − SOC_end of each discharge event, averaged over the day's events
+    method: query
+    query: discharge_events
+    summary: avg
+    color: "#e8830c"
+
+  - code: dod_max_pct
+    name: Max DoD
+    group: state
+    unit: "%"
+    method: query
+    query: discharge_events
+    summary: max
+    color: "#2f6fed"
+
+  - code: discharge_events
+    name: Discharge events
+    group: state
+    unit: events
+    method: query
+    query: discharge_events
+    default: 0
+    decimals: 0
+    summary: sum
+    color: "#7c5cdb"
+
+  # ── 4. Cell balancing & consistency ────────────────────────────────────────────────────────────────────────────
+  - code: cell_dv_avg_mv
+    name: Cell ΔV average
+    group: balancing
+    unit: mV
+    description: ΔV = (Cell_V_Max − Cell_V_Min) × 1000, averaged over the day
+    method: aggregate
+    column: (cell_v_max_v - cell_v_min_v) * 1000
+    func: avg
+    decimals: 1
+    summary: avg
+    color: "#2f6fed"
+
+  - code: cell_dv_max_mv
+    name: Cell ΔV max
+    group: balancing
+    unit: mV
+    method: aggregate
+    column: (cell_v_max_v - cell_v_min_v) * 1000
+    func: max
+    decimals: 1
+    summary: max
+    color: "#e8830c"
+
+  - code: cell_dv_load_flags
+    name: ΔV flags under load
+    group: balancing
+    unit: intervals
+    description: Intervals with ΔV > dv_load_limit_mv while Power_kW ≠ 0
+    method: aggregate
+    column: "1"
+    func: count
+    filter:
+      - { column: (cell_v_max_v - cell_v_min_v) * 1000, op: ">", value: $dv_load_limit_mv }
+      - { column: abs(power_kw), op: ">", value: 0 }
+    decimals: 0
+    summary: sum
+    color: "#e8830c"
+
+  - code: cell_dv_rest_flags
+    name: ΔV flags at rest
+    group: balancing
+    unit: intervals
+    description: Intervals with ΔV > dv_rest_limit_mv while Power_kW = 0
+    method: aggregate
+    column: "1"
+    func: count
+    filter:
+      - { column: (cell_v_max_v - cell_v_min_v) * 1000, op: ">", value: $dv_rest_limit_mv }
+      - { column: power_kw, op: "=", value: 0 }
+    decimals: 0
+    summary: sum
+    color: "#2f6fed"
+
+  # ── 5. Thermal ─────────────────────────────────────────────────────────────────────────────────────────────────
+  - code: cell_dt_avg_c
+    name: Cell ΔT average
+    group: thermal
+    unit: °C
+    description: ΔT = Cell_Temp_Max − Cell_Temp_Min, averaged over the day; persistently high = hot module / coolant issue
+    method: aggregate
+    column: cell_temp_max_c - cell_temp_min_c
+    func: avg
+    summary: avg
+    color: "#2f6fed"
+
+  - code: cell_dt_max_c
+    name: Cell ΔT max
+    group: thermal
+    unit: °C
+    method: aggregate
+    column: cell_temp_max_c - cell_temp_min_c
+    func: max
+    summary: max
+    color: "#e8830c"
+
+  - code: cell_temp_peak_c
+    name: Max cell temperature
+    group: thermal
+    unit: °C
+    method: aggregate
+    column: cell_temp_max_c
+    func: max
+    summary: max
+    color: "#e8830c"
+
+  - code: cell_temp_mean_c
+    name: Average cell temperature
+    group: thermal
+    unit: °C
+    method: aggregate
+    column: cell_temp_avg_c
+    func: avg
+    summary: avg
+    color: "#2f6fed"
+
+  - code: cell_temp_over_limit
+    name: Intervals above temp limit
+    group: thermal
+    unit: intervals
+    description: Intervals with Cell_Temp_Max > cell_temp_limit_c
+    method: aggregate
+    column: "1"
+    func: count
+    filter:
+      - { column: cell_temp_max_c, op: ">", value: $cell_temp_limit_c }
+    decimals: 0
+    summary: sum
+    color: "#e8830c"
+
+  - code: module_dt_max_c
+    name: Module temp imbalance max
+    group: thermal
+    unit: °C
+    description: max(M_temp) − min(M_temp) across the system's modules, worst timestamp of the day
+    method: query
+    query: module_thermal
+    summary: max
+    color: "#e8830c"
+
+  - code: module_dt_avg_c
+    name: Module temp imbalance average
+    group: thermal
+    unit: °C
+    method: query
+    query: module_thermal
+    summary: avg
+    color: "#2f6fed"
+
+  - code: hottest_module_id
+    name: Hottest module (module_id)
+    group: thermal
+    description: The module with the highest average temperature that day
+    method: query
+    query: module_thermal
+    decimals: 0
+    summary: last
+
+  - code: hottest_module_excess_c
+    name: Hottest module above average
+    group: thermal
+    unit: °C
+    description: That module's average temperature − the average of all the system's modules
+    method: query
+    query: module_thermal
+    summary: avg
+    color: "#7c5cdb"
+
+  # ── 6. Electrical / operating ──────────────────────────────────────────────────────────────────────────────────
+  - code: c_rate_peak
+    name: Peak C-rate
+    group: electrical
+    unit: C
+    description: max |Pack_Current_A| ÷ rated Ah, as logged in c_rate
+    method: aggregate
+    column: c_rate
+    func: max
+    decimals: 3
+    summary: max
+    color: "#2f6fed"
+
+  - code: c_rate_above_threshold_h
+    name: Time above C-rate threshold
+    group: electrical
+    unit: h
+    description: Hours with c_rate > c_rate_threshold (0.5C)
+    method: integrate
+    column: "1"
+    filter:
+      - { column: c_rate, op: ">", value: $c_rate_threshold }
+    summary: sum
+    color: "#e8830c"
+
+  - code: pack_v_min_v
+    name: Pack voltage min
+    group: electrical
+    unit: V
+    method: aggregate
+    column: pack_voltage_v
+    func: min
+    decimals: 1
+    summary: min
+    color: "#e8830c"
+
+  - code: pack_v_max_v
+    name: Pack voltage max
+    group: electrical
+    unit: V
+    method: aggregate
+    column: pack_voltage_v
+    func: max
+    decimals: 1
+    summary: max
+    color: "#2f6fed"
+
+  - code: pack_v_ov_margin_v
+    name: Margin to over-voltage limit
+    group: electrical
+    unit: V
+    description: pack_v_max_limit (cells in series × max cell V) − max pack voltage
+    method: derived
+    formula: pack_v_max_limit - pack_v_max_v
+    decimals: 1
+    summary: min
+    color: "#2f6fed"
+
+  - code: pack_v_uv_margin_v
+    name: Margin to under-voltage limit
+    group: electrical
+    unit: V
+    description: min pack voltage − pack_v_min_limit (cells in series × min cell V)
+    method: derived
+    formula: pack_v_min_v - pack_v_min_limit
+    decimals: 1
+    summary: min
+    color: "#e8830c"
+
+  # ── 7. Degradation & aging ─────────────────────────────────────────────────────────────────────────────────────
+  - code: capacity_fade_per_100_efc_pct
+    name: Capacity fade per 100 cycles
+    group: degradation
+    unit: "% SOH"
+    description: SOH lost per 100 equivalent full cycles - trend over the trailing fade_window_days (query soh_trend)
+    method: query
+    query: soh_trend
+    decimals: 3
+    summary: last
+    color: "#2f6fed"
+
+  - code: capacity_fade_per_year_pct
+    name: Capacity fade per year
+    group: degradation
+    unit: "% SOH"
+    description: SOH lost per year at the trailing-window trend
+    method: query
+    query: soh_trend
+    decimals: 2
+    summary: last
+    color: "#e8830c"
+
+  - code: r_est_mohm
+    name: DC resistance (estimated)
+    group: degradation
+    unit: mΩ
+    description: Median |ΔV/ΔI| on current steps (query resistance_est) - an operating-data estimate
+    method: query
+    query: resistance_est
+    decimals: 2
+    summary: avg
+    color: "#7c5cdb"
+
+  - code: resistance_growth_pct
+    name: Resistance growth vs BOL (estimated)
+    group: degradation
+    unit: "%"
+    description: Estimated resistance ÷ BOL estimate (first r_baseline_days days) − 1
+    method: query
+    query: resistance_est
+    summary: last
+    color: "#12a37f"
+
+  # ── 8. Availability, reliability & safety ──────────────────────────────────────────────────────────────────────
+  - code: available_intervals
+    name: Available intervals
+    group: availability
+    unit: intervals
+    description: Samples received with alarm_level ≤ availability_max_alarm_level (no protection-level alarm)
+    method: aggregate
+    column: "1"
+    func: count
+    filter:
+      - { column: alarm_level, op: "<=", value: $availability_max_alarm_level }
+    decimals: 0
+    summary: sum
+
+  - code: availability_pct
+    name: Availability
+    group: availability
+    unit: "%"
+    description: Available intervals ÷ expected intervals (missing samples count as unavailable)
+    method: derived
+    formula: available_intervals / expected_samples_per_day * 100
+    summary: avg
+    color: "#12a37f"
+
+  - code: observed_hours
+    name: Observed hours
+    group: availability
+    unit: h
+    description: Hours covered by telemetry samples (Σ Δt_h)
+    method: integrate
+    column: "1"
+    summary: sum
+
+  - code: alarm_count
+    name: Alarms
+    group: availability
+    unit: alarms
+    method: query
+    query: alarms
+    default: 0
+    decimals: 0
+    summary: sum
+    color: "#7c5cdb"
+
+  - code: alarms_sev1
+    name: Alarms - severity 1
+    group: availability
+    unit: alarms
+    method: query
+    query: alarms
+    default: 0
+    decimals: 0
+    summary: sum
+    color: "#2f6fed"
+
+  - code: alarms_sev2
+    name: Alarms - severity 2
+    group: availability
+    unit: alarms
+    method: query
+    query: alarms
+    default: 0
+    decimals: 0
+    summary: sum
+    color: "#e8830c"
+
+  - code: alarms_sev3
+    name: Alarms - severity 3
+    group: availability
+    unit: alarms
+    method: query
+    query: alarms
+    default: 0
+    decimals: 0
+    summary: sum
+    color: "#7c5cdb"
+
+  - code: alarms_bms
+    name: Alarms - BMS
+    group: availability
+    unit: alarms
+    method: query
+    query: alarms
+    default: 0
+    decimals: 0
+    summary: sum
+    color: "#2f6fed"
+
+  - code: alarms_pcs
+    name: Alarms - PCS
+    group: availability
+    unit: alarms
+    method: query
+    query: alarms
+    default: 0
+    decimals: 0
+    summary: sum
+    color: "#e8830c"
+
+  - code: alarms_hvac
+    name: Alarms - HVAC
+    group: availability
+    unit: alarms
+    method: query
+    query: alarms
+    default: 0
+    decimals: 0
+    summary: sum
+    color: "#12a37f"
+
+  - code: alarms_ems
+    name: Alarms - EMS
+    group: availability
+    unit: alarms
+    method: query
+    query: alarms
+    default: 0
+    decimals: 0
+    summary: sum
+    color: "#7c5cdb"
+
+  - code: mtba_h
+    name: Mean time between alarms
+    group: availability
+    unit: h
+    description: Observed hours ÷ alarms; the range card uses Σ hours ÷ Σ alarms
+    method: derived
+    formula: observed_hours / alarm_count
+    decimals: 1
+    summary: formula
+    color: "#2f6fed"
+
+  - code: trips_ov
+    name: Protection trips - OV
+    group: availability
+    unit: events
+    method: query
+    query: alarms
+    default: 0
+    decimals: 0
+    summary: sum
+    color: "#2f6fed"
+
+  - code: trips_uv
+    name: Protection trips - UV
+    group: availability
+    unit: events
+    method: query
+    query: alarms
+    default: 0
+    decimals: 0
+    summary: sum
+    color: "#e8830c"
+
+  - code: trips_ot
+    name: Protection trips - OT
+    group: availability
+    unit: events
+    method: query
+    query: alarms
+    default: 0
+    decimals: 0
+    summary: sum
+    color: "#12a37f"
+
+  - code: trips_oc
+    name: Protection trips - OC
+    group: availability
+    unit: events
+    method: query
+    query: alarms
+    default: 0
+    decimals: 0
+    summary: sum
+    color: "#7c5cdb"
+
+  - code: protection_trips
+    name: Protection trips (total)
+    group: availability
+    unit: events
+    method: derived
+    formula: trips_ov + trips_uv + trips_ot + trips_oc
+    decimals: 0
+    summary: sum
+
+  # ── 9. Utilization / duty ──────────────────────────────────────────────────────────────────────────────────────
+  - code: capacity_utilization_pct
+    name: Capacity utilization
+    group: utilization
+    unit: "%"
+    description: SOC swing (max − min) ÷ the full SOC window (soc_window_pct)
+    method: derived
+    formula: soc_range_pct / soc_window_pct * 100
+    summary: avg
+    color: "#2f6fed"
+
+# Charts on the Analytics tab (shown under the group of their first KPI): type bar | line, one series per KPI code.
+# Keep one unit per chart and at most 4 series.
+charts:
+  - title: Daily energy charged / discharged
+    type: bar
+    kpis: [energy_charged_kwh, energy_discharged_kwh]
+  - title: Cumulative throughput
+    type: line
+    kpis: [cumulative_throughput_mwh]
+  - title: Equivalent full cycles - lifetime vs BMS counter
+    type: line
+    kpis: [efc_cumulative, efc_bms]
+
+  - title: DC round-trip efficiency (daily)
+    type: line
+    kpis: [rte_dc_pct]
+  - title: Loss split
+    type: bar
+    kpis: [energy_loss_adj_kwh, standby_loss_kwh, i2r_loss_kwh]
+
+  - title: SOC min / average / max
+    type: line
+    kpis: [soc_max_pct, soc_avg_pct, soc_min_pct]
+  - title: SOE vs SOC at day end
+    type: line
+    kpis: [soe_end_pct, soc_end_pct]
+  - title: Depth of discharge
+    type: line
+    kpis: [dod_max_pct, dod_avg_pct]
+  - title: SOH
+    type: line
+    kpis: [soh_end_pct]
+
+  - title: Cell voltage spread ΔV
+    type: line
+    kpis: [cell_dv_avg_mv, cell_dv_max_mv]
+  - title: ΔV threshold flags
+    type: bar
+    kpis: [cell_dv_load_flags, cell_dv_rest_flags]
+
+  - title: Cell temperature spread ΔT
+    type: line
+    kpis: [cell_dt_avg_c, cell_dt_max_c]
+  - title: Cell temperature max / average
+    type: line
+    kpis: [cell_temp_peak_c, cell_temp_mean_c]
+  - title: Module temperature imbalance
+    type: line
+    kpis: [module_dt_max_c, module_dt_avg_c, hottest_module_excess_c]
+
+  - title: Peak C-rate
+    type: line
+    kpis: [c_rate_peak]
+  - title: Pack voltage min / max
+    type: line
+    kpis: [pack_v_max_v, pack_v_min_v]
+  - title: Margin to protection limits
+    type: line
+    kpis: [pack_v_ov_margin_v, pack_v_uv_margin_v]
+
+  - title: Capacity fade per 100 cycles
+    type: line
+    kpis: [capacity_fade_per_100_efc_pct]
+  - title: Estimated DC resistance
+    type: line
+    kpis: [r_est_mohm]
+
+  - title: Availability
+    type: line
+    kpis: [availability_pct]
+  - title: Alarms by severity
+    type: bar
+    kpis: [alarms_sev1, alarms_sev2, alarms_sev3]
+  - title: Alarms by source
+    type: bar
+    kpis: [alarms_bms, alarms_pcs, alarms_hvac, alarms_ems]
+
+  - title: Capacity utilization
+    type: line
+    kpis: [capacity_utilization_pct]

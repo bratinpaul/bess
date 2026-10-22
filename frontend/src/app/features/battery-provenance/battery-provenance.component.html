@@ -1,0 +1,176 @@
+<div class="page-header">
+  <div>
+    <h2>Battery Provenance</h2>
+    <p class="subtitle">Cell provenance, batch lot and beginning-of-life baseline per fleet system — batch effects dominate aging variance, so
+      RUL models use these as context</p>
+  </div>
+</div>
+
+<div class="card">
+  @if (fleet.length) {
+    <div class="cal-summary">
+      <div class="cal-stat">
+        <span class="cal-stat-value">{{ fleet.length }}</span>
+        <span class="cal-stat-label">Systems</span>
+      </div>
+      @for (b of batches; track b.lot) {
+        <button type="button" class="cal-stat type-stat" [class.on]="filterBatch === b.lot" (click)="selectBatch(b.lot)"
+          [title]="'Show only ' + b.lot">
+          <span class="cal-stat-value">{{ b.n }}</span>
+          <span class="cal-stat-label">{{ b.lot }} · BOL avg {{ num(b.bolAvg, 0) }} kWh</span>
+        </button>
+      }
+    </div>
+  }
+  @if (options?.eol_criteria?.length) {
+    <div class="eol-strip">
+      <span class="eol-head">End-of-life criteria</span>
+      @for (c of options!.eol_criteria; track c.chemistry) {
+        <span class="eol-chip"><strong>{{ c.chemistry }}</strong> SOH &lt; {{ c.soh_eol_pct }} %
+          @if (c.resistance_eol_pct !== null) { or R &gt; {{ c.resistance_eol_pct }} % of BOL }</span>
+      }
+    </div>
+  }
+
+  <div class="toolbar telemetry-filters">
+    <div class="field">
+      <label for="fChem">Chemistry</label>
+      <select id="fChem" [(ngModel)]="filterChemistry">
+        <option value="">All chemistries</option>
+        @for (c of options?.chemistries ?? []; track c) {
+          <option [value]="c">{{ c }}</option>
+        }
+      </select>
+    </div>
+    <div class="field">
+      <label for="fBatch">Batch lot</label>
+      <select id="fBatch" [(ngModel)]="filterBatch">
+        <option value="">All batch lots</option>
+        @for (b of options?.batch_lots ?? []; track b) {
+          <option [value]="b">{{ b }}</option>
+        }
+      </select>
+    </div>
+    <div class="field">
+      <label for="fSort">Sort by</label>
+      <select id="fSort" [(ngModel)]="sort">
+        @for (s of sorts; track s.key) {
+          <option [value]="s.key">{{ s.label }}</option>
+        }
+      </select>
+    </div>
+    <div class="telemetry-filter-actions">
+      <button type="button" class="btn btn-primary" (click)="applyFilters()">Apply</button>
+      <button type="button" class="btn btn-secondary" (click)="clearFilters()">Clear</button>
+    </div>
+  </div>
+
+  <div class="table-bar">
+    <span class="table-bar-info">
+      @if (!loading && !error) {
+        {{ rows.length }} systems ·
+        <button type="button" class="link-btn" (click)="toggleOrder()">{{ order === 'asc' ? 'ascending ↑' : 'descending ↓' }}</button>
+        · {{ visibleColumns.length }} of {{ allColumns.length }} columns
+      }
+    </span>
+    <app-column-picker
+      [columns]="allColumns"
+      [defaultKeys]="defaultColumnKeys"
+      storageKey="bess.batteryProvenanceTable.columns"
+      (visibleChange)="visibleColumns = $event" />
+  </div>
+
+  @if (loading) {
+    <div class="empty-state">Loading battery provenance…</div>
+  } @else if (error) {
+    <div class="empty-state error">{{ error }}</div>
+  } @else if (tableRows.length === 0) {
+    <div class="empty-state">No systems match the current filters.</div>
+  } @else {
+    <app-telemetry-table [columns]="visibleColumns" [rows]="tableRows" [actions]="true"
+      (editRow)="openEdit($event)" (deleteRow)="confirmDelete($event)" />
+  }
+  <p class="upload-note foot-note">Commissioned comes from the system's COMMISSION lifecycle event and the EOL criteria from the chemistry
+    (battery_master.eol_criteria) — both read-only here.</p>
+</div>
+
+<!-- edit -->
+@if (edit; as e) {
+  <div class="modal-backdrop" (click)="edit = null">
+    <div class="modal edit-modal aging-modal" (click)="$event.stopPropagation()">
+      <h3>Edit provenance · {{ e.row.system_code }}</h3>
+      <p class="derived-note">Commissioned {{ e.row.commissioned_on ?? '—' }} (from Lifecycle Events). The system can't be changed.</p>
+      <div class="form-grid aging-grid">
+        <div class="field">
+          <label for="eChem">Chemistry</label>
+          <input id="eChem" type="text" maxlength="40" list="provChems" [(ngModel)]="e.values.chemistry" />
+          <datalist id="provChems">
+            @for (c of options?.chemistries ?? []; track c) {
+              <option [value]="c"></option>
+            }
+          </datalist>
+        </div>
+        @for (f of textFields; track f.key) {
+          <div class="field">
+            <label [for]="'e' + f.key">{{ f.label }}</label>
+            <input [id]="'e' + f.key" type="text" maxlength="120" [attr.list]="'prov-' + f.key" [(ngModel)]="e.values[f.key]" />
+            <datalist [id]="'prov-' + f.key">
+              @for (v of $any(options?.[f.list] ?? []); track v) {
+                <option [value]="v"></option>
+              }
+            </datalist>
+          </div>
+        }
+        <div class="field">
+          <label for="eBuild">Build date</label>
+          <input id="eBuild" type="date" [(ngModel)]="e.values.build_date" />
+        </div>
+        @for (f of numFields; track f.key) {
+          <div class="field">
+            <label [for]="'e' + f.key">{{ f.label }}</label>
+            <input [id]="'e' + f.key" type="number" [step]="f.step" [attr.min]="f.min ?? null" [attr.max]="f.max ?? null"
+              [(ngModel)]="$any(e.values)[f.key]" />
+          </div>
+        }
+      </div>
+      @if (eolFor(e.values.chemistry); as c) {
+        <p class="derived-note">{{ c.chemistry }} end of life: {{ c.description }}.</p>
+      } @else if (e.values.chemistry.trim()) {
+        <p class="derived-note warn-note">No end-of-life criteria for "{{ e.values.chemistry.trim().toUpperCase() }}" — RUL labels need one.</p>
+      }
+      @if (editError) {
+        <div class="form-error">{{ editError }}</div>
+      }
+      <div class="modal-actions">
+        @if (editProblem) {
+          <span class="problem-note">{{ editProblem }}</span>
+        }
+        <button class="btn btn-secondary" (click)="edit = null" [disabled]="saving">Cancel</button>
+        <button class="btn btn-primary" (click)="save()" [disabled]="saving || !!editProblem">{{ saving ? 'Saving…' : 'Save changes' }}</button>
+      </div>
+    </div>
+  </div>
+}
+
+<!-- delete -->
+@if (toDelete; as d) {
+  <div class="modal-backdrop" (click)="toDelete = null">
+    <div class="modal" (click)="$event.stopPropagation()">
+      <h3>Delete provenance?</h3>
+      <p>
+        This permanently deletes the provenance and beginning-of-life baseline of <strong>{{ d.system_code }}</strong>
+        ({{ d.chemistry }}, {{ d.batch_lot ?? 'no batch' }}, BOL {{ num(d.bol_capacity_kwh, 1) }} kWh). The system and its capacity tests,
+        lifecycle events and aging snapshots stay. This cannot be undone.
+      </p>
+      @if (deleteError) {
+        <div class="form-error">{{ deleteError }}</div>
+      }
+      <div class="modal-actions">
+        <button class="btn btn-secondary" (click)="toDelete = null" [disabled]="deleting">{{ deleteError ? 'Close' : 'Cancel' }}</button>
+        @if (!deleteError) {
+          <button class="btn btn-danger-solid" (click)="deleteConfirmed()" [disabled]="deleting">{{ deleting ? 'Deleting…' : 'Delete' }}</button>
+        }
+      </div>
+    </div>
+  </div>
+}

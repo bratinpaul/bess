@@ -1,0 +1,65 @@
+<div class="page-header">
+  <div>
+    <a class="back-link" routerLink="/battery-packs">← Back to battery packs</a>
+    <h2>{{ isEditMode ? 'Edit Battery Pack' : 'Add Battery Pack' }}</h2>
+  </div>
+</div>
+
+<div class="card">
+  @if (loading) {
+    <div class="empty-state">Loading…</div>
+  } @else {
+    <form [formGroup]="form" (ngSubmit)="submit()">
+      @if (error) {
+        <div class="form-error">{{ error }}</div>
+      }
+
+      <div class="form-grid">
+        <div class="field">
+          <label for="container_id">Battery Container *</label>
+          <select id="container_id" formControlName="container_id">
+            <option [ngValue]="null" disabled>Select a battery container</option>
+            @for (container of containers; track container.container_id) {
+              <option [ngValue]="container.container_id">{{ container.container_number || 'Container ' + container.container_id }}</option>
+            }
+          </select>
+          @if (form.get('container_id')?.invalid && form.get('container_id')?.touched) {
+            <span class="field-error">Battery container is required.</span>
+          }
+        </div>
+
+        <div class="field">
+          <label for="pack_number">Pack Number</label>
+          <input id="pack_number" type="text" formControlName="pack_number" />
+        </div>
+
+        <div class="field">
+          <label for="nominal_voltage">Nominal Voltage</label>
+          <input id="nominal_voltage" type="number" step="0.01" formControlName="nominal_voltage" />
+        </div>
+
+        <div class="field">
+          <label for="nominal_capacity_ah">Nominal Capacity (Ah)</label>
+          <input id="nominal_capacity_ah" type="number" step="0.01" formControlName="nominal_capacity_ah" />
+        </div>
+
+        <div class="field">
+          <label for="status">Status</label>
+          <input id="status" type="text" formControlName="status" placeholder="e.g. Active" />
+        </div>
+
+        <div class="field">
+          <label for="module_count">Module Count</label>
+          <input id="module_count" type="number" formControlName="module_count" min="0" step="1" />
+        </div>
+      </div>
+
+      <div class="form-actions">
+        <a class="btn btn-secondary" routerLink="/battery-packs">Cancel</a>
+        <button type="submit" class="btn btn-primary" [disabled]="saving">
+          {{ saving ? 'Saving…' : 'Save Pack' }}
+        </button>
+      </div>
+    </form>
+  }
+</div>

@@ -1,0 +1,73 @@
+<div class="page-header">
+  <div>
+    <a class="back-link" routerLink="/ems-controllers">← Back to EMS controllers</a>
+    <h2>{{ isEditMode ? 'Edit EMS Controller' : 'Add EMS Controller' }}</h2>
+  </div>
+  @if (isEditMode && itemId) {
+    <app-asset-links assetType="ems_controller" [assetId]="itemId" [name]="savedCode" [systemId]="savedSystemId" />
+  }
+</div>
+
+<div class="card">
+  @if (loading) {
+    <div class="empty-state">Loading…</div>
+  } @else {
+    <form [formGroup]="form" (ngSubmit)="submit()">
+      @if (error) {
+        <div class="form-error">{{ error }}</div>
+      }
+
+      <div class="form-grid">
+        <div class="field">
+          <label for="battery_system_id">Battery System *</label>
+          <select id="battery_system_id" formControlName="battery_system_id">
+            <option [ngValue]="null" disabled>Select a battery system</option>
+            @for (system of batterySystems; track system.battery_system_id) {
+              <option [ngValue]="system.battery_system_id">{{ system.system_name }}</option>
+            }
+          </select>
+          @if (invalid('battery_system_id')) {
+            <span class="field-error">Battery system is required.</span>
+          }
+        </div>
+
+        <div class="field">
+          <label for="ems_code">EMS Code *</label>
+          <input id="ems_code" type="text" formControlName="ems_code" placeholder="e.g. EMS-02" />
+          @if (invalid('ems_code')) {
+            <span class="field-error">Code is required (max 100 characters).</span>
+          } @else {
+            <span class="field-hint">Must be unique.</span>
+          }
+        </div>
+
+        <div class="field">
+          <label for="manufacturer">Manufacturer</label>
+          <input id="manufacturer" type="text" formControlName="manufacturer" />
+        </div>
+
+        <div class="field">
+          <label for="model">Model</label>
+          <input id="model" type="text" formControlName="model" />
+        </div>
+
+        <div class="field">
+          <label for="firmware_version">Firmware Version</label>
+          <input id="firmware_version" type="text" formControlName="firmware_version" placeholder="e.g. 3.2.1" />
+        </div>
+
+        <div class="field">
+          <label for="control_mode">Control Mode</label>
+          <input id="control_mode" type="text" formControlName="control_mode" placeholder="e.g. automated" />
+        </div>
+      </div>
+
+      <div class="form-actions">
+        <a class="btn btn-secondary" routerLink="/ems-controllers">Cancel</a>
+        <button type="submit" class="btn btn-primary" [disabled]="saving">
+          {{ saving ? 'Saving…' : 'Save Controller' }}
+        </button>
+      </div>
+    </form>
+  }
+</div>

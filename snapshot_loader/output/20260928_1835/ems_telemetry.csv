@@ -1,0 +1,2 @@
+ts,dispatch_mode,grid_service,market_price_mwh,p_setpoint_kw,poi_active_power_kw,poi_reactive_power_kvar,tracking_error_kw,grid_frequency_hz,poi_voltage_kv,agc_signal,plant_soc_pct,target_soc_pct,avail_charge_kw,avail_discharge_kw,aux_load_kw,plant_available,alarm_level
+2026-09-28T18:35:00,ENERGY_ARBITRAGE,ARBITRAGE,87.36,-669.0,-645.73,114.13,-0.62,49.982,33.054,,36.26,60.4,1000.0,1000.0,23.89,1,0

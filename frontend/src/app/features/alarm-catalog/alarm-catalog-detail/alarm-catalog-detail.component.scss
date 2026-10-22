@@ -1,0 +1,27 @@
+.card {
+  padding: 24px;
+}
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.alarm-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.alarm-description {
+  margin: 0 0 20px;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.muted {
+  margin-left: 6px;
+  font-size: 12px;
+  color: var(--color-text-muted);
+}

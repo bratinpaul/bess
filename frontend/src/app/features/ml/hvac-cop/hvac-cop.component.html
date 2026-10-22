@@ -1,0 +1,304 @@
+<div class="page-header cp-header">
+  <div>
+    <h2>HVAC COP &amp; Cooling</h2>
+    <p class="subtitle">
+      How much cooling each kW of HVAC power buys, and how that moves with ambient, coolant temperature and part load - against a performance
+      map, so a failing unit stands out from a hot week. Fit models on <a routerLink="/ml/hvac-cop-model">HVAC COP Model</a>.
+    </p>
+  </div>
+  <div class="cp-controls">
+    <div class="field">
+      <label for="run">Run</label>
+      <select id="run" [ngModel]="runId" (ngModelChange)="selectRun($event)">
+        @for (r of runs; track r.run_id) {
+          <option [ngValue]="r.run_id">{{ runLabel(r) }}</option>
+        }
+      </select>
+    </div>
+    <div class="field">
+      <label for="unit">HVAC unit</label>
+      <select id="unit" [(ngModel)]="hvacId" (ngModelChange)="onUnit()">
+        @for (u of units; track u.id) {
+          <option [ngValue]="u.id">{{ u.name }}</option>
+        }
+      </select>
+    </div>
+  </div>
+</div>
+
+@if (error) {
+  <div class="card empty-state error">{{ error }}</div>
+}
+@if (!error && !runs.length) {
+  <div class="card empty-state">No completed COP run yet - fit one on <a routerLink="/ml/hvac-cop-model">HVAC COP Model</a>.</div>
+}
+
+@if (s; as s) {
+  @if (warnings.length) {
+    <div class="cp-warnings">
+      <button type="button" class="link-btn" (click)="showWarnings = !showWarnings">⚠ {{ warnings.length }} data note(s) for {{ s.hvac_code }} {{ showWarnings ? '▴' : '▾' }}</button>
+      @if (showWarnings) {
+        <ul>
+          @for (x of warnings; track $index) {
+            <li>{{ x.slice(s.hvac_code.length + 2) }}</li>
+          }
+        </ul>
+      }
+    </div>
+  }
+
+  <div class="metric-grid cp-tiles">
+    <div class="metric-card"><div class="metric-body"><span class="metric-label">Seasonal COP</span><span class="metric-value">{{ num(s.scorecard.seasonal_cop_cooling, 2) }}</span><span class="metric-sub">Σ cooling ÷ Σ power while cooling · logged cop averages {{ num(s.scorecard.logged_cop_mean, 2) }}</span></div></div>
+    <div class="metric-card"><div class="metric-body"><span class="metric-label">All-modes COP</span><span class="metric-value">{{ num(s.scorecard.seasonal_cop_all_modes, 2) }}</span><span class="metric-sub">idle / free-cooling parasitics included · {{ num(s.scorecard.hvac_mwh, 1) }} MWh HVAC</span></div></div>
+    <div class="metric-card"><div class="metric-body"><span class="metric-label">kW / ton</span><span class="metric-value">{{ num(s.scorecard.kw_per_ton, 2) }}</span><span class="metric-sub">HVAC kW per 3.517 kW of cooling</span></div></div>
+    <div class="metric-card"><div class="metric-body"><span class="metric-label">IPLV-style index</span><span class="metric-value">{{ num(s.scorecard.iplv_style, 2) }}</span><span class="metric-sub">map at {{ s.scorecard.rating_condition.ambient_c }} °C / {{ s.scorecard.rating_condition.supply_c }} °C · observed part-load index {{ num(s.scorecard.observed_part_load_index, 2) }}</span></div></div>
+    <div class="metric-card"><div class="metric-body"><span class="metric-label">η 2nd law</span><span class="metric-value">{{ num(s.scorecard.eta_2nd_law_mean, 2) }}</span><span class="metric-sub">COP ÷ Carnot - weather-free health (p10–p90 {{ num(s.scorecard.eta_2nd_law_p10_p90?.[0], 2) }}–{{ num(s.scorecard.eta_2nd_law_p10_p90?.[1], 2) }})</span></div></div>
+    <div class="metric-card"><div class="metric-body"><span class="metric-label">Map accuracy</span><span class="metric-value">{{ num(s.scores.map.test.mae, 3) }}<span class="metric-unit">MAE</span></span><span class="metric-sub">R² {{ num(s.scores.map.test.r2, 3) }} on the test days · hybrid {{ num(s.scores.hybrid.test.mae, 3) }}</span></div></div>
+    <div class="metric-card" [class.cp-warn]="s.alarm_days.length > 0"><div class="metric-body"><span class="metric-label">Degradation alarms</span><span class="metric-value">{{ s.alarm_days.length }}<span class="metric-unit">days</span></span><span class="metric-sub">COP below the map (EWMA / CUSUM, lower-sided)</span></div></div>
+    <div class="metric-card"><div class="metric-body"><span class="metric-label">Cycling</span><span class="metric-value">{{ num(s.cycling.starts_per_day, 1) }}<span class="metric-unit">starts / day</span></span><span class="metric-sub">mean run {{ num(s.cycling.mean_run_min, 0) }} min · {{ s.cycling.short_cycles }} short cycles · {{ num(s.cycling.runtime_h_per_day, 1) }} h/day</span></div></div>
+  </div>
+
+  <div class="view-tabs" role="tablist" aria-label="COP view">
+    <button type="button" role="tab" class="view-tab" [class.active]="tab === 'map'" (click)="setTab('map')">Performance map</button>
+    <button type="button" role="tab" class="view-tab" [class.active]="tab === 'scorecard'" (click)="setTab('scorecard')">Scorecard</button>
+    <button type="button" role="tab" class="view-tab" [class.active]="tab === 'degradation'" (click)="setTab('degradation')">Degradation</button>
+    <button type="button" role="tab" class="view-tab" [class.active]="tab === 'closure'" (click)="setTab('closure')">Closure</button>
+    <button type="button" role="tab" class="view-tab" [class.active]="tab === 'whatif'" (click)="setTab('whatif')">What-if &amp; setpoint</button>
+  </div>
+
+  <!-- ================================================================ MAP -->
+  @if (tab === 'map') {
+    <div class="card chart-card">
+      <h3>COP vs ambient · steady-state intervals and the fitted map (coolant supply {{ num(s.map_grid.supply_c, 0) }} °C)</h3>
+      @if (scatterChart) {
+        <app-chart-canvas [config]="scatterChart" [height]="340" />
+      }
+      <p class="cp-note">Lift is the master variable: a hotter condenser (ambient) or a colder evaporator raises it and COP falls. Night COP {{ num(s.shape.night_cop, 2) }} ·
+        part load {{ num(s.shape.part_load_cop, 2) }} vs full load {{ num(s.shape.full_load_cop, 2) }}{{ s.shape.afternoon_cop === null ? ' · the unit does not cool in the afternoons in this window' : ' · afternoon ' + num(s.shape.afternoon_cop, 2) }}.</p>
+    </div>
+    <div class="cp-two">
+      <div class="card chart-card">
+        <h3>Capacity map</h3>
+        @if (capChart) {
+          <app-chart-canvas [config]="capChart" [height]="250" />
+        }
+      </div>
+      <div class="card chart-card">
+        <h3>Part-load curve</h3>
+        @if (plrChart) {
+          <app-chart-canvas [config]="plrChart" [height]="250" />
+        }
+        <p class="cp-note">A variable-speed unit is most efficient at part load; full speed costs COP.</p>
+      </div>
+    </div>
+    <div class="card chart-card">
+      <h3>Model scores (test days from {{ s.test_from | date: 'yyyy-MM-dd' }})</h3>
+      <table class="data-table">
+        <thead><tr><th>Model</th><th class="num">R²</th><th class="num">MAE</th><th class="num">MAPE</th><th class="num">Bias</th></tr></thead>
+        <tbody>
+          <tr><td>Performance map (biquadratic × part load)</td><td class="num mono">{{ num(s.scores.map.test.r2, 3) }}</td><td class="num mono">{{ num(s.scores.map.test.mae, 3) }}</td><td class="num mono">{{ num(s.scores.map.test.mape_pct, 2) }} %</td><td class="num mono">{{ num(s.scores.map.test.bias, 3) }}</td></tr>
+          <tr><td>Carnot-anchored grey-box (η 2nd law × COP Carnot)</td><td class="num mono">{{ num(s.scores.grey.test.r2, 3) }}</td><td class="num mono">{{ num(s.scores.grey.test.mae, 3) }}</td><td class="num mono">{{ num(s.scores.grey.test.mape_pct, 2) }} %</td><td class="num mono">{{ num(s.scores.grey.test.bias, 3) }}</td></tr>
+          <tr><td>Map + GBM residual</td><td class="num mono">{{ num(s.scores.hybrid.test.r2, 3) }}</td><td class="num mono">{{ num(s.scores.hybrid.test.mae, 3) }}</td><td class="num mono">{{ num(s.scores.hybrid.test.mape_pct, 2) }} %</td><td class="num mono">{{ num(s.scores.hybrid.test.bias, 3) }}</td></tr>
+          <tr><td>Constant (training median) - the bar to beat</td><td class="num mono">{{ num(s.scores.constant.test.r2, 3) }}</td><td class="num mono">{{ num(s.scores.constant.test.mae, 3) }}</td><td class="num mono">{{ num(s.scores.constant.test.mape_pct, 2) }} %</td><td class="num mono">{{ num(s.scores.constant.test.bias, 3) }}</td></tr>
+          <tr><td>Capacity map (kW)</td><td class="num mono">{{ num(s.scores.capacity_map.test.r2, 3) }}</td><td class="num mono">{{ num(s.scores.capacity_map.test.mae, 2) }}</td><td class="num mono">{{ num(s.scores.capacity_map.test.mape_pct, 2) }} %</td><td class="num mono">{{ num(s.scores.capacity_map.test.bias, 2) }}</td></tr>
+          <tr><td>HVAC power = capacity ÷ COP (kW)</td><td class="num mono">{{ num(s.scores.power.test.r2, 3) }}</td><td class="num mono">{{ num(s.scores.power.test.mae, 2) }}</td><td class="num mono">{{ num(s.scores.power.test.mape_pct, 2) }} %</td><td class="num mono">{{ num(s.scores.power.test.bias, 2) }}</td></tr>
+        </tbody>
+      </table>
+    </div>
+  }
+
+  <!-- ================================================================ SCORECARD -->
+  @if (tab === 'scorecard') {
+    <div class="cp-two">
+      <div class="card chart-card">
+        <h3>Daily COP - raw and normalized</h3>
+        @if (dailyCopChart) {
+          <app-chart-canvas [config]="dailyCopChart" [height]="270" />
+        }
+        <p class="cp-note">Raw COP moves with the weather; the normalized COP (the map at the reference condition × the day's actual ÷ expected) moves only with the unit's health.</p>
+      </div>
+      <div class="card chart-card">
+        <h3>Daily kW / ton</h3>
+        @if (kwtChart) {
+          <app-chart-canvas [config]="kwtChart" [height]="270" />
+        }
+      </div>
+    </div>
+    <div class="cp-two">
+      <div class="card chart-card">
+        <h3>Part load - where the unit spends its time</h3>
+        <table class="data-table">
+          <thead><tr><th>Part-load bin</th><th class="num">Share of steady time</th><th class="num">Mean COP</th><th class="num">Map COP at rating</th></tr></thead>
+          <tbody>
+            @for (b of s.scorecard.part_load_bins; track b.bin) {
+              <tr><td>{{ b.bin }}</td><td class="num mono">{{ pct(b.share, 1) }} %</td><td class="num mono">{{ num(b.cop, 2) }}</td>
+                <td class="num mono">{{ num(s.scorecard.rating_cop['plr_' + b.bin.replace(' %', '')], 2) }}</td></tr>
+            }
+          </tbody>
+        </table>
+        <p class="cp-note">IPLV-style index = 0.01 · COP<sub>100</sub> + 0.42 · COP<sub>75</sub> + 0.45 · COP<sub>50</sub> + 0.12 · COP<sub>25</sub> at {{ s.scorecard.rating_condition.ambient_c }} °C / {{ s.scorecard.rating_condition.supply_c }} °C = {{ num(s.scorecard.iplv_style, 2) }}.</p>
+      </div>
+      <div class="card chart-card">
+        <h3>Energy, capacity &amp; cycling</h3>
+        <table class="data-table cp-kv">
+          <tbody>
+            <tr><td>Cooling delivered / HVAC energy while cooling</td><td class="num mono">{{ num(s.scorecard.cooling_mwh, 2) }} / {{ num(s.scorecard.hvac_cooling_mwh, 2) }} MWh</td></tr>
+            <tr><td>HVAC energy, all modes (integrated / cum_energy counter)</td><td class="num mono">{{ num(s.scorecard.hvac_mwh, 2) }} / {{ num(s.scorecard.cum_energy_counter_mwh, 2) }} MWh</td></tr>
+            <tr><td>Capacity ratio (cooling ÷ rated {{ num(s.scorecard.rated_capacity_kw, 0) }} kW)</td><td class="num mono" [class.cp-bad]="(s.scorecard.capacity_ratio ?? 0) > 1.5">{{ num(s.scorecard.capacity_ratio, 2) }}</td></tr>
+            <tr><td>Starts / day · mean run · short cycles</td><td class="num mono">{{ num(s.cycling.starts_per_day, 1) }} · {{ num(s.cycling.mean_run_min, 0) }} min · {{ s.cycling.short_cycles }}</td></tr>
+            <tr><td>Compressor runtime (counter) / cooling hours</td><td class="num mono">{{ num(s.cycling.runtime_h_per_day, 2) }} / {{ num(s.cycling.cooling_hours_per_day, 2) }} h/day</td></tr>
+            <tr><td>Mode share</td><td class="num mono">@for (m of s.cycling.modes | keyvalue; track m.key) {<span class="cp-mode">{{ m.key.toLowerCase() }} {{ pct($any(m.value), 0) }} %</span>}</td></tr>
+            <tr><td>Latent cooling (coolant below dew point) · humid intervals</td><td class="num mono">{{ pct(s.scorecard.latent_share_of_cooling, 1) }} % · {{ pct(s.scorecard.humid_share, 1) }} %</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  }
+
+  <!-- ================================================================ DEGRADATION -->
+  @if (tab === 'degradation') {
+    <div class="cp-two">
+      <div class="card chart-card">
+        <h3>COP residual - EWMA control chart</h3>
+        @if (controlChart) {
+          <app-chart-canvas [config]="controlChart" [height]="270" />
+        }
+        <p class="cp-note">Residual = measured COP − the map at the same ambient, coolant temperature and part load. A slow negative drift → fouled condenser or refrigerant loss; a step → component fault. Limits from the training days; alarms only below.</p>
+      </div>
+      <div class="card chart-card">
+        <h3>CUSUM - drift detector</h3>
+        @if (cusumChart) {
+          <app-chart-canvas [config]="cusumChart" [height]="270" />
+        }
+      </div>
+    </div>
+    <div class="cp-three">
+      <div class="card chart-card">
+        <h3>η 2nd law trend</h3>
+        @if (etaChart) {
+          <app-chart-canvas [config]="etaChart" [height]="220" />
+        }
+      </div>
+      <div class="card chart-card">
+        <h3>Filter dp (airflow restriction)</h3>
+        @if (filterChart) {
+          <app-chart-canvas [config]="filterChart" [height]="220" />
+        }
+      </div>
+      <div class="card chart-card">
+        <h3>High-side pressure</h3>
+        @if (dischargeChart) {
+          <app-chart-canvas [config]="dischargeChart" [height]="220" />
+        }
+      </div>
+    </div>
+    <p class="cp-note">Corroborate a COP alarm with the side signals: a rising filter dp (clogged filter), discharge pressure above what the ambient explains (condenser fouling / overcharge) and the condenser fan saturating at 100 %. Never flag on raw COP - only the normalized residual separates a failing unit from a hot week.</p>
+  }
+
+  <!-- ================================================================ CLOSURE -->
+  @if (tab === 'closure') {
+    <div class="metric-grid cp-tiles">
+      <div class="metric-card" [class.cp-warn]="Math.abs((closure('loop_vs_logged_ratio_median') ?? 1) - 1) > 0.15"><div class="metric-body"><span class="metric-label">Logged ÷ coolant-loop cooling</span><span class="metric-value">{{ num(closure('loop_vs_logged_ratio_median'), 2) }}<span class="metric-unit">×</span></span><span class="metric-sub">{{ num(closure('cooling_logged_mean_kw'), 1) }} vs {{ num(closure('q_loop_mean_kw'), 1) }} kW · battery heat reading {{ num(closure('heat_load_sensor_mean_kw'), 1) }} kW</span></div></div>
+      <div class="metric-card"><div class="metric-body"><span class="metric-label">Logged cop − cooling ÷ power</span><span class="metric-value">{{ signed(closure('cop_logged_minus_ratio_median'), 2) }}</span><span class="metric-sub">median · correlation {{ num(closure('cop_logged_vs_ratio_corr'), 2) }}</span></div></div>
+      <div class="metric-card"><div class="metric-body"><span class="metric-label">Condenser balance</span><span class="metric-value">{{ signed(closure('rej_closure_median_kw'), 1) }}<span class="metric-unit">kW</span></span><span class="metric-sub">heat_rejected − (cooling + power), median · {{ num(closure('rej_closure_pct_of_rejected'), 1) }} %</span></div></div>
+      <div class="metric-card"><div class="metric-body"><span class="metric-label">Steady share</span><span class="metric-value">{{ pct(closure('steady_share_of_cooling'), 0) }}<span class="metric-unit">%</span></span><span class="metric-sub">of the {{ s.cooling_n | number }} cooling intervals feed the fit</span></div></div>
+    </div>
+    <div class="card chart-card">
+      <div class="cp-card-head">
+        <h3>Cooling two ways · {{ day }}</h3>
+        <div class="cp-step">
+          <button type="button" class="btn btn-secondary btn-icon" title="Previous day" (click)="stepDay(-1)">‹</button>
+          <select [(ngModel)]="day" (ngModelChange)="loadDay()">
+            @for (d of days; track d) {
+              <option [ngValue]="d">{{ d }}</option>
+            }
+          </select>
+          <button type="button" class="btn btn-secondary btn-icon" title="Next day" (click)="stepDay(1)">›</button>
+        </div>
+      </div>
+      @if (closureCoolChart) {
+        <app-chart-canvas [config]="closureCoolChart" [height]="250" />
+      }
+    </div>
+    <div class="cp-two">
+      <div class="card chart-card">
+        <h3>Logged COP vs cooling ÷ power vs the map</h3>
+        @if (closureCopChart) {
+          <app-chart-canvas [config]="closureCopChart" [height]="240" />
+        }
+      </div>
+      <div class="card chart-card">
+        <h3>Condenser balance gap</h3>
+        @if (rejChart) {
+          <app-chart-canvas [config]="rejChart" [height]="240" />
+        }
+      </div>
+    </div>
+    <p class="cp-note">Close the balance before trusting any COP: the coolant loop must match the logged cooling, and heat rejected ≈ cooling + power every interval. A systematic gap is a sensor / flow issue, not efficiency.</p>
+  }
+
+  <!-- ================================================================ WHAT-IF -->
+  @if (tab === 'whatif') {
+    <div class="cp-two">
+      <div class="card chart-card">
+        <h3>What-if: COP and HVAC kW at given conditions</h3>
+        <div class="form-grid cp-form">
+          <div class="field"><label for="wa">Ambient (°C)</label><input id="wa" type="number" [(ngModel)]="whatif.ambient" (change)="predict()" /></div>
+          <div class="field"><label for="ws">Coolant supply (°C)</label><input id="ws" type="number" [(ngModel)]="whatif.supply" (change)="predict()" /></div>
+          <div class="field">
+            <label for="wm">Drive by</label>
+            <select id="wm" [(ngModel)]="whatif.mode" (ngModelChange)="predict()">
+              <option value="load">Heat load to remove (kW)</option>
+              <option value="plr">Part load</option>
+            </select>
+          </div>
+          @if (whatif.mode === 'load') {
+            <div class="field"><label for="wl">Heat load (kW)</label><input id="wl" type="number" min="0" [(ngModel)]="whatif.load" (change)="predict()" /></div>
+          } @else {
+            <div class="field"><label for="wp">Part load (0–1)</label><input id="wp" type="number" min="0.05" max="1" step="0.05" [(ngModel)]="whatif.plr" (change)="predict()" /></div>
+          }
+        </div>
+        @if (predictError) {
+          <div class="form-error">{{ predictError }}</div>
+        }
+        @if (prediction; as p) {
+          <div class="metric-grid cp-tiles cp-pred">
+            <div class="metric-card"><div class="metric-body"><span class="metric-label">COP (map)</span><span class="metric-value">{{ num(p.cop_map, 2) }}</span><span class="metric-sub">grey-box {{ num(p.cop_grey, 2) }} · Carnot {{ num(p.cop_carnot, 1) }} · η {{ num(p.eta_2nd_law, 2) }}</span></div></div>
+            <div class="metric-card"><div class="metric-body"><span class="metric-label">HVAC power</span><span class="metric-value">{{ num(p.hvac_kw, 1) }}<span class="metric-unit">kW</span></span><span class="metric-sub">for {{ num(p.cooling_kw, 1) }} kW of cooling · {{ num(p.kw_per_ton, 2) }} kW/ton</span></div></div>
+            <div class="metric-card" [class.cp-warn]="p.cycling || p.heat_load_exceeds_capacity"><div class="metric-body"><span class="metric-label">Part load</span><span class="metric-value">{{ pct(p.plr, 0) }}<span class="metric-unit">%</span></span><span class="metric-sub">{{ p.cycling ? 'needs ' + pct(p.plr_needed, 0) + ' % - below the ' + pct(p.min_plr, 0) + ' % minimum speed: the unit cycles' : (p.heat_load_exceeds_capacity ? 'heat load above the full-speed capacity' : 'lift ' + num(p.lift_k, 1) + ' K') }}</span></div></div>
+            <div class="metric-card"><div class="metric-body"><span class="metric-label">Capacity</span><span class="metric-value">{{ num(p.capacity_full_kw, 0) }}<span class="metric-unit">kW full speed</span></span><span class="metric-sub">{{ p.out_of_range ? 'ambient outside the training range - extrapolated' : 'within the training range' }}</span></div></div>
+          </div>
+        }
+        <p class="cp-note">HVAC kW = cooling to deliver ÷ COP(conditions): drive the cooling from the heat-load model and the conditions from the weather forecast and this is the auxiliary / HVAC-energy forecast. Heat load in the same units as the run's capacity ({{ s.capacity_definition === 'loop' ? 'coolant loop' : 'logged cooling_capacity_kw' }}).</p>
+      </div>
+      <div class="card chart-card">
+        <h3>Setpoint &amp; scheduling levers</h3>
+        <table class="data-table cp-kv">
+          <tbody>
+            <tr><td>At the median condition</td><td class="num mono">{{ num(s.sensitivities.at.ambient_c, 1) }} °C ambient · {{ num(s.sensitivities.at.supply_c, 1) }} °C supply · PLR {{ pct(s.sensitivities.at.plr, 0) }} % → COP {{ num(s.sensitivities.cop_at_median, 2) }}</td></tr>
+            <tr><td>+1 °C coolant setpoint (map / Carnot grey-box)</td><td class="num mono">{{ signed(s.sensitivities.per_setpoint_plus_1c_pct, 1) }} % / {{ signed(s.sensitivities.grey_per_setpoint_plus_1c_pct, 1) }} %</td></tr>
+            <tr><td>−1 °C ambient - cooling in a cooler hour (map / grey-box)</td><td class="num mono">{{ signed(s.sensitivities.per_ambient_minus_1c_pct, 1) }} % / {{ signed(s.sensitivities.grey_per_ambient_minus_1c_pct, 1) }} %</td></tr>
+            <tr><td>−10 pts part load (map)</td><td class="num mono">{{ signed(s.sensitivities.per_plr_minus_10pct, 3) }} COP</td></tr>
+            <tr><td>Best hours to pre-cool (highest expected COP)</td><td class="num mono">@for (h of s.sensitivities.best_hours; track h) {<span class="cp-mode">{{ ('0' + h).slice(-2) }}:00</span>}</td></tr>
+          </tbody>
+        </table>
+        <p class="cp-note">Hold the coolant setpoint as high as the cell-temperature limit allows, and shift cooling to cool (or cheap) hours using the thermal mass as a buffer. The map can only learn a setpoint effect if the setpoint varied in the data; the grey-box carries the physics either way.</p>
+      </div>
+    </div>
+    <div class="cp-two">
+      <div class="card chart-card">
+        <h3>Expected COP by hour of day</h3>
+        @if (hourlyChart) {
+          <app-chart-canvas [config]="hourlyChart" [height]="250" />
+        }
+        <p class="cp-note">Green bars: the four best hours to run the compressor. Dots: measured steady COP in that hour.</p>
+      </div>
+      <div class="card chart-card">
+        <h3>Mean ambient by hour</h3>
+        @if (ambientChart) {
+          <app-chart-canvas [config]="ambientChart" [height]="250" />
+        }
+      </div>
+    </div>
+  }
+}

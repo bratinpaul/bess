@@ -1,0 +1,75 @@
+<div class="page-header">
+  <div>
+    <a class="back-link" routerLink="/battery-containers">← Back to battery containers</a>
+    <h2>{{ isEditMode ? 'Edit Battery Container' : 'Add Battery Container' }}</h2>
+  </div>
+</div>
+
+<div class="card">
+  @if (loading) {
+    <div class="empty-state">Loading…</div>
+  } @else {
+    <form [formGroup]="form" (ngSubmit)="submit()">
+      @if (error) {
+        <div class="form-error">{{ error }}</div>
+      }
+
+      <div class="form-grid">
+        <div class="field">
+          <label for="battery_system_id">Battery System *</label>
+          <select id="battery_system_id" formControlName="battery_system_id">
+            <option [ngValue]="null" disabled>Select a battery system</option>
+            @for (system of batterySystems; track system.battery_system_id) {
+              <option [ngValue]="system.battery_system_id">{{ system.system_name }}</option>
+            }
+          </select>
+          @if (form.get('battery_system_id')?.invalid && form.get('battery_system_id')?.touched) {
+            <span class="field-error">Battery system is required.</span>
+          }
+        </div>
+
+        <div class="field">
+          <label for="container_number">Container Number</label>
+          <input id="container_number" type="text" formControlName="container_number" />
+        </div>
+
+        <div class="field">
+          <label for="manufacturer">Manufacturer</label>
+          <input id="manufacturer" type="text" formControlName="manufacturer" />
+        </div>
+
+        <div class="field">
+          <label for="installation_date">Installation Date</label>
+          <input id="installation_date" type="date" formControlName="installation_date" />
+        </div>
+
+        <div class="field">
+          <label for="status">Status</label>
+          <input id="status" type="text" formControlName="status" placeholder="e.g. Active" />
+        </div>
+
+        <div class="field">
+          <label for="container_type">Container Type</label>
+          <input id="container_type" type="text" formControlName="container_type" placeholder="e.g. 20ft ISO liquid-cooled enclosure" />
+        </div>
+
+        <div class="field">
+          <label for="ip_rating">IP Rating</label>
+          <input id="ip_rating" type="text" formControlName="ip_rating" placeholder="e.g. IP54" />
+        </div>
+
+        <div class="field">
+          <label for="fire_suppression">Fire Suppression</label>
+          <input id="fire_suppression" type="text" formControlName="fire_suppression" placeholder="e.g. Aerosol-based" />
+        </div>
+      </div>
+
+      <div class="form-actions">
+        <a class="btn btn-secondary" routerLink="/battery-containers">Cancel</a>
+        <button type="submit" class="btn btn-primary" [disabled]="saving">
+          {{ saving ? 'Saving…' : 'Save Container' }}
+        </button>
+      </div>
+    </form>
+  }
+</div>

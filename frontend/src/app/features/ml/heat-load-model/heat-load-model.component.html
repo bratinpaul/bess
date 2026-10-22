@@ -1,0 +1,342 @@
+<div class="page-header">
+  <div>
+    <h2>Heat Load Model</h2>
+    <p class="subtitle">
+      Heat the HVAC must reject: the enclosure heat balance (battery ohmic + entropic, PCS, aux electronics, solar, envelope,
+      thermal mass) calibrated to a measured reference, an operational forecast by issue vintage (dispatch plan + weather →
+      RC grey-box + LightGBM quantile residual) and the thermal-design sizing. Results go to the
+      <a routerLink="/ml/heat-load">Heat Load &amp; Thermal Design</a> viewer.
+    </p>
+  </div>
+</div>
+
+@if (optionsError) {
+  <div class="card empty-state error">{{ optionsError }}</div>
+}
+
+@if (options && form) {
+  <div class="lm-grid">
+    <section class="card lm-panel">
+      <h3 class="lm-title">New run</h3>
+
+      <h4 class="lm-group">Battery systems</h4>
+      <div class="lm-systems">
+        @for (s of options.systems; track s.system_id) {
+          <label class="lm-system" [class.on]="selectedSystems.has(s.system_id)">
+            <input type="checkbox" [checked]="selectedSystems.has(s.system_id)" (change)="toggleSystem(s.system_id)" />
+            <span><strong>{{ s.system_name }}</strong> · {{ s.site_name }}
+              <span class="lm-sub">{{ s.first_day }} → {{ s.last_day }}</span></span>
+          </label>
+        }
+      </div>
+      <div class="form-grid three">
+        <div class="field">
+          <label for="from">From</label>
+          <input id="from" type="date" [(ngModel)]="form.date_from" [min]="span?.first ?? ''" [max]="span?.last ?? ''" />
+        </div>
+        <div class="field">
+          <label for="to">To</label>
+          <input id="to" type="date" [(ngModel)]="form.date_to" [min]="span?.first ?? ''" [max]="span?.last ?? ''" />
+        </div>
+        <div class="field">
+          <label for="name">Name (optional)</label>
+          <input id="name" type="text" maxlength="120" [(ngModel)]="form.run_name" placeholder="e.g. Aug–Sep fleet" />
+        </div>
+      </div>
+
+      <h4 class="lm-group">Heat balance</h4>
+      <div class="form-grid three">
+        <div class="field span-2">
+          <label for="ref">Measured reference (what the model is calibrated to and scored on)</label>
+          <select id="ref" [(ngModel)]="form.measured_reference">
+            @for (r of options.references; track r.key) {
+              <option [ngValue]="r.key">{{ r.label }}</option>
+            }
+          </select>
+        </div>
+        <div class="field" title="Training share of each system's window (chronological); the rest is the test / backtest">
+          <label for="tr">Training share (%)</label>
+          <input id="tr" type="number" min="30" max="95" [(ngModel)]="ui.trainPct" />
+        </div>
+        <div class="field" title="External surface of the enclosure (20 ft ISO ≈ 74 m²)">
+          <label for="ea">Envelope area (m²)</label>
+          <input id="ea" type="number" min="1" [(ngModel)]="form.envelope_area_m2" />
+        </div>
+        <div class="field" title="Overall U-value of the insulated panels">
+          <label for="u">U-value (W/m²·K)</label>
+          <input id="u" type="number" min="0" step="0.05" [(ngModel)]="form.u_value_w_m2k" />
+        </div>
+        <div class="field" title="Area facing the sun at peak (roof + part of one side)">
+          <label for="sa">Sunlit area (m²)</label>
+          <input id="sa" type="number" min="0" [(ngModel)]="form.sunlit_area_m2" />
+        </div>
+        <div class="field">
+          <label for="ab">Solar absorptivity α</label>
+          <input id="ab" type="number" min="0" max="1" step="0.05" [(ngModel)]="form.absorptivity" />
+        </div>
+        <div class="field">
+          <label for="ss">Irradiance</label>
+          <select id="ss" [(ngModel)]="form.solar_source">
+            <option value="auto">Measured GHI, clear-sky where none</option>
+            <option value="clear_sky">Clear-sky everywhere</option>
+            <option value="none">Ignore solar</option>
+          </select>
+        </div>
+        <div class="field" title="kJ/K per kWh of capacity (≈ 7 kg cell/kWh × 1 kJ/kg·K)">
+          <label for="tm">Thermal mass (kJ/K per kWh)</label>
+          <input id="tm" type="number" min="0" step="0.5" [(ngModel)]="form.thermal_mass_kj_k_per_kwh" />
+        </div>
+        <label class="lm-choice" [class.on]="form.pcs_inside"><input type="checkbox" [(ngModel)]="form.pcs_inside" /><span>PCS heat inside the cooled enclosure</span></label>
+        <label class="lm-choice" [class.on]="form.aux_inside"><input type="checkbox" [(ngModel)]="form.aux_inside" /><span>Aux electronics inside</span></label>
+      </div>
+
+      <h4 class="lm-group">Operational forecast</h4>
+      <div class="form-grid three">
+        <div class="field span-2">
+          <label for="ps">Plan (future power)</label>
+          <select id="ps" [(ngModel)]="form.plan_source">
+            @for (p of options.plan_sources; track p.key) {
+              <option [ngValue]="p.key">{{ p.label }}</option>
+            }
+          </select>
+        </div>
+        <div class="field">
+          <label for="hz">Horizons (min)</label>
+          <input id="hz" type="text" [(ngModel)]="ui.horizons" />
+        </div>
+        <div class="field"><label for="ie">Backtest issue every (min)</label><input id="ie" type="number" min="5" max="360" step="5" [(ngModel)]="form.issue_every_min" /></div>
+        <div class="field"><label for="ne">Boosting rounds</label><input id="ne" type="number" min="20" max="3000" step="10" [(ngModel)]="form.n_estimators" /></div>
+        <div class="field"><label for="lr">Learning rate</label><input id="lr" type="number" min="0.001" max="1" step="0.01" [(ngModel)]="form.learning_rate" /></div>
+      </div>
+
+      <h4 class="lm-group">Thermal design (sizing)</h4>
+      <div class="form-grid three">
+        <div class="field" title="Blank = the site's 0.4 %-exceedance dry-bulb (99.6th percentile of the HVAC ambient sensor)">
+          <label for="da">Design ambient (°C)</label>
+          <input id="da" type="number" [(ngModel)]="ui.designAmbient" placeholder="0.4 % exceedance" />
+        </div>
+        <div class="field"><label for="dg">Design irradiance (W/m²)</label><input id="dg" type="number" min="0" max="1400" [(ngModel)]="form.design_ghi_wm2" /></div>
+        <div class="field" title="Low SOC: higher resistance / overpotential"><label for="dsoc">Design SOC (%)</label><input id="dsoc" type="number" min="0" max="100" [(ngModel)]="form.design_soc_pct" /></div>
+        <div class="field"><label for="dct">Design cell temperature (°C)</label><input id="dct" type="number" [(ngModel)]="form.design_cell_temp_c" /></div>
+        <div class="field"><label for="isp">Internal setpoint (°C)</label><input id="isp" type="number" [(ngModel)]="form.internal_setpoint_c" /></div>
+        <div class="field" title="Blank = eol_criteria of the chemistry (LFP 200 %): size on end-of-life resistance">
+          <label for="eol">EOL resistance (% of BOL)</label>
+          <input id="eol" type="number" min="100" max="500" [(ngModel)]="ui.eol" placeholder="eol_criteria" />
+        </div>
+        <div class="field"><label for="mg">Design margin (%)</label><input id="mg" type="number" min="0" max="100" [(ngModel)]="form.margin_pct" /></div>
+        <div class="field"><label for="rd">Redundancy (N + …)</label><input id="rd" type="number" min="0" max="5" [(ngModel)]="form.redundancy" /></div>
+        <div class="field" title="Blank = hvac_unit.cooling_capacity_kw">
+          <label for="uc">Unit capacity (kW)</label>
+          <input id="uc" type="number" min="1" [(ngModel)]="ui.unitCap" placeholder="master data" />
+        </div>
+        <div class="field" title="Capacity loss per °C of design ambient above the unit's 35 °C rating point"><label for="dr">Capacity derate (%/°C &gt; 35)</label><input id="dr" type="number" min="0" max="10" step="0.1" [(ngModel)]="form.capacity_derate_pct_per_c" /></div>
+        <div class="field" title="Share of the design solar + envelope gain assumed coincident with peak battery heat (1 = full concurrence)"><label for="co">Coincidence factor</label><input id="co" type="number" min="0" max="1" step="0.05" [(ngModel)]="form.coincidence" /></div>
+        <label class="lm-choice" [class.on]="form.use_calibrated"><input type="checkbox" [(ngModel)]="form.use_calibrated" /><span>Size with the calibrated factors</span></label>
+      </div>
+
+      <div class="lm-actions">
+        <span class="lm-note">{{ selectedSystems.size }} system(s) · about 3 s per system</span>
+        <button type="button" class="btn btn-primary" [disabled]="running || !selectedSystems.size" (click)="run()">
+          {{ running ? 'Computing…' : 'Compute run' }}
+        </button>
+      </div>
+      @if (runError) {
+        <div class="form-error">{{ runError }}</div>
+      }
+    </section>
+
+    <section class="card lm-panel">
+      <div class="lm-head">
+        <h3 class="lm-title">Runs</h3>
+        <button type="button" class="btn btn-secondary" (click)="loadRuns()">Refresh</button>
+      </div>
+      @if (runs.length === 0) {
+        <div class="empty-state">No runs yet - compute one.</div>
+      } @else {
+        <div class="table-scroll">
+          <table class="data-table lm-runs">
+            <thead><tr><th>#</th><th>Run</th><th>Range</th><th>Status</th><th></th></tr></thead>
+            <tbody>
+              @for (r of runs; track r.run_id) {
+                <tr [class.lm-selected]="selected?.run_id === r.run_id">
+                  <td class="mono">{{ r.run_id }}</td>
+                  <td>
+                    <button type="button" class="link-btn" (click)="open(r.run_id)">{{ r.run_name || 'Heat-load run' }}</button>
+                    <div class="lm-sub">{{ r.system_ids.length }} system(s) · {{ r.params.measured_reference === 'cooling_delivered' ? 'cooling delivered' : 'heat-load sensor' }} · plan {{ r.params.plan_source }}</div>
+                  </td>
+                  <td class="mono">{{ r.date_from }} → {{ r.date_to }}</td>
+                  <td><span class="lm-status" [attr.data-status]="r.status">{{ r.status }}</span></td>
+                  <td class="lm-row-actions">
+                    @if (r.status === 'COMPLETED') {
+                      <a class="btn btn-secondary btn-sm" routerLink="/ml/heat-load" [queryParams]="{ run: r.run_id }">View</a>
+                    }
+                    <button type="button" class="btn btn-danger btn-icon" title="Delete" (click)="confirmDelete(r)">✕</button>
+                  </td>
+                </tr>
+              }
+            </tbody>
+          </table>
+        </div>
+      }
+    </section>
+  </div>
+
+  @if (selected) {
+    <section class="card lm-result">
+      <div class="lm-head">
+        <h3 class="lm-title">
+          Run #{{ selected.run_id }} {{ selected.run_name ? '· ' + selected.run_name : '' }}
+          <span class="lm-sub">{{ selected.date_from }} → {{ selected.date_to }} · {{ selected.system_ids.length }} system(s) · {{ num((selected.duration_ms ?? 0) / 1000, 1) }} s</span>
+        </h3>
+        @if (selected.status === 'COMPLETED') {
+          <a class="btn btn-primary" routerLink="/ml/heat-load" [queryParams]="{ run: selected.run_id }">Open in Heat Load &amp; Thermal Design</a>
+        }
+      </div>
+
+      @if (selected.status === 'FAILED') {
+        <div class="form-error">{{ selected.error_message }}</div>
+      } @else if (selected.summary) {
+        <h4 class="lm-group">Fleet</h4>
+        <div class="table-scroll">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>System</th><th class="num">Calibrated R² (test)</th><th class="num">MAE calibrated / nameplate</th><th class="num">Closure gap</th>
+                <th class="num">Design peak</th><th class="num">Required (margin)</th><th class="num">Units (N+{{ selected.params.redundancy }})</th>
+                <th class="num">Measured peak</th><th class="num">Installed</th><th class="num">60-min MAE vs persistence</th><th class="num">P10–P90 cover</th>
+              </tr>
+            </thead>
+            <tbody>
+              @for (f of selected.summary.fleet; track f.system_id) {
+                <tr>
+                  <td>{{ f.system_name }}<div class="lm-sub">{{ f.site_name }}</div></td>
+                  <td class="num mono">{{ num(f.calibrated_r2, 3) }}</td>
+                  <td class="num mono">{{ num(f.calibrated_mae_kw, 2) }} / {{ num(f.nameplate_mae_kw, 2) }} kW</td>
+                  <td class="num mono" [class.lm-bad]="Math.abs(f.closure_pct ?? 0) > 15">{{ num(f.closure_pct, 1) }} %</td>
+                  <td class="num mono">{{ num(f.q_peak_kw, 1) }} kW</td>
+                  <td class="num mono"><strong>{{ num(f.required_kw, 1) }} kW</strong></td>
+                  <td class="num mono">{{ f.units ?? '—' }}</td>
+                  <td class="num mono">{{ num(f.measured_peak_kw, 1) }} kW</td>
+                  <td class="num mono" [class.lm-bad]="(f.installed_kw ?? 1e9) < f.required_kw">{{ num(f.installed_kw, 0) }} kW</td>
+                  <td class="num mono">{{ num(f.fc60_mae_kw, 2) }} / {{ num(f.fc60_persistence_mae_kw, 2) }} kW</td>
+                  <td class="num mono">{{ pct(f.fc60_coverage, 0) }} %</td>
+                </tr>
+              }
+            </tbody>
+          </table>
+        </div>
+
+        @if (selected.warnings.length) {
+          <div class="lm-warning">
+            <button type="button" class="link-btn" (click)="showWarnings = !showWarnings">⚠ {{ selected.warnings.length }} data note(s) {{ showWarnings ? '▴' : '▾' }}</button>
+            @if (showWarnings) {
+              <ul class="lm-notes">
+                @for (w of selected.warnings; track $index) {
+                  <li>{{ w }}</li>
+                }
+              </ul>
+            }
+          </div>
+        }
+
+        <div class="lm-system-pick">
+          <label for="sys">Battery system</label>
+          <select id="sys" [(ngModel)]="systemKey">
+            @for (id of selected.system_ids; track id) {
+              <option [ngValue]="'' + id">{{ systemName(id) }}</option>
+            }
+          </select>
+        </div>
+
+        @if (summary; as s) {
+          <div class="lm-two">
+            <div>
+              <h4 class="lm-group">Calibrated grey-box · trained to {{ s.train_to | date: 'yyyy-MM-dd HH:mm' }}</h4>
+              <table class="data-table lm-models">
+                <thead><tr><th>Term</th><th class="num">Factor (× nameplate)</th><th>Meaning</th></tr></thead>
+                <tbody>
+                  <tr><td>Battery ohmic · charge</td><td class="num mono">{{ num(s.calibration.coef.irr_chg, 3) }}</td><td class="lm-formula">I·(V−U) while charging</td></tr>
+                  <tr><td>Battery ohmic · discharge</td><td class="num mono">{{ num(s.calibration.coef.irr_dis, 3) }}</td><td class="lm-formula">I·(V−U) while discharging</td></tr>
+                  <tr><td>Battery entropic</td><td class="num mono">{{ num(s.calibration.coef.rev, 3) }}</td><td class="lm-formula">I·T·dU/dT - share of the OCV curve's entropic heat the data supports</td></tr>
+                  <tr><td>PCS conversion</td><td class="num mono">{{ num(s.calibration.coef.pcs, 3) }}</td><td class="lm-formula">|P<sub>dc</sub> − P<sub>ac</sub>| (collinear with the battery terms - their sum is what is pinned down)</td></tr>
+                  <tr><td>Solar</td><td class="num mono">{{ num(s.calibration.coef.solar, 3) }}</td><td class="lm-formula">α·A: nameplate {{ num(s.nameplate.alpha_a_m2, 1) }} → fitted {{ num(s.calibration.fitted_alpha_a_m2, 2) }} m²</td></tr>
+                  <tr><td>Envelope</td><td class="num mono" [class.lm-bad]="s.calibration.at_upper_bound.includes('env')">{{ num(s.calibration.coef.env, 2) }}</td><td class="lm-formula">UA: nameplate {{ num(s.nameplate.ua_kw_per_k * 1000, 0) }} → fitted {{ num(s.calibration.fitted_ua_kw_per_k * 1000, 0) }} W/K</td></tr>
+                  <tr><td>Thermal mass</td><td class="num mono">{{ num(s.calibration.coef.storage, 3) }}</td><td class="lm-formula">C: nameplate {{ num(s.nameplate.c_kwh_per_k, 2) }} → fitted {{ num(s.calibration.fitted_c_kwh_per_k, 2) }} kWh/K</td></tr>
+                  <tr><td>Constant</td><td class="num mono">{{ num(s.calibration.coef.const, 2) }} kW</td><td class="lm-formula">gains not in the balance (aux electronics enter at their measured value)</td></tr>
+                  <tr class="lm-total"><td>Fit</td><td class="num mono" colspan="2">R² {{ num(s.calibration.train.r2, 3) }} train · {{ num(s.calibration.test.r2, 3) }} test · MAE {{ num(s.calibration.test.mae_kw, 2) }} kW (nameplate physics {{ num(s.calibration.nameplate_test.mae_kw, 2) }} kW)</td></tr>
+                </tbody>
+              </table>
+
+              <h4 class="lm-group">Battery R<sub>eff</sub> by SOC band (Ω, q = R·I²)</h4>
+              <div class="table-scroll">
+                <table class="data-table lm-models">
+                  <thead><tr><th>Direction</th>@for (b of (rBands.length ? rBands[0].bands : []); track b.band) {<th class="num">{{ b.band }} %</th>}</tr></thead>
+                  <tbody>
+                    @for (d of rBands; track d.dir) {
+                      <tr><td>{{ d.dir.toLowerCase() }}</td>@for (b of d.bands; track b.band) {<td class="num mono" [class.lm-muted]="!b.observed">{{ num(b.r, 3) }}</td>}</tr>
+                    }
+                  </tbody>
+                </table>
+              </div>
+              @if (pcsModel; as p) {
+                <p class="lm-note">PCS loss = {{ num(p.a, 2) }} + {{ num(p.b, 2) }}·s + {{ num(p.c, 2) }}·s² kW (s = |S| / {{ num(p.rated_kva, 0) }} kVA, R² {{ num(p.fit.r2, 2) }}). Grey cells: SOC bands without data (nearest band).</p>
+              }
+            </div>
+
+            <div>
+              <h4 class="lm-group">Forecast backtest · {{ s.forecast.issues }} issues from {{ s.test_from | date: 'yyyy-MM-dd' }} · τ = {{ s.forecast.tau_min }} min</h4>
+              <table class="data-table lm-models">
+                <thead><tr><th>Horizon</th><th class="num">Persistence</th><th class="num">Physics</th><th class="num">Hybrid P50</th><th class="num">Skill</th><th class="num">Pinball</th><th class="num">P10–P90</th><th class="num">High-load recall</th></tr></thead>
+                <tbody>
+                  @for (r of horizonRows; track r.h) {
+                    <tr>
+                      <td class="mono">{{ r.h }} min</td>
+                      <td class="num mono">{{ num(r.s.persistence_mae, 2) }}</td>
+                      <td class="num mono">{{ num(r.s.physics_mae, 2) }}</td>
+                      <td class="num mono"><strong>{{ num(r.s.p50_mae, 2) }}</strong></td>
+                      <td class="num mono">{{ pct(r.s.skill_vs_persistence, 0) }} %</td>
+                      <td class="num mono">{{ num(r.s.pinball, 3) }}</td>
+                      <td class="num mono">{{ pct(r.s.coverage_p10_p90, 0) }} %</td>
+                      <td class="num mono">{{ pct(r.s.high_load_recall_p90, 0) }} %</td>
+                    </tr>
+                  }
+                </tbody>
+              </table>
+              <p class="lm-note">MAE in kW. Skill = 1 − P50 MAE ÷ persistence MAE. High-load recall: share of intervals above the training P90 ({{ num(s.forecast.high_load_threshold_kw, 1) }} kW) the P90 forecast flagged.</p>
+              <h4 class="lm-group">Residual model - top features</h4>
+              <table class="data-table lm-audit">
+                <tbody>
+                  @for (f of topFeatures; track f.f) {
+                    <tr><td>{{ f.f }}</td><td class="num mono">{{ pct(f.v, 1) }} %</td></tr>
+                  }
+                </tbody>
+              </table>
+              <h4 class="lm-group">Closure (nameplate physics vs reference)</h4>
+              <table class="data-table lm-audit">
+                <tbody>
+                  <tr><td>Mean residual</td><td class="num mono">{{ num(s.closure.mean_residual_kw, 2) }} kW · {{ num(s.closure.residual_pct_of_measured, 1) }} % of the reference</td></tr>
+                  <tr><td>By direction</td><td class="num mono">charge {{ num(s.closure.by_direction['CHARGE'], 1) }} · discharge {{ num(s.closure.by_direction['DISCHARGE'], 1) }} · idle {{ num(s.closure.by_direction['IDLE'], 1) }} kW</td></tr>
+                  <tr><td>Cooling delivered ÷ heat-load reading</td><td class="num mono">{{ num(s.closure.cooling_over_heat_sensor, 2) }} × while cooling</td></tr>
+                  <tr><td>Measured GHI share</td><td class="num mono">{{ pct(s.ghi_measured_share, 0) }} % of intervals</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        }
+      }
+    </section>
+  }
+}
+
+@if (toDelete; as d) {
+  <div class="modal-backdrop" (click)="toDelete = null">
+    <div class="modal" (click)="$event.stopPropagation()">
+      <h3>Delete run #{{ d.run_id }}?</h3>
+      <p>This deletes the run, its heat ledger and its forecast points. The telemetry is not touched. This cannot be undone.</p>
+      <div class="modal-actions">
+        <button class="btn btn-secondary" (click)="toDelete = null">Cancel</button>
+        <button class="btn btn-danger-solid" (click)="deleteConfirmed()">Delete</button>
+      </div>
+    </div>
+  </div>
+}

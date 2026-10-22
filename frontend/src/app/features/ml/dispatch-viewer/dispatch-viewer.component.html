@@ -1,0 +1,158 @@
+<div class="page-header dv-header">
+  <div>
+    <h2>Dispatch Viewer</h2>
+    <p class="subtitle">
+      What the optimizer decided for a day, against the price signal, and what it earned - the data pack's realized runs or an
+      optimizer study's backtest. Run studies on <a routerLink="/ml/arbitrage-model">Arbitrage Optimizer</a>.
+    </p>
+  </div>
+  <div class="dv-controls">
+    <div class="field">
+      <label for="src">Source</label>
+      <select id="src" [(ngModel)]="source" (ngModelChange)="onSourceChange()">
+        <option [ngValue]="'pack'">Data pack runs (realized)</option>
+        @for (s of studies; track s.study_id) {
+          <option [ngValue]="s.study_id">{{ studyLabel(s) }}</option>
+        }
+      </select>
+    </div>
+    <div class="field">
+      <label for="day">Day</label>
+      <div class="dv-day">
+        <button type="button" class="btn btn-secondary btn-icon" title="Previous day" (click)="step(-1)">‹</button>
+        <select id="day" [(ngModel)]="day" (ngModelChange)="load()">
+          @for (d of days; track d.kpi_date) {
+            <option [ngValue]="d.kpi_date">{{ d.kpi_date }} · {{ num(d.total_usd ?? d.net_usd, 0) }} USD</option>
+          }
+        </select>
+        <button type="button" class="btn btn-secondary btn-icon" title="Next day" (click)="step(1)">›</button>
+      </div>
+    </div>
+    <div class="field">
+      <label for="cmp">Compare</label>
+      <select id="cmp" [(ngModel)]="compare" (ngModelChange)="load()">
+        @for (o of compareOptions; track o.value) {
+          <option [ngValue]="o.value">{{ o.label }}</option>
+        }
+      </select>
+    </div>
+  </div>
+</div>
+
+@if (error) {
+  <div class="card empty-state error">{{ error }}</div>
+}
+@if (loading && !view) {
+  <div class="card empty-state">Loading…</div>
+}
+
+@if (view; as v) {
+  @for (w of v.warnings; track $index) {
+    <div class="dv-warning">⚠ {{ w }}</div>
+  }
+
+  <!-- KPI tiles + run metadata -->
+  <div class="dv-top">
+    <div class="metric-grid dv-tiles">
+      <div class="metric-card"><div class="metric-body"><span class="metric-label">Net P&amp;L (energy)</span><span class="metric-value">{{ num(k('net_usd'), 2) }}<span class="metric-unit">USD</span></span><span class="metric-sub">{{ (k('as_usd') ?? 0) > 0 ? '+ AS ' + num(k('as_usd'), 2) + ' = ' + num(k('total_usd'), 2) : 'no AS revenue' }}</span></div></div>
+      <div class="metric-card"><div class="metric-body"><span class="metric-label">Gross revenue</span><span class="metric-value">{{ num(k('gross_usd'), 2) }}<span class="metric-unit">USD</span></span><span class="metric-sub">degr. {{ num(k('degradation_usd'), 2) }} · grid {{ num(k('grid_usd'), 2) }}</span></div></div>
+      <div class="metric-card"><div class="metric-body"><span class="metric-label">Net per MWh discharged</span><span class="metric-value">{{ num(k('usd_per_mwh_discharged'), 2) }}<span class="metric-unit">USD/MWh</span></span><span class="metric-sub">{{ num(k('discharge_mwh'), 3) }} MWh out · {{ num(k('charge_mwh'), 3) }} MWh in</span></div></div>
+      <div class="metric-card"><div class="metric-body"><span class="metric-label">Cycles used</span><span class="metric-value">{{ num(k('cycles'), 2) }}<span class="metric-unit">/ {{ num(k('cycle_cap'), 1) }}</span></span><span class="metric-sub">daily cap</span></div></div>
+      <div class="metric-card"><div class="metric-body"><span class="metric-label">Round-trip efficiency</span><span class="metric-value">{{ num(k('rte_pct'), 1) }}<span class="metric-unit">%</span></span><span class="metric-sub">discharge ÷ charge energy (day)</span></div></div>
+      <div class="metric-card"><div class="metric-body"><span class="metric-label">Schedule MAE</span><span class="metric-value">{{ num(k('schedule_mae_kw'), 1) }}<span class="metric-unit">kW</span></span><span class="metric-sub">{{ v.source === 'study' ? 'perfect execution in the backtest' : '|scheduled − actual|' }}</span></div></div>
+      <div class="metric-card" [class.dv-warn]="(k('forecast_value_usd') ?? 0) < -0.01"><div class="metric-body"><span class="metric-label">Profit vs oracle</span><span class="metric-value">{{ num(k('capture_pct'), 1) }}<span class="metric-unit">%</span></span><span class="metric-sub">oracle {{ num(k('oracle_total_usd'), 2) }} · forecast value {{ num(k('forecast_value_usd'), 2) }}</span></div></div>
+      @if (cmp && compare !== 'oracle') {
+        <div class="metric-card"><div class="metric-body"><span class="metric-label">{{ cmp.label }}</span><span class="metric-value">{{ num(cmp.total, 2) }}<span class="metric-unit">USD</span></span><span class="metric-sub">total of the compared source</span></div></div>
+      }
+    </div>
+    <div class="card dv-meta">
+      <h4>Run #{{ v.run.run_id }}{{ v.study ? ' · study #' + v.study_id : ' · data pack' }}</h4>
+      <dl>
+        <dt>Method</dt><dd>{{ v.run.method }} · {{ v.run.objective }}</dd>
+        <dt>Solver</dt><dd>{{ v.run.solver_status }} · {{ num(v.run.solve_seconds, 2) }} s</dd>
+        <dt>Issued</dt><dd>{{ v.run.issued_at | date: 'yyyy-MM-dd HH:mm' }}</dd>
+        <dt>Expected</dt><dd>{{ num(k('expected_usd'), 2) }} USD</dd>
+        <dt>Realized</dt><dd>{{ num(k('total_usd'), 2) }} USD</dd>
+        <dt>Optimism gap</dt><dd [class.dv-flag]="(k('optimism_gap_usd') ?? 0) > 0.25 * (k('expected_usd') ?? 0)">{{ num(k('optimism_gap_usd'), 2) }} USD</dd>
+        <dt>Start state</dt><dd>SOC {{ num(v.state['soc_start_pct'], 1) }} % · SOH {{ num(v.state['soh_pct'], 1) }} % · {{ num(v.state['usable_energy_mwh'], 3) }} MWh</dd>
+        <dt>Available</dt><dd>{{ num(v.state['p_charge_avail_kw'], 0) }} / {{ num(v.state['p_discharge_avail_kw'], 0) }} kW · AS {{ num(v.state['reserved_mw_as'], 2) }} MW</dd>
+      </dl>
+    </div>
+  </div>
+
+  <!-- hero -->
+  <div class="card chart-card dv-hero">
+    <h3>Price + dispatch · {{ v.day }} · {{ v.node_code }}</h3>
+    @if (heroChart) {
+      <app-chart-canvas [config]="heroChart" [height]="360" />
+    }
+    <p class="dv-note">Bars: discharge up (green) / charge down (red) on the right axis. Lines: realized RT price, cleared DAM price and the
+      run's day-ahead forecast (P50 with the P10–P90 ribbon) on the left axis. The battery should charge in the troughs and discharge into the peaks.</p>
+  </div>
+
+  <div class="analytics-charts-grid dv-two">
+    <div class="card chart-card">
+      <h3>SOC trajectory</h3>
+      @if (socChart) {
+        <app-chart-canvas [config]="socChart" [height]="270" />
+      }
+    </div>
+    <div class="card chart-card">
+      <h3>Cumulative P&amp;L</h3>
+      @if (pnlChart) {
+        <app-chart-canvas [config]="pnlChart" [height]="270" />
+      }
+    </div>
+  </div>
+
+  <div class="dv-three">
+    <div class="card chart-card">
+      <h3>Scheduled vs actual power</h3>
+      @if (trackChart) {
+        <app-chart-canvas [config]="trackChart" [height]="250" />
+      }
+      @if (v.source === 'study') {
+        <p class="dv-note">The backtest executes the schedule exactly, so the two lines coincide.</p>
+      }
+    </div>
+    <div class="card chart-card">
+      <h3>P&amp;L waterfall</h3>
+      @if (waterfallChart) {
+        <app-chart-canvas [config]="waterfallChart" [height]="250" />
+      }
+    </div>
+    <div class="card chart-card">
+      <h3>Forecast quality · MAE {{ num(forecastStats.mae, 2) }} · {{ num(forecastStats.coverage, 0) }} % in P10–P90</h3>
+      @if (forecastChart) {
+        <app-chart-canvas [config]="forecastChart" [height]="250" />
+      }
+    </div>
+  </div>
+
+  <div class="card dv-plan">
+    <button type="button" class="dv-toggle" (click)="showPlan = !showPlan" [attr.aria-expanded]="showPlan">
+      {{ showPlan ? '▾' : '▸' }} Hourly plan ({{ v.hourly.length }} hours)
+    </button>
+    @if (showPlan) {
+      <div class="table-scroll">
+        <table class="data-table">
+          <thead>
+            <tr><th>Hour</th><th class="num">Setpoint (kW)</th><th class="num">SOC target (%)</th><th>Mode</th><th>Market</th><th class="num">Forecast (USD/MWh)</th></tr>
+          </thead>
+          <tbody>
+            @for (h of v.hourly; track h.ts) {
+              <tr>
+                <td class="mono">{{ time(h.ts) }}</td>
+                <td class="num mono" [class.dv-dis]="(h.p_setpoint ?? 0) > 1" [class.dv-chg]="(h.p_setpoint ?? 0) < -1">{{ num(h.p_setpoint, 1) }}</td>
+                <td class="num mono">{{ num(h.soc_target, 1) }}</td>
+                <td>{{ h.mode }}</td>
+                <td>{{ h.market }}</td>
+                <td class="num mono">{{ num(h.forecast, 2) }}</td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      </div>
+    }
+  </div>
+}

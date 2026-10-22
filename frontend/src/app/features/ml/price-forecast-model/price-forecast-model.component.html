@@ -1,0 +1,387 @@
+<div class="page-header">
+  <div>
+    <h2>Price Forecast Model</h2>
+    <p class="subtitle">
+      Train electricity-price forecasters (P10 / P50 / P90, 1–48 h ahead) and compare them on the same backtest. View the
+      forecasts on <a routerLink="/ml/price-forecast">Price Forecast</a>.
+    </p>
+  </div>
+</div>
+
+@if (optionsError) {
+  <div class="card empty-state error">{{ optionsError }}</div>
+}
+
+@if (options) {
+  <div class="train-grid">
+    <!-- data -->
+    <section class="card panel">
+      <h3 class="panel-title">Data</h3>
+      <h4 class="group-head">EMS (market price series)</h4>
+      <div class="unit-list">
+        @for (u of options.units; track u.ems_id) {
+          <label class="feature-group" [class.on]="emsIds.has(u.ems_id)" [class.dim]="!u.priced">
+            <input type="checkbox" [checked]="emsIds.has(u.ems_id)" [disabled]="!u.priced" (change)="toggleUnit(u)" />
+            <span class="fg-text">
+              <span class="fg-title">{{ unitLabel(u) }}</span>
+              <span class="fg-meta">
+                @if (u.priced) {
+                  {{ u.priced | number }} 5-min prices · {{ u.date_from }} → {{ u.date_to }} · mean {{ num(u.price_mean, 1) }} · max {{ num(u.price_max, 0) }} $/MWh
+                } @else {
+                  no price readings
+                }
+              </span>
+            </span>
+          </label>
+        }
+      </div>
+
+      <div class="form-grid three">
+        <div class="field">
+          <label for="from">From</label>
+          <input id="from" type="date" [(ngModel)]="dateFrom" (ngModelChange)="schedulePreview()" />
+        </div>
+        <div class="field">
+          <label for="to">To</label>
+          <input id="to" type="date" [(ngModel)]="dateTo" (ngModelChange)="schedulePreview()" />
+        </div>
+        <div class="field" title="An hour holds a spike when one of its 5-min prices is above this">
+          <label for="spk">Spike threshold ($/MWh, 5-min)</label>
+          <input id="spk" type="number" min="1" step="10" [(ngModel)]="spikeThreshold" (ngModelChange)="schedulePreview()" />
+        </div>
+      </div>
+
+      <h4 class="group-head">Features</h4>
+      <div class="feature-groups">
+        @for (g of options.feature_groups; track g.key) {
+          <label class="feature-group" [class.on]="groups.has(g.key)">
+            <input type="checkbox" [checked]="groups.has(g.key)" [disabled]="g.required" (change)="toggleGroup(g.key, g.required)" />
+            <span class="fg-text">
+              <span class="fg-title">{{ g.label }}{{ g.required ? ' · always' : '' }}</span>
+              <span class="fg-meta">{{ g.features.length }} inputs</span>
+            </span>
+          </label>
+        }
+        <div class="feature-group off-group" title="Not in the database yet">
+          <span class="fg-text">
+            <span class="fg-title">Exogenous drivers · not available</span>
+            <span class="fg-meta">{{ options.external_drivers.join(' · ') }} — add external market & weather feeds for real forecasting skill</span>
+          </span>
+        </div>
+      </div>
+
+      <h4 class="group-head">TOU bands <span class="muted small">battery_master.ems_tariff_period</span></h4>
+      <div class="band-strip">
+        @for (b of options.tariff; track b.tariff_period_id) {
+          <span class="band" [attr.data-level]="b.price_level" [style.flex]="b.end_hour - b.start_hour"
+            [title]="b.band_name + ' · ' + b.price_level + (b.reference_price_mwh ? ' · ref ' + b.reference_price_mwh + ' $/MWh' : '')">
+            {{ b.band_code }}<small>{{ b.start_hour }}–{{ b.end_hour }}</small>
+          </span>
+        }
+      </div>
+
+      @if (preview; as p) {
+        <div class="preview">
+          <strong>{{ p.hours | number }}</strong> hourly prices · {{ p.spike_hours }} spike hours
+          @for (u of p.units; track u.ems_id) {
+            @if (u.missing_hours) {
+              <div class="preview-warn">{{ shortUnit(u.ems_id) }}: {{ u.missing_hours }} hours without prices — only its longest continuous stretch is used.</div>
+            }
+          }
+        </div>
+      } @else if (previewing) {
+        <div class="preview">Counting hours…</div>
+      }
+    </section>
+
+    <!-- models -->
+    <section class="card panel">
+      <div class="panel-subhead" style="margin-top: 0">
+        <h3 class="panel-title" style="margin: 0">Models</h3>
+        <button type="button" class="link-btn" (click)="resetParams()">Defaults</button>
+      </div>
+      <div class="model-list">
+        @for (m of options.models; track m.key) {
+          <div class="model-row" [class.on]="chosen.has(m.key)">
+            <label class="model-check">
+              <input type="checkbox" [checked]="chosen.has(m.key)" [disabled]="m.always" (change)="toggleModel(m)" />
+              <span class="swatch line" [style.background]="colors[m.key]"></span>
+              <span>
+                <strong>{{ m.label }}</strong>
+                <span class="fam">{{ familyLabel(m.family) }}{{ m.always ? ' · always (skill reference)' : '' }}</span>
+              </span>
+            </label>
+            @if (m.params.length) {
+              <button type="button" class="link-btn" (click)="openParams = openParams === m.key ? null : m.key">
+                {{ openParams === m.key ? 'Hide' : 'Parameters' }}
+              </button>
+            }
+            @if (openParams === m.key) {
+              <div class="param-grid model-params">
+                @for (p of m.params; track p.name) {
+                  <div class="field" [title]="p.help || ''">
+                    <label [for]="m.key + p.name">{{ p.label }}</label>
+                    <input [id]="m.key + p.name" type="number" [(ngModel)]="params[m.key][p.name]" [min]="p.min" [max]="p.max" [step]="p.step" />
+                  </div>
+                }
+              </div>
+            }
+          </div>
+        }
+      </div>
+
+      <h4 class="group-head">Horizon &amp; backtest</h4>
+      <div class="param-grid">
+        <div class="field">
+          <label for="h">Horizon (hours ahead)</label>
+          <input id="h" type="number" min="1" max="48" step="1" [(ngModel)]="horizon" (ngModelChange)="schedulePreview()" />
+        </div>
+        <div class="field">
+          <label for="tp">Test share of each EMS (%)</label>
+          <input id="tp" type="number" min="10" max="50" step="5" [(ngModel)]="testPct" />
+        </div>
+        <div class="field" title="Hours between the backtest forecast origins in the test period">
+          <label for="os">Backtest origin every (h)</label>
+          <input id="os" type="number" min="1" max="48" step="1" [(ngModel)]="originStep" />
+        </div>
+        <div class="field" title="Hours between training origins for the boosted models (1 = every hour, slower)">
+          <label for="ts">Training origin every (h)</label>
+          <input id="ts" type="number" min="1" max="24" step="1" [(ngModel)]="trainStep" />
+        </div>
+        <div class="field">
+          <label for="name">Run name</label>
+          <input id="name" type="text" [(ngModel)]="runName" placeholder="optional" maxlength="120" />
+        </div>
+        <div class="field check-field">
+          <label><input data-perm="ml.model:approve" type="checkbox" [(ngModel)]="makeDefault" /> Make it the viewer's default</label>
+        </div>
+      </div>
+      <p class="param-help">Resolution: hourly settlement price (mean of the 5-min prices). Every model is backtested from the
+        same origins; scores are on the test period only.</p>
+
+      @if (trainError) {
+        <div class="form-error">{{ trainError }}</div>
+      }
+      <div class="form-actions">
+        @if (problem) {
+          <span class="problem">{{ problem }}</span>
+        }
+        <button type="button" class="btn btn-primary train-btn" [disabled]="!!problem || training" (click)="train()">
+          @if (training) {
+            <span class="spinner" aria-hidden="true"></span> Training {{ chosen.size }} models… {{ elapsed }} s
+          } @else {
+            Train &amp; backtest
+          }
+        </button>
+      </div>
+    </section>
+  </div>
+}
+
+<!-- one run -->
+@if (run; as r) {
+  <section class="card run-card" [class.refreshing]="runLoading">
+    <div class="run-head">
+      <div>
+        <h3>
+          Run #{{ r.run_id }}{{ r.run_name ? ' · ' + r.run_name : '' }}
+          <span class="status-chip" [attr.data-status]="r.status">{{ r.status }}</span>
+          @if (r.is_default) {
+            <span class="status-chip" data-status="ACTIVE">Viewer default</span>
+          }
+        </h3>
+        <p class="muted small">
+          {{ r.ems_ids.length }} EMS ({{ r.ems_ids.map(shortUnit, this).join(', ') }}) · {{ window(r) }} · {{ r.n_hours | number }} hours ·
+          {{ r.horizon_hours }} h horizon · {{ r.n_train_rows | number }} training rows · {{ r.n_test_origins }} backtest origins
+          (every {{ r.origin_step_h }} h) · {{ r.n_spikes }} spike hours · {{ duration(r.duration_ms) }}
+        </p>
+      </div>
+      <div class="run-actions">
+        @if (r.status === 'COMPLETED' && !r.is_default) {
+          <button data-perm="ml.model:approve" type="button" class="btn btn-primary" (click)="makeDefaultRun(r)">Make viewer default</button>
+        }
+        @if (r.status === 'COMPLETED') {
+          <a class="btn btn-secondary" routerLink="/ml/price-forecast" [queryParams]="{ model: r.run_id }">Open in Price Forecast</a>
+        }
+        <button type="button" class="btn btn-secondary" (click)="reuse(r)">Train a variant</button>
+      </div>
+    </div>
+
+    @if (r.error_message) {
+      <div class="form-error">{{ r.error_message }}</div>
+    }
+    @for (w of r.warnings; track w) {
+      <div class="warn-line">{{ w }}</div>
+    }
+
+    @if (r.status === 'COMPLETED' && r.metrics && r.results; as res) {
+      <h4 class="section-title">Backtest scores · test period · $/MWh</h4>
+      <div class="table-scroll">
+        <table class="data-table compare-table score-table">
+          <thead>
+            <tr>
+              <th>Model</th>
+              @for (c of cols; track c.key) {
+                <th class="num" [title]="c.help">{{ c.label }}</th>
+              }
+              <th class="num">Fit + backtest</th>
+            </tr>
+          </thead>
+          <tbody>
+            @for (k of modelKeys; track k) {
+              <tr>
+                <td class="nowrap"><span class="swatch line" [style.background]="colors[k]"></span> {{ labels[k] }}
+                  @if (r.best_model === k) { <span class="best-chip">best pinball</span> }</td>
+                @for (c of cols; track c.key) {
+                  <td class="num" [class.best]="isBest(k, c)">{{ cell(k, c) }}</td>
+                }
+                <td class="num muted">{{ timing(k) }}</td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      </div>
+      <p class="muted small">Green = best in its column. Coverage: 80 % is right (P10–P90); a narrower band is only better at
+        that coverage. Skill vs naïve below 0 means the model loses to "same hour, last known day". Stored per run in
+        battery_ml.price_forecast_score.</p>
+
+      @if (r.metrics['spike_hybrid']; as sh) {
+        <div class="spike-box">
+          <h4 class="mini-title">Spike classifier</h4>
+          <div class="spike-grid">
+            <div><span class="metric-label">AUC</span><strong>{{ num(sh.spike_auc, 3) }}</strong>
+              <span class="muted small">reference (spike rate per hour of day): {{ num(res.spike_reference?.auc, 3) }}</span></div>
+            <div><span class="metric-label">Brier</span><strong>{{ num(sh.spike_brier, 4) }}</strong>
+              <span class="muted small">reference {{ num(res.spike_reference?.brier, 4) }}</span></div>
+            <div><span class="metric-label">Top-5 % riskiest hours</span><strong>{{ num((sh.spike_recall ?? 0) * 100, 0) }} % of spikes</strong>
+              <span class="muted small">precision {{ num((sh.spike_precision ?? 0) * 100, 1) }} %</span></div>
+            <div><span class="metric-label">Spikes</span><strong>{{ res.train_spike_rows }} / {{ res.test_spike_rows }}</strong>
+              <span class="muted small">training / test rows with a spike target</span></div>
+          </div>
+          <p class="muted small">The classifier must beat the per-hour spike rate to add information about <em>which</em> hour
+            spikes; matching it means spikes are only predictable by time of day (as in this sample data).</p>
+        </div>
+      }
+
+      <div class="chart-grid">
+        <div class="chart-box wide">
+          <h4>Error by hours ahead</h4>
+          <p class="muted small">MAE of P50 for each lead time; the best model (by pinball loss) is drawn thicker.</p>
+          @if (horizonChart) {
+            <app-chart-canvas [config]="horizonChart" [height]="280" />
+          }
+        </div>
+        <div class="chart-box">
+          <h4>MAE by TOU band ($/MWh)</h4>
+          <table class="data-table compare-table band-table">
+            <thead>
+              <tr><th>Band</th>
+                @for (k of modelKeys; track k) { <th class="num" [title]="labels[k]">{{ labels[k] }}</th> }
+              </tr>
+            </thead>
+            <tbody>
+              @for (code of res.codes; track code) {
+                <tr><td class="nowrap">{{ bandName(code) }}</td>
+                  @for (k of modelKeys; track k) { <td class="num" [class.best]="bandBest(k, code)">{{ bandCell(k, code) }}</td> }
+                </tr>
+              }
+            </tbody>
+          </table>
+        </div>
+        <div class="chart-box">
+          <div class="chart-head">
+            <h4>Feature importance</h4>
+            <select class="filter-select" [(ngModel)]="importanceModel" (ngModelChange)="buildImportance()">
+              @for (m of importanceModels; track m) {
+                <option [value]="m">{{ modelName(m) }}{{ m === 'spike_hybrid' ? ' · classifier' : ' · P50' }}</option>
+              }
+            </select>
+          </div>
+          <p class="muted small">Share of the split gain (top 18). lag_k = price k hours before the origin.</p>
+          @if (importanceChart) {
+            <app-chart-canvas [config]="importanceChart" [height]="importanceHeight" />
+          }
+        </div>
+        <div class="chart-box">
+          <h4>Split per EMS</h4>
+          <table class="data-table compare-table">
+            <thead><tr><th>EMS</th><th>Training to</th><th>Test</th></tr></thead>
+            <tbody>
+              @for (x of splitRows; track x.ems) {
+                <tr><td>{{ shortUnit(x.ems) }}</td><td class="nowrap">{{ plantTime(x.s.train_to) }}</td>
+                  <td class="nowrap">{{ plantTime(x.s.test_from) }} → {{ plantTime(x.s.test_to) }}</td></tr>
+              }
+            </tbody>
+          </table>
+        </div>
+      </div>
+    }
+  </section>
+}
+
+<!-- history -->
+<div class="card history-card">
+  <div class="history-head">
+    <div>
+      <h3>Runs</h3>
+      <p class="muted small">battery_ml.price_forecast_run · click a run to open it</p>
+    </div>
+  </div>
+  @if (runsLoading && !runs.length) {
+    <div class="empty-state">Loading…</div>
+  } @else if (!runs.length) {
+    <div class="empty-state">No runs yet — train the models above.</div>
+  } @else {
+    <div class="table-scroll">
+      <table class="data-table runs-table">
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>Name</th>
+            <th>EMS</th>
+            <th>Window</th>
+            <th class="num">Horizon</th>
+            <th>Best</th>
+            <th class="num">Best MAE</th>
+            <th class="num">Naïve MAE</th>
+            <th>Status</th>
+            <th class="num">Time</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          @for (x of runs; track x.run_id) {
+            <tr (click)="openRun(x.run_id)" [class.selected]="run?.run_id === x.run_id">
+              <td class="mono">{{ x.run_id }}</td>
+              <td>
+                {{ x.run_name || '—' }}
+                @if (x.is_default) {
+                  <span class="status-chip" data-status="ACTIVE">default</span>
+                }
+              </td>
+              <td class="small">{{ x.ems_ids.map(shortUnit, this).join(', ') }}</td>
+              <td class="nowrap">{{ window(x) }}</td>
+              <td class="num">{{ x.horizon_hours }} h</td>
+              <td>{{ x.best_model ? labels[x.best_model] : '—' }}</td>
+              <td class="num"><strong>{{ num(x.best_model ? x.metrics?.[x.best_model]?.mae : null) }}</strong></td>
+              <td class="num">{{ num(x.metrics?.['seasonal_naive']?.mae) }}</td>
+              <td>
+                <span class="status-chip" [attr.data-status]="x.status">{{ x.status }}</span>
+                @if (x.error_message) {
+                  <div class="problem small">{{ x.error_message }}</div>
+                }
+              </td>
+              <td class="num">{{ duration(x.duration_ms) }}</td>
+              <td class="nowrap">
+                @if (x.status === 'COMPLETED' && !x.is_default) {
+                  <button data-perm="ml.model:approve" type="button" class="link-btn" (click)="makeDefaultRun(x, $event)">Default</button> ·
+                }
+                <button type="button" class="link-btn" (click)="deleteRun(x, $event)">Delete</button>
+              </td>
+            </tr>
+          }
+        </tbody>
+      </table>
+    </div>
+  }
+</div>

@@ -1,0 +1,1697 @@
+# PCS KPI definitions - read by app/services/bms_kpi with domain PCS (API /api/pcs-kpi and
+# `python -m app.services.bms_kpi.cli --domain pcs`). Same engine and file format as bms_kpi.yaml.
+#
+# Every KPI is computed per PCS unit per plant-local day from battery_telemetry.pcs_telemetry and stored in
+# battery_ml.pcs_kpi (one row per PCS unit / day / KPI code). Edit this file and press "Calculate KPIs" on
+# PCS Telemetry → Analytics (or run the CLI) - the file is re-read on every request, no restart needed. Bump `version`
+# when a formula changes; stored values keep the version and file hash they were made with.
+#
+# Methods
+#   integrate      Σ column × Δt_h × scale over the samples that pass `filter`        (kW → kWh; "1" → hours)
+#   aggregate      func(column) over the samples that pass `filter`; func = min | max | avg | sum | count | first | last
+#   counter_delta  max(column) − min(column) within the day                            (cumulative counters)
+#   derived        formula over other KPI codes and params (+ − × ÷, abs, sqrt, greatest, least); ÷ 0 gives no value
+#   query          one output column of a named SQL query in `queries` (alarms, EMS setpoints, transitions, bins)
+#
+# Row expressions are pcs_telemetry columns and params with + − × ÷, numbers, abs(x), sqrt(x), greatest(a, b, ...),
+# least(a, b, ...) and delta(x) (x minus the previous sample's x, same PCS). Division by zero gives NULL.
+# filter: a list of {column, op, value} that must all hold; value = a literal, a list (in / not in) or "$param".
+# "system" in system_params / system_overrides means the PCS unit here (overrides are keyed by pcs_id).
+#
+# Named queries bind :pcs_ids (array), :start_ts / :end_ts, :start_date / :end_date, :tz and every global param, and
+# must return pcs_id, kpi_date and one column per output field. CTE `sp` (pcs_id + system params) is injected.
+#
+# Data facts this file relies on (checked 2026-10-15 against pcs_telemetry):
+#   * Sign: ac_active_power_kw > 0 = charging (AC import, counter ac_energy_import_kwh grows), < 0 = discharging
+#     (export). dc_power_kw has the same sign. So discharge η = P_ac / P_dc and charge η = P_dc / P_ac, and the
+#     conversion loss is |P_dc − P_ac|.
+#   * With the breaker OPEN the AC side reads ~0 V / 0 Hz, so frequency, voltage, THD and power-factor KPIs only use
+#     samples with breaker_state = CLOSED. Idle samples have |P| = 0 exactly; `idle_kw` separates idle from loaded.
+#   * The EESL PCS units have no rated_apparent_kva / max_charge_kw / max_discharge_kw / min_power_factor in master
+#     data: rated_kva and the max powers fall back to rated_power_kw, min_pf to 0.9 (see system_params).
+#   * EESL PCS nameplate is 2500 kW but its battery system is 1.5 MW and avail_*_kw tops out at 1500 kW, so derating is
+#     measured against least(PCS max, battery rated power) - otherwise a permanent 40 % "curtailment" would show.
+
+version: 1
+
+timezone: Asia/Kolkata
+
+interval:
+  mode: fixed
+  minutes: 5
+  max_gap_minutes: 15
+
+expected_samples_per_day: 288
+
+params:
+  idle_kw: 5                       # |P| below this = idle (no conversion); efficiency / loading KPIs skip idle samples
+  thd_v_limit_pct: 5               # IEEE-519 voltage THD limit
+  thd_i_limit_pct: 5               # current THD / TDD limit (IEEE-519: 5–8 % by short-circuit ratio)
+  freq_deadband_hz: 0.2            # ± dead band around rated frequency
+  voltage_band_pct: 10             # ± band around rated AC line voltage
+  peak_load_threshold_pct: 90      # time-above apparent-power loading
+  derate_flag_pct: 5               # a sample counts as derated when available power is ≥ this % below capability
+  i_unbalance_limit_pct: 10        # phase-current unbalance flag
+  v_unbalance_limit_pct: 2         # NEMA voltage unbalance flag (IEC / ANSI recommend ≤ 2 %)
+  igbt_temp_limit_c: 80            # = IGBT_OVERTEMP threshold in the alarm catalog
+  min_load_frac_for_rise: 0.2      # temperature rise per unit load only above this S / rated_kva
+  availability_max_alarm_level: 2  # online needs alarm_level ≤ this (3 = protection / trip)
+  tracking_tol_pct: 2              # setpoint tracking tolerance, % of rated_kw
+  regulation_min_samples: 3        # FREQ_REG samples needed in a day for a regulation correlation
+
+system_params:
+  rated_kw:
+    sql: p.rated_power_kw
+    unit: kW
+    description: PCS rated active power (nameplate)
+  rated_kva:
+    sql: COALESCE(p.rated_apparent_kva, p.rated_power_kw)
+    unit: kVA
+    description: Rated apparent power; rated_power_kw when not set in master data
+  rated_v:
+    sql: p.rated_ac_voltage_v
+    unit: V
+    description: Rated AC line-to-line voltage
+  rated_hz:
+    sql: p.ac_frequency_hz
+    unit: Hz
+    description: Rated grid frequency
+  min_pf:
+    sql: COALESCE(p.min_power_factor, 0.9)
+    description: Grid-code power-factor floor; 0.9 when not set in master data
+  max_discharge_kw:
+    sql: LEAST(COALESCE(p.max_discharge_kw, p.rated_power_kw), bs.rated_power_mw * 1000)
+    unit: kW
+    description: Discharge capability = least(PCS max discharge or nameplate, battery system rated power)
+  max_charge_kw:
+    sql: LEAST(COALESCE(p.max_charge_kw, p.rated_power_kw), bs.rated_power_mw * 1000)
+    unit: kW
+    description: Charge capability = least(PCS max charge or nameplate, battery system rated power)
+  datasheet_eff_pct:
+    sql: p.efficiency_pct
+    unit: "%"
+    description: Datasheet (rated) efficiency from master data, if any
+
+system_overrides: {}
+
+groups:
+  - code: efficiency
+    name: Conversion efficiency
+    description: AC out vs DC in - instantaneous, energy-weighted, losses and the CEC / Euro weighted curve
+  - code: throughput
+    name: Power & energy throughput
+    description: AC / DC / reactive / apparent energy moved through the PCS
+  - code: quality
+    name: Power quality
+    description: Power factor, S consistency, THD, frequency and voltage deviation (breaker closed)
+  - code: loading
+    name: Loading, utilization & capability
+    description: Apparent / active loading, VAR headroom used, derating against capability
+  - code: balance
+    name: Phase balance
+    description: Current and voltage (NEMA) unbalance across the three phases
+  - code: thermal
+    name: Thermal
+    description: IGBT / heatsink temperatures, thermal margin, cooling ΔT, rise per unit load
+  - code: reactive
+    name: Reactive power & grid support
+    description: Q delivered, VAR at rest and the four-quadrant operating mix
+  - code: reliability
+    name: Availability & reliability
+    description: Online time, trips, MTBF / MTTR and faults by category (alarm link)
+  - code: dispatch
+    name: Grid-service / dispatch performance
+    description: Setpoint tracking against the EMS command, ramp rates and regulation accuracy
+
+queries:
+  load_point_efficiency:
+    description: >-
+      CEC and Euro weighted efficiency: discharge (inverter-mode) samples are binned by load fraction |P_ac| ÷ rated_kw
+      around the standard points, the mean η = P_ac ÷ P_dc of each bin is weighted by the standard weights. Bins with
+      no samples are left out and the remaining weights renormalized; *_coverage_pct says how much of the weight the
+      day actually covered (EESL units never exceed ~60 % load, so 75 / 100 % points are rarely covered).
+    sql: |
+      WITH s AS (
+          SELECT t.pcs_id, CAST(t.ts AT TIME ZONE :tz AS date) AS kpi_date,
+                 -t.ac_active_power_kw / NULLIF(sp.rated_kw, 0) * 100 AS lf,
+                 t.ac_active_power_kw / NULLIF(t.dc_power_kw, 0) * 100 AS eta
+          FROM battery_telemetry.pcs_telemetry t JOIN sp ON sp.pcs_id = t.pcs_id
+          WHERE t.pcs_id = ANY(:pcs_ids) AND t.ts >= :start_ts AND t.ts < :end_ts
+            AND t.ac_active_power_kw < -:idle_kw AND t.dc_power_kw < 0
+      ), bins(scheme, point, lo, hi, w) AS (
+          VALUES ('cec', 10, 5, 15, 0.04), ('cec', 20, 15, 25, 0.05), ('cec', 30, 25, 40, 0.12),
+                 ('cec', 50, 40, 62.5, 0.21), ('cec', 75, 62.5, 87.5, 0.53), ('cec', 100, 87.5, 110, 0.05),
+                 ('euro', 5, 2.5, 7.5, 0.03), ('euro', 10, 7.5, 15, 0.06), ('euro', 20, 15, 25, 0.13),
+                 ('euro', 30, 25, 40, 0.10), ('euro', 50, 40, 75, 0.48), ('euro', 100, 75, 110, 0.20)
+      ), per_bin AS (
+          SELECT s.pcs_id, s.kpi_date, b.scheme, b.w, AVG(s.eta) AS eta
+          FROM s JOIN bins b ON s.lf >= b.lo AND s.lf < b.hi
+          WHERE s.eta BETWEEN 50 AND 100
+          GROUP BY s.pcs_id, s.kpi_date, b.scheme, b.point, b.w
+      )
+      SELECT pcs_id, kpi_date,
+             SUM(w * eta) FILTER (WHERE scheme = 'cec') / NULLIF(SUM(w) FILTER (WHERE scheme = 'cec'), 0) AS cec_eff_pct,
+             COALESCE(SUM(w) FILTER (WHERE scheme = 'cec'), 0) * 100 AS cec_coverage_pct,
+             SUM(w * eta) FILTER (WHERE scheme = 'euro') / NULLIF(SUM(w) FILTER (WHERE scheme = 'euro'), 0) AS euro_eff_pct,
+             COALESCE(SUM(w) FILTER (WHERE scheme = 'euro'), 0) * 100 AS euro_coverage_pct
+      FROM per_bin
+      GROUP BY pcs_id, kpi_date
+
+  trips:
+    description: >-
+      Trips = transitions of breaker_state into TRIPPED (forced outages). Recovery = time from the trip to the next
+      sample with the breaker CLOSED. A trip belongs to the day it starts.
+    sql: |
+      WITH x AS (
+          SELECT pcs_id, ts, breaker_state, LAG(breaker_state) OVER (PARTITION BY pcs_id ORDER BY ts) AS prev
+          FROM battery_telemetry.pcs_telemetry
+          WHERE pcs_id = ANY(:pcs_ids) AND ts >= :start_ts - interval '1 day' AND ts < :end_ts
+      ), tr AS (
+          SELECT x.pcs_id, x.ts,
+                 (SELECT MIN(t2.ts) FROM battery_telemetry.pcs_telemetry t2
+                   WHERE t2.pcs_id = x.pcs_id AND t2.ts > x.ts AND t2.breaker_state = 'CLOSED') AS back_ts
+          FROM x
+          WHERE x.breaker_state = 'TRIPPED' AND x.prev IS DISTINCT FROM 'TRIPPED' AND x.ts >= :start_ts
+      )
+      SELECT pcs_id, CAST(ts AT TIME ZONE :tz AS date) AS kpi_date,
+             COUNT(*) AS trip_count,
+             SUM(EXTRACT(EPOCH FROM back_ts - ts) / 60) AS trip_recovery_min_sum,
+             COUNT(back_ts) AS trips_recovered
+      FROM tr
+      GROUP BY 1, 2
+
+  pcs_faults:
+    description: >-
+      PCS alarms (alarm_event linked to the PCS unit) per day by category, from the catalog alarm_type:
+      Current → AC, Isolation (ground fault) → DC, Thermal → THERMAL, Grid → GRID, Comm and anything else → INTERNAL.
+      Duration = end_time − time for alarms that have ended.
+    sql: |
+      SELECT e.linked_asset_id AS pcs_id, CAST(e.time AT TIME ZONE :tz AS date) AS kpi_date,
+             COUNT(*) AS faults_total,
+             COUNT(*) FILTER (WHERE c.alarm_type = 'Current') AS faults_ac,
+             COUNT(*) FILTER (WHERE c.alarm_type = 'Isolation') AS faults_dc,
+             COUNT(*) FILTER (WHERE c.alarm_type = 'Thermal') AS faults_thermal,
+             COUNT(*) FILTER (WHERE c.alarm_type = 'Grid') AS faults_grid,
+             COUNT(*) FILTER (WHERE c.alarm_type IS NULL OR c.alarm_type NOT IN ('Current', 'Isolation', 'Thermal', 'Grid'))
+                 AS faults_internal,
+             SUM(EXTRACT(EPOCH FROM e.end_time - e.time) / 60) AS fault_minutes,
+             COUNT(e.end_time) AS faults_ended
+      FROM battery_telemetry.alarm_event e
+      JOIN battery_master.alarm_catalog c ON c.alarm_catalog_id = e.alarm_catalog_id
+      WHERE e.linked_asset_type = 'pcs' AND e.linked_asset_id = ANY(:pcs_ids)
+        AND e.time >= :start_ts AND e.time < :end_ts
+      GROUP BY 1, 2
+
+  dispatch_tracking:
+    description: >-
+      PCS active power vs the EMS command at the same timestamp: pcs → battery system → ems_controller →
+      ems_telemetry.p_setpoint_kw (same sign convention, + charge). Error sums give MAE / RMSE over any range;
+      ramps compare Σ|ΔP| with Σ|ΔP_cmd| over the intervals where the command changed; regulation = correlation of P
+      with agc_signal on FREQ_REG samples (needs regulation_min_samples in the day).
+    sql: |
+      WITH j AS (
+          SELECT p.pcs_id, p.ts, CAST(p.ts AT TIME ZONE :tz AS date) AS kpi_date,
+                 p.ac_active_power_kw AS pw, e.p_setpoint_kw AS sp_kw, e.grid_service, e.agc_signal,
+                 sp.rated_kw,
+                 p.ac_active_power_kw - LAG(p.ac_active_power_kw) OVER w AS dp,
+                 e.p_setpoint_kw - LAG(e.p_setpoint_kw) OVER w AS dsp
+          FROM battery_telemetry.pcs_telemetry p
+          JOIN sp ON sp.pcs_id = p.pcs_id
+          JOIN battery_master.pcs u ON u.pcs_id = p.pcs_id
+          JOIN battery_master.ems_controller c ON c.battery_system_id = u.system_id
+          JOIN battery_telemetry.ems_telemetry e ON e.ems_id = c.ems_id AND e.ts = p.ts
+          WHERE p.pcs_id = ANY(:pcs_ids) AND p.ts >= :start_ts AND p.ts < :end_ts AND e.p_setpoint_kw IS NOT NULL
+          WINDOW w AS (PARTITION BY p.pcs_id ORDER BY p.ts)
+      )
+      SELECT pcs_id, kpi_date,
+             COUNT(*) AS track_samples,
+             SUM(ABS(pw - sp_kw)) AS track_abs_err_sum,
+             SUM((pw - sp_kw) * (pw - sp_kw)) AS track_sq_err_sum,
+             COUNT(*) FILTER (WHERE ABS(pw - sp_kw) <= :tracking_tol_pct / 100.0 * rated_kw) AS track_within_samples,
+             SUM(ABS(dp)) FILTER (WHERE dsp <> 0) AS ramp_delivered_sum_kw,
+             SUM(ABS(dsp)) FILTER (WHERE dsp <> 0) AS ramp_commanded_sum_kw,
+             COUNT(*) FILTER (WHERE grid_service = 'FREQ_REG' AND agc_signal IS NOT NULL) AS regulation_samples,
+             CASE WHEN COUNT(*) FILTER (WHERE grid_service = 'FREQ_REG' AND agc_signal IS NOT NULL)
+                       >= :regulation_min_samples
+                  THEN CORR(pw, agc_signal) FILTER (WHERE grid_service = 'FREQ_REG') END AS regulation_corr
+      FROM j
+      GROUP BY 1, 2
+
+kpis:
+  # =================================================================================================================
+  # 1. Conversion efficiency
+  # =================================================================================================================
+  - code: ac_out_discharge_kwh
+    name: AC energy out (discharge)
+    group: efficiency
+    unit: kWh
+    description: Σ −P_ac × Δt over discharging samples (P_ac < 0) - the inverter's output
+    method: integrate
+    column: -ac_active_power_kw
+    filter: [{column: ac_active_power_kw, op: "<", value: 0}]
+    summary: sum
+    color: "#e8830c"
+  - code: dc_in_discharge_kwh
+    name: DC energy in (discharge)
+    group: efficiency
+    unit: kWh
+    description: Σ −P_dc × Δt over discharging samples - what the battery delivered to the PCS
+    method: integrate
+    column: -dc_power_kw
+    filter: [{column: ac_active_power_kw, op: "<", value: 0}]
+    summary: sum
+    color: "#f2b05e"
+    dashed: true
+  - code: ac_in_charge_kwh
+    name: AC energy in (charge)
+    group: efficiency
+    unit: kWh
+    description: Σ P_ac × Δt over charging samples (P_ac > 0) - drawn from the grid
+    method: integrate
+    column: ac_active_power_kw
+    filter: [{column: ac_active_power_kw, op: ">", value: 0}]
+    summary: sum
+    color: "#2f6fed"
+  - code: dc_out_charge_kwh
+    name: DC energy out (charge)
+    group: efficiency
+    unit: kWh
+    description: Σ P_dc × Δt over charging samples - delivered into the battery
+    method: integrate
+    column: dc_power_kw
+    filter: [{column: ac_active_power_kw, op: ">", value: 0}]
+    summary: sum
+    color: "#7fa6f5"
+    dashed: true
+  - code: eff_weighted_discharge_pct
+    name: Weighted efficiency - discharge
+    group: efficiency
+    unit: "%"
+    description: η_dis = Σ(P_ac·Δt | discharge) ÷ Σ(P_dc·Δt | discharge) - energy-weighted, the honest number
+    method: derived
+    formula: ac_out_discharge_kwh / dc_in_discharge_kwh * 100
+    summary: formula
+    color: "#e8830c"
+  - code: eff_weighted_charge_pct
+    name: Weighted efficiency - charge
+    group: efficiency
+    unit: "%"
+    description: η_ch = Σ(P_dc·Δt | charge) ÷ Σ(P_ac·Δt | charge)
+    method: derived
+    formula: dc_out_charge_kwh / ac_in_charge_kwh * 100
+    summary: formula
+    color: "#2f6fed"
+  - code: eff_weighted_pct
+    name: Weighted conversion efficiency
+    group: efficiency
+    unit: "%"
+    description: Both directions, energy-weighted - (AC out + DC out) ÷ (DC in + AC in); one-way efficiency
+    method: derived
+    formula: (ac_out_discharge_kwh + dc_out_charge_kwh) / (dc_in_discharge_kwh + ac_in_charge_kwh) * 100
+    summary: formula
+    color: "#12a37f"
+  - code: eff_instant_avg_pct
+    name: Instantaneous efficiency (avg, computed)
+    group: efficiency
+    unit: "%"
+    description: >-
+      Mean of η per sample = least(|P_ac|, |P_dc|) ÷ greatest(|P_ac|, |P_dc|) (output ÷ input in either direction),
+      loaded samples only (|P_ac| > idle_kw)
+    method: aggregate
+    func: avg
+    column: least(abs(ac_active_power_kw), abs(dc_power_kw)) / greatest(abs(ac_active_power_kw), abs(dc_power_kw)) * 100
+    filter: [{column: abs(ac_active_power_kw), op: ">", value: "$idle_kw"}]
+    summary: avg
+    color: "#7c5cdb"
+  - code: eff_logged_avg_pct
+    name: Logged efficiency (avg)
+    group: efficiency
+    unit: "%"
+    description: Mean of the PCS's own efficiency_pct over loaded samples - validated against the computed value
+    method: aggregate
+    func: avg
+    column: efficiency_pct
+    filter: [{column: abs(ac_active_power_kw), op: ">", value: "$idle_kw"}]
+    summary: avg
+    color: "#7c5cdb"
+    dashed: true
+  - code: eff_logged_gap_pt
+    name: Logged − computed efficiency
+    group: efficiency
+    unit: pt
+    description: Mean of (efficiency_pct − computed η) per loaded sample; near 0 means the logged value is trustworthy
+    method: aggregate
+    func: avg
+    column: efficiency_pct - least(abs(ac_active_power_kw), abs(dc_power_kw)) / greatest(abs(ac_active_power_kw), abs(dc_power_kw)) * 100
+    filter: [{column: abs(ac_active_power_kw), op: ">", value: "$idle_kw"}]
+    decimals: 3
+    summary: avg
+    color: "#6b7280"
+  - code: conversion_loss_kwh
+    name: Conversion loss
+    group: efficiency
+    unit: kWh
+    description: Σ |P_dc − P_ac| × Δt - energy lost in the conversion stage
+    method: integrate
+    column: abs(dc_power_kw - ac_active_power_kw)
+    summary: sum
+    color: "#d64545"
+  - code: conversion_loss_peak_kw
+    name: Peak conversion loss
+    group: efficiency
+    unit: kW
+    description: MAX |P_dc − P_ac|
+    method: aggregate
+    func: max
+    column: abs(dc_power_kw - ac_active_power_kw)
+    summary: max
+    color: "#d64545"
+  - code: cec_eff_pct
+    name: CEC weighted efficiency
+    group: efficiency
+    unit: "%"
+    description: Discharge efficiency at 10/20/30/50/75/100 % load weighted 0.04/0.05/0.12/0.21/0.53/0.05 (covered bins)
+    method: query
+    query: load_point_efficiency
+    summary: avg
+    color: "#0e8f8f"
+  - code: cec_coverage_pct
+    name: CEC weight covered
+    group: efficiency
+    unit: "%"
+    description: Share of the CEC weights whose load bins had samples that day (100 % = all six points)
+    method: query
+    query: load_point_efficiency
+    default: 0
+    decimals: 0
+    summary: avg
+  - code: euro_eff_pct
+    name: Euro weighted efficiency
+    group: efficiency
+    unit: "%"
+    description: Discharge efficiency at 5/10/20/30/50/100 % load weighted 0.03/0.06/0.13/0.10/0.48/0.20 (covered bins)
+    method: query
+    query: load_point_efficiency
+    summary: avg
+    color: "#a15c00"
+  - code: euro_coverage_pct
+    name: Euro weight covered
+    group: efficiency
+    unit: "%"
+    description: Share of the Euro weights whose load bins had samples that day
+    method: query
+    query: load_point_efficiency
+    default: 0
+    decimals: 0
+    summary: avg
+  - code: eff_vs_datasheet_pt
+    name: Discharge efficiency vs datasheet
+    group: efficiency
+    unit: pt
+    description: Weighted discharge efficiency − datasheet efficiency (master data efficiency_pct; none when not set)
+    method: derived
+    formula: eff_weighted_discharge_pct - datasheet_eff_pct
+    summary: formula
+    color: "#6b7280"
+
+  # =================================================================================================================
+  # 2. Power & energy throughput
+  # =================================================================================================================
+  - code: ac_export_kwh
+    name: AC energy exported (counter)
+    group: throughput
+    unit: kWh
+    description: Δ ac_energy_export_kwh within the day
+    method: counter_delta
+    column: ac_energy_export_kwh
+    summary: sum
+    color: "#e8830c"
+  - code: ac_import_kwh
+    name: AC energy imported (counter)
+    group: throughput
+    unit: kWh
+    description: Δ ac_energy_import_kwh within the day
+    method: counter_delta
+    column: ac_energy_import_kwh
+    summary: sum
+    color: "#2f6fed"
+  - code: ac_export_integrated_kwh
+    name: AC energy exported (Σ P·Δt)
+    group: throughput
+    unit: kWh
+    description: Cross-check of the export counter - Σ −P_ac × Δt over discharging samples
+    method: derived
+    formula: ac_out_discharge_kwh
+    summary: sum
+    color: "#e8830c"
+    dashed: true
+  - code: ac_import_integrated_kwh
+    name: AC energy imported (Σ P·Δt)
+    group: throughput
+    unit: kWh
+    description: Cross-check of the import counter - Σ P_ac × Δt over charging samples
+    method: derived
+    formula: ac_in_charge_kwh
+    summary: sum
+    color: "#2f6fed"
+    dashed: true
+  - code: dc_energy_kwh
+    name: DC energy processed
+    group: throughput
+    unit: kWh
+    description: Σ |P_dc| × Δt (both directions)
+    method: integrate
+    column: abs(dc_power_kw)
+    summary: sum
+    color: "#12a37f"
+  - code: reactive_energy_kvarh
+    name: Reactive energy
+    group: throughput
+    unit: kVARh
+    description: Σ |Q| × Δt
+    method: integrate
+    column: abs(ac_reactive_power_kvar)
+    summary: sum
+    color: "#7c5cdb"
+  - code: reactive_energy_net_kvarh
+    name: Reactive energy (net, signed)
+    group: throughput
+    unit: kVARh
+    description: Σ Q × Δt - sign shows the net direction of VAR exchange over the day
+    method: integrate
+    column: ac_reactive_power_kvar
+    summary: sum
+    color: "#b8a4ef"
+    dashed: true
+  - code: apparent_energy_kvah
+    name: Apparent energy throughput
+    group: throughput
+    unit: kVAh
+    description: Σ S × Δt
+    method: integrate
+    column: ac_apparent_power_kva
+    summary: sum
+    color: "#6b7280"
+  - code: real_energy_share_pct
+    name: Real-energy share of apparent
+    group: throughput
+    unit: "%"
+    description: (AC export + AC import) ÷ apparent energy - the duty mix (100 % = pure active power)
+    method: derived
+    formula: (ac_out_discharge_kwh + ac_in_charge_kwh) / apparent_energy_kvah * 100
+    summary: formula
+    color: "#12a37f"
+
+  # =================================================================================================================
+  # 3. Power quality  (breaker closed)
+  # =================================================================================================================
+  - code: closed_samples
+    name: Samples with breaker closed
+    group: quality
+    unit: samples
+    description: Denominator of the power-quality time shares
+    method: aggregate
+    func: count
+    column: "1"
+    filter: [{column: breaker_state, op: "=", value: CLOSED}]
+    decimals: 0
+    summary: sum
+  - code: loaded_samples
+    name: Loaded samples (closed, S > idle)
+    group: quality
+    unit: samples
+    description: Breaker closed and S > idle_kw - denominator of PF and current-THD shares
+    method: aggregate
+    func: count
+    column: "1"
+    filter:
+      - {column: breaker_state, op: "=", value: CLOSED}
+      - {column: ac_apparent_power_kva, op: ">", value: "$idle_kw"}
+    decimals: 0
+    summary: sum
+  - code: pf_avg_abs
+    name: Power factor (avg |PF|)
+    group: quality
+    description: Mean |power_factor| over loaded samples (the sign only tells the reactive direction)
+    method: aggregate
+    func: avg
+    column: abs(power_factor)
+    filter:
+      - {column: breaker_state, op: "=", value: CLOSED}
+      - {column: ac_apparent_power_kva, op: ">", value: "$idle_kw"}
+    decimals: 3
+    summary: avg
+    color: "#2f6fed"
+  - code: pf_computed_avg
+    name: Power factor (computed P ÷ S)
+    group: quality
+    description: Mean |P| ÷ S over loaded samples - cross-check of the logged power factor
+    method: aggregate
+    func: avg
+    column: abs(ac_active_power_kw) / ac_apparent_power_kva
+    filter:
+      - {column: breaker_state, op: "=", value: CLOSED}
+      - {column: ac_apparent_power_kva, op: ">", value: "$idle_kw"}
+    decimals: 3
+    summary: avg
+    color: "#2f6fed"
+    dashed: true
+  - code: pf_below_min_samples
+    name: Samples with PF below floor
+    group: quality
+    unit: samples
+    description: Loaded samples with |PF| < min_pf (grid-code / ride-through floor)
+    method: aggregate
+    func: count
+    column: "1"
+    filter:
+      - {column: breaker_state, op: "=", value: CLOSED}
+      - {column: ac_apparent_power_kva, op: ">", value: "$idle_kw"}
+      - {column: abs(power_factor), op: "<", value: "$min_pf"}
+    decimals: 0
+    summary: sum
+  - code: pf_below_min_pct
+    name: Time with PF below floor
+    group: quality
+    unit: "%"
+    description: Samples with |PF| < min_pf ÷ loaded samples
+    method: derived
+    formula: pf_below_min_samples / loaded_samples * 100
+    summary: formula
+    color: "#d64545"
+  - code: s_check_error_avg_pct
+    name: Apparent-power consistency error (avg)
+    group: quality
+    unit: "%"
+    description: Mean |√(P² + Q²) − S| ÷ S over loaded samples - sensor / calculation sanity
+    method: aggregate
+    func: avg
+    column: abs(sqrt(ac_active_power_kw * ac_active_power_kw + ac_reactive_power_kvar * ac_reactive_power_kvar) - ac_apparent_power_kva) / ac_apparent_power_kva * 100
+    filter:
+      - {column: breaker_state, op: "=", value: CLOSED}
+      - {column: ac_apparent_power_kva, op: ">", value: "$idle_kw"}
+    decimals: 3
+    summary: avg
+    color: "#6b7280"
+  - code: s_check_error_max_kva
+    name: Apparent-power consistency error (max)
+    group: quality
+    unit: kVA
+    description: MAX |√(P² + Q²) − S|
+    method: aggregate
+    func: max
+    column: abs(sqrt(ac_active_power_kw * ac_active_power_kw + ac_reactive_power_kvar * ac_reactive_power_kvar) - ac_apparent_power_kva)
+    filter: [{column: breaker_state, op: "=", value: CLOSED}]
+    summary: max
+    color: "#6b7280"
+  - code: thd_v_avg_pct
+    name: Voltage THD (avg)
+    group: quality
+    unit: "%"
+    method: aggregate
+    func: avg
+    column: thd_voltage_pct
+    filter: [{column: breaker_state, op: "=", value: CLOSED}]
+    summary: avg
+    color: "#7c5cdb"
+    dashed: true
+  - code: thd_v_max_pct
+    name: Voltage THD (max)
+    group: quality
+    unit: "%"
+    method: aggregate
+    func: max
+    column: thd_voltage_pct
+    filter: [{column: breaker_state, op: "=", value: CLOSED}]
+    summary: max
+    color: "#7c5cdb"
+  - code: thd_v_exceed_samples
+    name: Samples with voltage THD over limit
+    group: quality
+    unit: samples
+    method: aggregate
+    func: count
+    column: "1"
+    filter:
+      - {column: breaker_state, op: "=", value: CLOSED}
+      - {column: thd_voltage_pct, op: ">", value: "$thd_v_limit_pct"}
+    decimals: 0
+    summary: sum
+  - code: thd_v_exceed_pct
+    name: Time with voltage THD over limit
+    group: quality
+    unit: "%"
+    description: Closed samples with thd_voltage_pct > thd_v_limit_pct (IEEE-519 5 %) ÷ closed samples
+    method: derived
+    formula: thd_v_exceed_samples / closed_samples * 100
+    summary: formula
+    color: "#7c5cdb"
+  - code: thd_i_avg_pct
+    name: Current THD (avg)
+    group: quality
+    unit: "%"
+    description: Loaded samples only - current THD is meaningless at no load
+    method: aggregate
+    func: avg
+    column: thd_current_pct
+    filter:
+      - {column: breaker_state, op: "=", value: CLOSED}
+      - {column: ac_apparent_power_kva, op: ">", value: "$idle_kw"}
+    summary: avg
+    color: "#e8830c"
+    dashed: true
+  - code: thd_i_max_pct
+    name: Current THD (max)
+    group: quality
+    unit: "%"
+    method: aggregate
+    func: max
+    column: thd_current_pct
+    filter:
+      - {column: breaker_state, op: "=", value: CLOSED}
+      - {column: ac_apparent_power_kva, op: ">", value: "$idle_kw"}
+    summary: max
+    color: "#e8830c"
+  - code: thd_i_exceed_samples
+    name: Samples with current THD over limit
+    group: quality
+    unit: samples
+    method: aggregate
+    func: count
+    column: "1"
+    filter:
+      - {column: breaker_state, op: "=", value: CLOSED}
+      - {column: ac_apparent_power_kva, op: ">", value: "$idle_kw"}
+      - {column: thd_current_pct, op: ">", value: "$thd_i_limit_pct"}
+    decimals: 0
+    summary: sum
+  - code: thd_i_exceed_pct
+    name: Time with current THD over limit
+    group: quality
+    unit: "%"
+    description: Loaded samples with thd_current_pct > thd_i_limit_pct ÷ loaded samples
+    method: derived
+    formula: thd_i_exceed_samples / loaded_samples * 100
+    summary: formula
+    color: "#e8830c"
+  - code: freq_dev_max_hz
+    name: Max frequency deviation
+    group: quality
+    unit: Hz
+    description: MAX |f − rated_hz| with the breaker closed
+    method: aggregate
+    func: max
+    column: abs(ac_frequency_hz - rated_hz)
+    filter: [{column: breaker_state, op: "=", value: CLOSED}]
+    decimals: 3
+    summary: max
+    color: "#0e8f8f"
+  - code: freq_outside_samples
+    name: Samples outside frequency dead band
+    group: quality
+    unit: samples
+    method: aggregate
+    func: count
+    column: "1"
+    filter:
+      - {column: breaker_state, op: "=", value: CLOSED}
+      - {column: abs(ac_frequency_hz - rated_hz), op: ">", value: "$freq_deadband_hz"}
+    decimals: 0
+    summary: sum
+  - code: freq_outside_band_pct
+    name: Time outside frequency dead band
+    group: quality
+    unit: "%"
+    description: Closed samples with |f − rated_hz| > freq_deadband_hz (±0.2 Hz) ÷ closed samples
+    method: derived
+    formula: freq_outside_samples / closed_samples * 100
+    summary: formula
+    color: "#0e8f8f"
+  - code: volt_dev_avg_pct
+    name: Voltage deviation (avg)
+    group: quality
+    unit: "%"
+    description: Mean (V_avg_LL − rated_v) ÷ rated_v, V_avg_LL = mean of the three line voltages, breaker closed
+    method: aggregate
+    func: avg
+    column: ((ac_voltage_ab_v + ac_voltage_bc_v + ac_voltage_ca_v) / 3 - rated_v) / rated_v * 100
+    filter: [{column: breaker_state, op: "=", value: CLOSED}]
+    summary: avg
+    color: "#a15c00"
+    dashed: true
+  - code: volt_dev_max_abs_pct
+    name: Voltage deviation (max |dev|)
+    group: quality
+    unit: "%"
+    method: aggregate
+    func: max
+    column: abs(((ac_voltage_ab_v + ac_voltage_bc_v + ac_voltage_ca_v) / 3 - rated_v) / rated_v * 100)
+    filter: [{column: breaker_state, op: "=", value: CLOSED}]
+    summary: max
+    color: "#a15c00"
+  - code: volt_outside_samples
+    name: Samples outside voltage band
+    group: quality
+    unit: samples
+    method: aggregate
+    func: count
+    column: "1"
+    filter:
+      - {column: breaker_state, op: "=", value: CLOSED}
+      - {column: abs(((ac_voltage_ab_v + ac_voltage_bc_v + ac_voltage_ca_v) / 3 - rated_v) / rated_v * 100), op: ">", value: "$voltage_band_pct"}
+    decimals: 0
+    summary: sum
+  - code: volt_outside_band_pct
+    name: Time outside voltage band
+    group: quality
+    unit: "%"
+    description: Closed samples with |voltage deviation| > voltage_band_pct (±10 %) ÷ closed samples
+    method: derived
+    formula: volt_outside_samples / closed_samples * 100
+    summary: formula
+    color: "#a15c00"
+
+  # =================================================================================================================
+  # 4. Loading, utilization & capability
+  # =================================================================================================================
+  - code: total_samples
+    name: Samples in the day
+    group: loading
+    unit: samples
+    description: All telemetry samples - denominator of the whole-day time shares
+    method: aggregate
+    func: count
+    column: "1"
+    decimals: 0
+    summary: sum
+  - code: s_loading_avg_pct
+    name: Apparent-power loading (avg)
+    group: loading
+    unit: "%"
+    description: Mean S ÷ rated_kva over the whole day (idle counts as 0 %)
+    method: aggregate
+    func: avg
+    column: ac_apparent_power_kva / rated_kva * 100
+    summary: avg
+    color: "#2f6fed"
+  - code: s_loading_peak_pct
+    name: Peak apparent-power loading
+    group: loading
+    unit: "%"
+    description: MAX S ÷ rated_kva
+    method: aggregate
+    func: max
+    column: ac_apparent_power_kva / rated_kva * 100
+    summary: max
+    color: "#d64545"
+  - code: utilization_factor_pct
+    name: Utilization (capacity) factor
+    group: loading
+    unit: "%"
+    description: avg(|P_ac|) ÷ rated_kw over the period - active loading including idle time
+    method: aggregate
+    func: avg
+    column: abs(ac_active_power_kw) / rated_kw * 100
+    summary: avg
+    color: "#12a37f"
+  - code: p_loading_active_avg_pct
+    name: Active loading while converting
+    group: loading
+    unit: "%"
+    description: Mean |P_ac| ÷ rated_kw over loaded samples only (|P| > idle_kw)
+    method: aggregate
+    func: avg
+    column: abs(ac_active_power_kw) / rated_kw * 100
+    filter: [{column: abs(ac_active_power_kw), op: ">", value: "$idle_kw"}]
+    summary: avg
+    color: "#12a37f"
+    dashed: true
+  - code: peak_load_samples
+    name: Samples above peak-load threshold
+    group: loading
+    unit: samples
+    method: aggregate
+    func: count
+    column: "1"
+    filter: [{column: ac_apparent_power_kva / rated_kva * 100, op: ">", value: "$peak_load_threshold_pct"}]
+    decimals: 0
+    summary: sum
+  - code: peak_load_time_pct
+    name: Time above peak-load threshold
+    group: loading
+    unit: "%"
+    description: Samples with S ÷ rated_kva > peak_load_threshold_pct (90 %) ÷ all samples
+    method: derived
+    formula: peak_load_samples / total_samples * 100
+    summary: formula
+    color: "#d64545"
+  - code: q_headroom_used_avg_pct
+    name: Reactive headroom used (avg)
+    group: loading
+    unit: "%"
+    description: Mean |Q| ÷ √(rated_kva² − P²) - share of the VAR envelope available at the current P (breaker closed)
+    method: aggregate
+    func: avg
+    column: abs(ac_reactive_power_kvar) / sqrt(rated_kva * rated_kva - ac_active_power_kw * ac_active_power_kw) * 100
+    filter: [{column: breaker_state, op: "=", value: CLOSED}]
+    summary: avg
+    color: "#7c5cdb"
+  - code: q_headroom_used_max_pct
+    name: Reactive headroom used (max)
+    group: loading
+    unit: "%"
+    method: aggregate
+    func: max
+    column: abs(ac_reactive_power_kvar) / sqrt(rated_kva * rated_kva - ac_active_power_kw * ac_active_power_kw) * 100
+    filter: [{column: breaker_state, op: "=", value: CLOSED}]
+    summary: max
+    color: "#7c5cdb"
+    dashed: true
+  - code: derating_discharge_avg_pct
+    name: Derating - discharge (avg)
+    group: loading
+    unit: "%"
+    description: Mean (1 − avail_discharge_kw ÷ max_discharge_kw) with the breaker closed; capability = system param
+    method: aggregate
+    func: avg
+    column: (1 - avail_discharge_kw / max_discharge_kw) * 100
+    filter: [{column: breaker_state, op: "=", value: CLOSED}]
+    summary: avg
+    color: "#e8830c"
+  - code: derating_charge_avg_pct
+    name: Derating - charge (avg)
+    group: loading
+    unit: "%"
+    description: Mean (1 − avail_charge_kw ÷ max_charge_kw) with the breaker closed
+    method: aggregate
+    func: avg
+    column: (1 - avail_charge_kw / max_charge_kw) * 100
+    filter: [{column: breaker_state, op: "=", value: CLOSED}]
+    summary: avg
+    color: "#2f6fed"
+  - code: derating_avg_pct
+    name: Derating (avg, worse side)
+    group: loading
+    unit: "%"
+    description: Mean of greatest(discharge, charge derating) per closed sample
+    method: aggregate
+    func: avg
+    column: greatest(1 - avail_discharge_kw / max_discharge_kw, 1 - avail_charge_kw / max_charge_kw) * 100
+    filter: [{column: breaker_state, op: "=", value: CLOSED}]
+    summary: avg
+    color: "#d64545"
+  - code: derating_max_pct
+    name: Derating (max)
+    group: loading
+    unit: "%"
+    method: aggregate
+    func: max
+    column: greatest(1 - avail_discharge_kw / max_discharge_kw, 1 - avail_charge_kw / max_charge_kw) * 100
+    filter: [{column: breaker_state, op: "=", value: CLOSED}]
+    summary: max
+    color: "#d64545"
+    dashed: true
+  - code: derated_samples
+    name: Derated samples
+    group: loading
+    unit: samples
+    description: Closed samples derated by at least derate_flag_pct on either side (usually thermal or grid)
+    method: aggregate
+    func: count
+    column: "1"
+    filter:
+      - {column: breaker_state, op: "=", value: CLOSED}
+      - {column: "greatest(1 - avail_discharge_kw / max_discharge_kw, 1 - avail_charge_kw / max_charge_kw) * 100", op: ">=", value: "$derate_flag_pct"}
+    decimals: 0
+    summary: sum
+  - code: derated_time_pct
+    name: Time derated
+    group: loading
+    unit: "%"
+    description: Derated samples ÷ closed samples - correlate with time above the IGBT limit (Thermal)
+    method: derived
+    formula: derated_samples / closed_samples * 100
+    summary: formula
+    color: "#d64545"
+
+  # =================================================================================================================
+  # 5. Phase balance
+  # =================================================================================================================
+  - code: i_unbalance_avg_pct
+    name: Current unbalance (avg)
+    group: balance
+    unit: "%"
+    description: Mean max(|I_ph − I_avg|) ÷ I_avg, I_avg = mean of the three phase currents (loaded samples)
+    method: aggregate
+    func: avg
+    column: greatest(abs(ac_current_a_a - (ac_current_a_a + ac_current_b_a + ac_current_c_a) / 3), abs(ac_current_b_a - (ac_current_a_a + ac_current_b_a + ac_current_c_a) / 3), abs(ac_current_c_a - (ac_current_a_a + ac_current_b_a + ac_current_c_a) / 3)) / ((ac_current_a_a + ac_current_b_a + ac_current_c_a) / 3) * 100
+    filter:
+      - {column: breaker_state, op: "=", value: CLOSED}
+      - {column: ac_apparent_power_kva, op: ">", value: "$idle_kw"}
+    summary: avg
+    color: "#e8830c"
+  - code: i_unbalance_max_pct
+    name: Current unbalance (max)
+    group: balance
+    unit: "%"
+    method: aggregate
+    func: max
+    column: greatest(abs(ac_current_a_a - (ac_current_a_a + ac_current_b_a + ac_current_c_a) / 3), abs(ac_current_b_a - (ac_current_a_a + ac_current_b_a + ac_current_c_a) / 3), abs(ac_current_c_a - (ac_current_a_a + ac_current_b_a + ac_current_c_a) / 3)) / ((ac_current_a_a + ac_current_b_a + ac_current_c_a) / 3) * 100
+    filter:
+      - {column: breaker_state, op: "=", value: CLOSED}
+      - {column: ac_apparent_power_kva, op: ">", value: "$idle_kw"}
+    summary: max
+    color: "#e8830c"
+    dashed: true
+  - code: i_unbalance_exceed_samples
+    name: Samples with current unbalance over limit
+    group: balance
+    unit: samples
+    method: aggregate
+    func: count
+    column: "1"
+    filter:
+      - {column: breaker_state, op: "=", value: CLOSED}
+      - {column: ac_apparent_power_kva, op: ">", value: "$idle_kw"}
+      - {column: "greatest(abs(ac_current_a_a - (ac_current_a_a + ac_current_b_a + ac_current_c_a) / 3), abs(ac_current_b_a - (ac_current_a_a + ac_current_b_a + ac_current_c_a) / 3), abs(ac_current_c_a - (ac_current_a_a + ac_current_b_a + ac_current_c_a) / 3)) / ((ac_current_a_a + ac_current_b_a + ac_current_c_a) / 3) * 100", op: ">", value: "$i_unbalance_limit_pct"}
+    decimals: 0
+    summary: sum
+  - code: i_unbalance_exceed_pct
+    name: Time with current unbalance over limit
+    group: balance
+    unit: "%"
+    description: Loaded samples with current unbalance > i_unbalance_limit_pct ÷ loaded samples
+    method: derived
+    formula: i_unbalance_exceed_samples / loaded_samples * 100
+    summary: formula
+    color: "#e8830c"
+  - code: v_unbalance_avg_pct
+    name: Voltage unbalance - NEMA (avg)
+    group: balance
+    unit: "%"
+    description: Mean max(|V_LL − V_avg_LL|) ÷ V_avg_LL across the three line voltages (breaker closed)
+    method: aggregate
+    func: avg
+    column: greatest(abs(ac_voltage_ab_v - (ac_voltage_ab_v + ac_voltage_bc_v + ac_voltage_ca_v) / 3), abs(ac_voltage_bc_v - (ac_voltage_ab_v + ac_voltage_bc_v + ac_voltage_ca_v) / 3), abs(ac_voltage_ca_v - (ac_voltage_ab_v + ac_voltage_bc_v + ac_voltage_ca_v) / 3)) / ((ac_voltage_ab_v + ac_voltage_bc_v + ac_voltage_ca_v) / 3) * 100
+    filter: [{column: breaker_state, op: "=", value: CLOSED}]
+    decimals: 3
+    summary: avg
+    color: "#7c5cdb"
+  - code: v_unbalance_max_pct
+    name: Voltage unbalance - NEMA (max)
+    group: balance
+    unit: "%"
+    description: A rising trend signals a developing grid or connection fault
+    method: aggregate
+    func: max
+    column: greatest(abs(ac_voltage_ab_v - (ac_voltage_ab_v + ac_voltage_bc_v + ac_voltage_ca_v) / 3), abs(ac_voltage_bc_v - (ac_voltage_ab_v + ac_voltage_bc_v + ac_voltage_ca_v) / 3), abs(ac_voltage_ca_v - (ac_voltage_ab_v + ac_voltage_bc_v + ac_voltage_ca_v) / 3)) / ((ac_voltage_ab_v + ac_voltage_bc_v + ac_voltage_ca_v) / 3) * 100
+    filter: [{column: breaker_state, op: "=", value: CLOSED}]
+    decimals: 3
+    summary: max
+    color: "#7c5cdb"
+    dashed: true
+  - code: v_unbalance_exceed_samples
+    name: Samples with voltage unbalance over limit
+    group: balance
+    unit: samples
+    method: aggregate
+    func: count
+    column: "1"
+    filter:
+      - {column: breaker_state, op: "=", value: CLOSED}
+      - {column: "greatest(abs(ac_voltage_ab_v - (ac_voltage_ab_v + ac_voltage_bc_v + ac_voltage_ca_v) / 3), abs(ac_voltage_bc_v - (ac_voltage_ab_v + ac_voltage_bc_v + ac_voltage_ca_v) / 3), abs(ac_voltage_ca_v - (ac_voltage_ab_v + ac_voltage_bc_v + ac_voltage_ca_v) / 3)) / ((ac_voltage_ab_v + ac_voltage_bc_v + ac_voltage_ca_v) / 3) * 100", op: ">", value: "$v_unbalance_limit_pct"}
+    decimals: 0
+    summary: sum
+  - code: v_unbalance_exceed_pct
+    name: Time with voltage unbalance over limit
+    group: balance
+    unit: "%"
+    description: Closed samples with NEMA unbalance > v_unbalance_limit_pct (2 %) ÷ closed samples
+    method: derived
+    formula: v_unbalance_exceed_samples / closed_samples * 100
+    summary: formula
+    color: "#7c5cdb"
+
+  # =================================================================================================================
+  # 6. Thermal
+  # =================================================================================================================
+  - code: igbt_temp_max_c
+    name: IGBT temperature (max)
+    group: thermal
+    unit: °C
+    method: aggregate
+    func: max
+    column: igbt_temp_c
+    decimals: 1
+    summary: max
+    color: "#d64545"
+  - code: igbt_temp_avg_c
+    name: IGBT temperature (avg)
+    group: thermal
+    unit: °C
+    method: aggregate
+    func: avg
+    column: igbt_temp_c
+    decimals: 1
+    summary: avg
+    color: "#d64545"
+    dashed: true
+  - code: igbt_margin_min_c
+    name: Thermal margin (min)
+    group: thermal
+    unit: °C
+    description: igbt_temp_limit_c − max IGBT temperature (smallest margin of the day)
+    method: derived
+    formula: igbt_temp_limit_c - igbt_temp_max_c
+    decimals: 1
+    summary: min
+    color: "#12a37f"
+  - code: heatsink_temp_max_c
+    name: Heatsink temperature (max)
+    group: thermal
+    unit: °C
+    method: aggregate
+    func: max
+    column: heatsink_temp_c
+    decimals: 1
+    summary: max
+    color: "#e8830c"
+  - code: heatsink_temp_avg_c
+    name: Heatsink temperature (avg)
+    group: thermal
+    unit: °C
+    method: aggregate
+    func: avg
+    column: heatsink_temp_c
+    decimals: 1
+    summary: avg
+    color: "#e8830c"
+    dashed: true
+  - code: cooling_dt_avg_c
+    name: Cooling ΔT (heatsink − coolant, loaded)
+    group: thermal
+    unit: °C
+    description: Mean heatsink_temp_c − inlet_coolant_temp_c over loaded samples; shrinking at constant load = degraded cooling
+    method: aggregate
+    func: avg
+    column: heatsink_temp_c - inlet_coolant_temp_c
+    filter: [{column: ac_apparent_power_kva, op: ">", value: "$idle_kw"}]
+    decimals: 2
+    summary: avg
+    color: "#2f6fed"
+  - code: temp_rise_per_load_c
+    name: Temperature rise per unit load
+    group: thermal
+    unit: °C/pu
+    description: Mean (igbt_temp_c − ambient_temp_c) ÷ (S ÷ rated_kva) above min_load_frac_for_rise - trend independent of loading
+    method: aggregate
+    func: avg
+    column: (igbt_temp_c - ambient_temp_c) / (ac_apparent_power_kva / rated_kva)
+    filter: [{column: ac_apparent_power_kva / rated_kva, op: ">", value: "$min_load_frac_for_rise"}]
+    decimals: 1
+    summary: avg
+    color: "#7c5cdb"
+  - code: ambient_temp_max_c
+    name: Ambient temperature (max)
+    group: thermal
+    unit: °C
+    method: aggregate
+    func: max
+    column: ambient_temp_c
+    decimals: 1
+    summary: max
+    color: "#6b7280"
+  - code: igbt_over_limit_samples
+    name: Samples above IGBT limit
+    group: thermal
+    unit: samples
+    method: aggregate
+    func: count
+    column: "1"
+    filter: [{column: igbt_temp_c, op: ">", value: "$igbt_temp_limit_c"}]
+    decimals: 0
+    summary: sum
+  - code: igbt_over_limit_pct
+    name: Time above IGBT limit
+    group: thermal
+    unit: "%"
+    description: Samples with igbt_temp_c > igbt_temp_limit_c (80 °C) ÷ all samples - correlate with Time derated
+    method: derived
+    formula: igbt_over_limit_samples / total_samples * 100
+    summary: formula
+    color: "#d64545"
+
+  # =================================================================================================================
+  # 7. Reactive power & grid support
+  # =================================================================================================================
+  - code: q_avg_abs_kvar
+    name: Reactive power (avg |Q|)
+    group: reactive
+    unit: kVAR
+    method: aggregate
+    func: avg
+    column: abs(ac_reactive_power_kvar)
+    filter: [{column: breaker_state, op: "=", value: CLOSED}]
+    summary: avg
+    color: "#7c5cdb"
+  - code: q_max_abs_kvar
+    name: Reactive power (max |Q|)
+    group: reactive
+    unit: kVAR
+    method: aggregate
+    func: max
+    column: abs(ac_reactive_power_kvar)
+    filter: [{column: breaker_state, op: "=", value: CLOSED}]
+    summary: max
+    color: "#7c5cdb"
+    dashed: true
+  - code: q_share_rated_avg_pct
+    name: Reactive contribution (|Q| ÷ rated_kva)
+    group: reactive
+    unit: "%"
+    method: aggregate
+    func: avg
+    column: abs(ac_reactive_power_kvar) / rated_kva * 100
+    filter: [{column: breaker_state, op: "=", value: CLOSED}]
+    decimals: 3
+    summary: avg
+    color: "#0e8f8f"
+  - code: var_at_rest_kvarh
+    name: VAR support at rest
+    group: reactive
+    unit: kVARh
+    description: Σ |Q| × Δt while |P| ≤ idle_kw with the breaker closed (STATCOM / voltage-support mode)
+    method: integrate
+    column: abs(ac_reactive_power_kvar)
+    filter:
+      - {column: breaker_state, op: "=", value: CLOSED}
+      - {column: abs(ac_active_power_kw), op: "<=", value: "$idle_kw"}
+    summary: sum
+    color: "#12a37f"
+  - code: active_samples
+    name: Converting samples (|P| > idle)
+    group: reactive
+    unit: samples
+    description: Breaker closed and |P| > idle_kw - denominator of the quadrant shares
+    method: aggregate
+    func: count
+    column: "1"
+    filter:
+      - {column: breaker_state, op: "=", value: CLOSED}
+      - {column: abs(ac_active_power_kw), op: ">", value: "$idle_kw"}
+    decimals: 0
+    summary: sum
+  - code: quad_charge_qpos_samples
+    name: Samples charging, Q ≥ 0
+    group: reactive
+    unit: samples
+    method: aggregate
+    func: count
+    column: "1"
+    filter:
+      - {column: breaker_state, op: "=", value: CLOSED}
+      - {column: ac_active_power_kw, op: ">", value: "$idle_kw"}
+      - {column: ac_reactive_power_kvar, op: ">=", value: 0}
+    decimals: 0
+    summary: sum
+  - code: quad_charge_qneg_samples
+    name: Samples charging, Q < 0
+    group: reactive
+    unit: samples
+    method: aggregate
+    func: count
+    column: "1"
+    filter:
+      - {column: breaker_state, op: "=", value: CLOSED}
+      - {column: ac_active_power_kw, op: ">", value: "$idle_kw"}
+      - {column: ac_reactive_power_kvar, op: "<", value: 0}
+    decimals: 0
+    summary: sum
+  - code: quad_discharge_qpos_samples
+    name: Samples discharging, Q ≥ 0
+    group: reactive
+    unit: samples
+    method: aggregate
+    func: count
+    column: "1"
+    filter:
+      - {column: breaker_state, op: "=", value: CLOSED}
+      - {column: -ac_active_power_kw, op: ">", value: "$idle_kw"}
+      - {column: ac_reactive_power_kvar, op: ">=", value: 0}
+    decimals: 0
+    summary: sum
+  - code: quad_discharge_qneg_samples
+    name: Samples discharging, Q < 0
+    group: reactive
+    unit: samples
+    method: aggregate
+    func: count
+    column: "1"
+    filter:
+      - {column: breaker_state, op: "=", value: CLOSED}
+      - {column: -ac_active_power_kw, op: ">", value: "$idle_kw"}
+      - {column: ac_reactive_power_kvar, op: "<", value: 0}
+    decimals: 0
+    summary: sum
+  - code: quad_charge_qpos_pct
+    name: Share charging, Q ≥ 0
+    group: reactive
+    unit: "%"
+    method: derived
+    formula: quad_charge_qpos_samples / active_samples * 100
+    decimals: 1
+    summary: formula
+    color: "#2f6fed"
+  - code: quad_charge_qneg_pct
+    name: Share charging, Q < 0
+    group: reactive
+    unit: "%"
+    method: derived
+    formula: quad_charge_qneg_samples / active_samples * 100
+    decimals: 1
+    summary: formula
+    color: "#7fa6f5"
+  - code: quad_discharge_qpos_pct
+    name: Share discharging, Q ≥ 0
+    group: reactive
+    unit: "%"
+    method: derived
+    formula: quad_discharge_qpos_samples / active_samples * 100
+    decimals: 1
+    summary: formula
+    color: "#e8830c"
+  - code: quad_discharge_qneg_pct
+    name: Share discharging, Q < 0
+    group: reactive
+    unit: "%"
+    method: derived
+    formula: quad_discharge_qneg_samples / active_samples * 100
+    decimals: 1
+    summary: formula
+    color: "#f2b05e"
+
+  # =================================================================================================================
+  # 8. Availability & reliability
+  # =================================================================================================================
+  - code: online_samples
+    name: Online samples
+    group: reliability
+    unit: samples
+    description: Breaker CLOSED, mode not FAULT / IDLE and alarm_level ≤ availability_max_alarm_level
+    method: aggregate
+    func: count
+    column: "1"
+    filter:
+      - {column: breaker_state, op: "=", value: CLOSED}
+      - {column: mode_code, op: "not in", value: [FAULT, IDLE]}
+      - {column: alarm_level, op: "<=", value: "$availability_max_alarm_level"}
+    decimals: 0
+    summary: sum
+  - code: availability_pct
+    name: PCS availability
+    group: reliability
+    unit: "%"
+    description: Online samples ÷ all samples of the day
+    method: derived
+    formula: online_samples / total_samples * 100
+    summary: formula
+    color: "#12a37f"
+  - code: operating_hours
+    name: Operating hours (breaker closed)
+    group: reliability
+    unit: h
+    description: Σ Δt with the breaker closed
+    method: integrate
+    column: "1"
+    filter: [{column: breaker_state, op: "=", value: CLOSED}]
+    summary: sum
+    color: "#2f6fed"
+  - code: trip_count
+    name: Trips (forced outages)
+    group: reliability
+    unit: trips
+    description: Transitions of breaker_state into TRIPPED
+    method: query
+    query: trips
+    default: 0
+    decimals: 0
+    summary: sum
+    color: "#d64545"
+  - code: trip_recovery_min_sum
+    name: Trip recovery time (total)
+    group: reliability
+    unit: min
+    description: Σ time from each trip to the next breaker-closed sample
+    method: query
+    query: trips
+    default: 0
+    decimals: 0
+    summary: sum
+  - code: trips_recovered
+    name: Trips recovered
+    group: reliability
+    unit: trips
+    method: query
+    query: trips
+    default: 0
+    decimals: 0
+    summary: sum
+  - code: mtbf_h
+    name: MTBF
+    group: reliability
+    unit: h
+    description: Operating hours ÷ trips (no value without a trip; the range card uses Σ hours ÷ Σ trips)
+    method: derived
+    formula: operating_hours / trip_count
+    decimals: 1
+    summary: formula
+    color: "#12a37f"
+  - code: mttr_min
+    name: MTTR (trip → breaker closed)
+    group: reliability
+    unit: min
+    description: Mean time to recover from a trip
+    method: derived
+    formula: trip_recovery_min_sum / trips_recovered
+    decimals: 1
+    summary: formula
+    color: "#e8830c"
+  - code: faults_total
+    name: PCS faults (alarms)
+    group: reliability
+    unit: alarms
+    description: Alarm events linked to the PCS unit
+    method: query
+    query: pcs_faults
+    default: 0
+    decimals: 0
+    summary: sum
+    color: "#6b7280"
+  - code: faults_ac
+    name: Faults - AC (overload / current)
+    group: reliability
+    unit: alarms
+    method: query
+    query: pcs_faults
+    default: 0
+    decimals: 0
+    summary: sum
+    color: "#e8830c"
+  - code: faults_dc
+    name: Faults - DC (isolation / ground)
+    group: reliability
+    unit: alarms
+    method: query
+    query: pcs_faults
+    default: 0
+    decimals: 0
+    summary: sum
+    color: "#2f6fed"
+  - code: faults_thermal
+    name: Faults - thermal
+    group: reliability
+    unit: alarms
+    method: query
+    query: pcs_faults
+    default: 0
+    decimals: 0
+    summary: sum
+    color: "#d64545"
+  - code: faults_grid
+    name: Faults - grid
+    group: reliability
+    unit: alarms
+    method: query
+    query: pcs_faults
+    default: 0
+    decimals: 0
+    summary: sum
+    color: "#0e8f8f"
+  - code: faults_internal
+    name: Faults - internal / comms
+    group: reliability
+    unit: alarms
+    method: query
+    query: pcs_faults
+    default: 0
+    decimals: 0
+    summary: sum
+    color: "#7c5cdb"
+  - code: fault_minutes
+    name: Fault duration (total)
+    group: reliability
+    unit: min
+    description: Σ (end_time − time) of the PCS alarms that have ended
+    method: query
+    query: pcs_faults
+    default: 0
+    decimals: 0
+    summary: sum
+  - code: faults_ended
+    name: Faults ended
+    group: reliability
+    unit: alarms
+    method: query
+    query: pcs_faults
+    default: 0
+    decimals: 0
+    summary: sum
+  - code: fault_rate_per_day
+    name: Fault rate
+    group: reliability
+    unit: alarms/day
+    description: PCS alarms per day (the range card shows the average per day)
+    method: derived
+    formula: faults_total
+    decimals: 2
+    summary: avg
+    color: "#6b7280"
+  - code: fault_mean_duration_min
+    name: Mean fault duration (time to recover)
+    group: reliability
+    unit: min
+    method: derived
+    formula: fault_minutes / faults_ended
+    decimals: 1
+    summary: formula
+    color: "#6b7280"
+
+  # =================================================================================================================
+  # 9. Grid-service / dispatch performance
+  # =================================================================================================================
+  - code: track_samples
+    name: Samples with an EMS setpoint
+    group: dispatch
+    unit: samples
+    method: query
+    query: dispatch_tracking
+    decimals: 0
+    summary: sum
+  - code: track_abs_err_sum
+    name: Σ |P − P_cmd|
+    group: dispatch
+    unit: kW·samples
+    method: query
+    query: dispatch_tracking
+    summary: sum
+  - code: track_sq_err_sum
+    name: Σ (P − P_cmd)²
+    group: dispatch
+    unit: kW²·samples
+    method: query
+    query: dispatch_tracking
+    summary: sum
+  - code: track_within_samples
+    name: Samples within tracking tolerance
+    group: dispatch
+    unit: samples
+    method: query
+    query: dispatch_tracking
+    decimals: 0
+    summary: sum
+  - code: tracking_mae_kw
+    name: Setpoint tracking MAE
+    group: dispatch
+    unit: kW
+    description: Mean |ac_active_power_kw − EMS p_setpoint_kw|
+    method: derived
+    formula: track_abs_err_sum / track_samples
+    summary: formula
+    color: "#2f6fed"
+  - code: tracking_rmse_kw
+    name: Setpoint tracking RMSE
+    group: dispatch
+    unit: kW
+    description: √(Σ(P − P_cmd)² ÷ n) - the range card pools all samples of the range
+    method: derived
+    formula: sqrt(track_sq_err_sum / track_samples)
+    summary: formula
+    color: "#d64545"
+  - code: tracking_within_tol_pct
+    name: Time within tracking tolerance
+    group: dispatch
+    unit: "%"
+    description: Samples with |P − P_cmd| ≤ tracking_tol_pct × rated_kw ÷ samples with a setpoint
+    method: derived
+    formula: track_within_samples / track_samples * 100
+    summary: formula
+    color: "#12a37f"
+  - code: ramp_max_kw_min
+    name: Max ramp rate achieved
+    group: dispatch
+    unit: kW/min
+    description: MAX |ΔP_ac| ÷ Δt between consecutive samples
+    method: aggregate
+    func: max
+    column: abs(delta(ac_active_power_kw)) / (interval_h * 60)
+    summary: max
+    color: "#e8830c"
+  - code: ramp_max_pct_rated_min
+    name: Max ramp rate (% of rated per min)
+    group: dispatch
+    unit: "%/min"
+    method: derived
+    formula: ramp_max_kw_min / rated_kw * 100
+    summary: max
+    color: "#e8830c"
+    dashed: true
+  - code: ramp_delivered_sum_kw
+    name: Σ |ΔP| when the command changed
+    group: dispatch
+    unit: kW
+    method: query
+    query: dispatch_tracking
+    summary: sum
+  - code: ramp_commanded_sum_kw
+    name: Σ |ΔP_cmd| when the command changed
+    group: dispatch
+    unit: kW
+    method: query
+    query: dispatch_tracking
+    summary: sum
+  - code: ramp_delivery_pct
+    name: Ramp delivered vs commanded
+    group: dispatch
+    unit: "%"
+    description: Σ|ΔP| ÷ Σ|ΔP_cmd| over the intervals where the EMS command changed (100 % = followed every step)
+    method: derived
+    formula: ramp_delivered_sum_kw / ramp_commanded_sum_kw * 100
+    summary: formula
+    color: "#7c5cdb"
+  - code: regulation_samples
+    name: FREQ_REG samples
+    group: dispatch
+    unit: samples
+    method: query
+    query: dispatch_tracking
+    default: 0
+    decimals: 0
+    summary: sum
+  - code: regulation_corr
+    name: Regulation accuracy (corr P vs AGC)
+    group: dispatch
+    description: >-
+      Correlation of delivered P with the EMS agc_signal on FREQ_REG samples (needs regulation_min_samples in the day);
+      the range card averages the daily values
+    method: query
+    query: dispatch_tracking
+    decimals: 3
+    summary: avg
+    color: "#0e8f8f"
+
+charts:
+  - title: Weighted conversion efficiency
+    type: line
+    kpis: [eff_weighted_pct, eff_weighted_discharge_pct, eff_weighted_charge_pct]
+  - title: Instantaneous efficiency - computed vs logged
+    type: line
+    kpis: [eff_instant_avg_pct, eff_logged_avg_pct]
+  - title: Conversion loss
+    type: bar
+    kpis: [conversion_loss_kwh]
+  - title: CEC / Euro weighted efficiency
+    type: line
+    kpis: [cec_eff_pct, euro_eff_pct]
+
+  - title: AC energy - counters vs Σ P·Δt
+    type: bar
+    kpis: [ac_export_kwh, ac_import_kwh]
+  - title: Export / import cross-check
+    type: line
+    kpis: [ac_export_kwh, ac_export_integrated_kwh, ac_import_kwh, ac_import_integrated_kwh]
+  - title: DC, reactive and apparent energy
+    type: bar
+    kpis: [dc_energy_kwh, reactive_energy_kvarh, apparent_energy_kvah]
+
+  - title: Power factor - logged vs computed
+    type: line
+    kpis: [pf_avg_abs, pf_computed_avg]
+  - title: THD - max and avg
+    type: line
+    kpis: [thd_v_max_pct, thd_v_avg_pct, thd_i_max_pct, thd_i_avg_pct]
+  - title: Time outside limits
+    type: bar
+    kpis: [pf_below_min_pct, thd_v_exceed_pct, thd_i_exceed_pct, freq_outside_band_pct]
+  - title: Voltage deviation
+    type: line
+    kpis: [volt_dev_max_abs_pct, volt_dev_avg_pct]
+
+  - title: Loading
+    type: line
+    kpis: [s_loading_avg_pct, utilization_factor_pct, p_loading_active_avg_pct, s_loading_peak_pct]
+  - title: Derating
+    type: line
+    kpis: [derating_avg_pct, derating_max_pct, derated_time_pct]
+  - title: Reactive headroom used
+    type: line
+    kpis: [q_headroom_used_avg_pct, q_headroom_used_max_pct]
+
+  - title: Phase unbalance - current
+    type: line
+    kpis: [i_unbalance_max_pct, i_unbalance_avg_pct]
+  - title: Phase unbalance - voltage (NEMA)
+    type: line
+    kpis: [v_unbalance_max_pct, v_unbalance_avg_pct]
+
+  - title: IGBT / heatsink temperature
+    type: line
+    kpis: [igbt_temp_max_c, igbt_temp_avg_c, heatsink_temp_max_c, heatsink_temp_avg_c]
+  - title: Thermal margin and cooling ΔT
+    type: line
+    kpis: [igbt_margin_min_c, cooling_dt_avg_c]
+  - title: Temperature rise per unit load
+    type: line
+    kpis: [temp_rise_per_load_c]
+
+  - title: Reactive power
+    type: line
+    kpis: [q_max_abs_kvar, q_avg_abs_kvar]
+  - title: Four-quadrant operating mix
+    type: bar
+    kpis: [quad_charge_qpos_pct, quad_charge_qneg_pct, quad_discharge_qpos_pct, quad_discharge_qneg_pct]
+
+  - title: Availability
+    type: line
+    kpis: [availability_pct]
+  - title: Trips and faults
+    type: bar
+    kpis: [trip_count, faults_ac, faults_dc, faults_thermal, faults_grid, faults_internal]
+  - title: MTBF / MTTR
+    type: line
+    kpis: [mttr_min, fault_mean_duration_min]
+
+  - title: Setpoint tracking error
+    type: line
+    kpis: [tracking_rmse_kw, tracking_mae_kw]
+  - title: Tracking within tolerance and ramp delivery
+    type: line
+    kpis: [tracking_within_tol_pct, ramp_delivery_pct]
+  - title: Regulation accuracy
+    type: line
+    kpis: [regulation_corr]
+
+# Rollup row above the groups: the ten-tile summary - efficiency, power quality, loading, thermal health, grid
+# performance (range values).
+tiles: [eff_weighted_pct, s_loading_avg_pct, pf_avg_abs, thd_v_max_pct, thd_i_max_pct, freq_outside_band_pct,
+        i_unbalance_max_pct, v_unbalance_max_pct, igbt_temp_max_c, igbt_margin_min_c, derating_avg_pct,
+        availability_pct, tracking_rmse_kw]

@@ -1,0 +1,21 @@
+<div class="card graph-card">
+  <div class="graph-card-header">
+    <h3>{{ spec.title }}</h3>
+    <div class="line-options" role="group" [attr.aria-label]="spec.title + ' states'">
+      @for (state of presentStates; track state) {
+        <label class="line-option" [class.on]="isSelected(state)" [style.--box]="colorOf(state)">
+          <input type="checkbox" class="box" [checked]="isSelected(state)" (change)="toggle(state)" />
+          {{ state }}
+          <span class="option-meta">{{ totalFor(state) }}</span>
+        </label>
+      }
+    </div>
+  </div>
+  <div class="graph-canvas-wrap timeline">
+    <span class="timeline-lane-label">{{ spec.laneLabel }}</span>
+    <canvas #canvas></canvas>
+    @if (segments.length === 0) {
+      <div class="graph-overlay">No readings in this range.</div>
+    }
+  </div>
+</div>

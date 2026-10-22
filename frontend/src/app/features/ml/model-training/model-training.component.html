@@ -1,0 +1,742 @@
+<div class="page-header">
+  <div>
+    <h2>SOH Model Training</h2>
+    <p class="subtitle">
+      Train XGBoost or LightGBM regressors on BMS and module features: a plant-agnostic <strong>base model</strong> on
+      all (or chosen) sites, or a <strong>battery system model</strong> for one plant — from scratch or fine-tuned from a
+      base model. Compare their scores and choose the defaults the SOH Estimator uses.
+    </p>
+  </div>
+  @if (activeRun; as active) {
+    <a class="active-pill" routerLink="/ml/soh-estimator" title="Open the SOH Estimator">
+      <span class="dot"></span> Base default run #{{ active.run_id }} · {{ modelLabel(active.model_type) }}
+      @if (plantDefaults.length) {
+        · {{ plantDefaults.length }} plant default{{ plantDefaults.length === 1 ? '' : 's' }}
+      }
+    </a>
+  } @else if (options) {
+    <a class="active-pill idle" routerLink="/ml/soh-estimator" title="No base default is set">
+      @if (latestRun; as latest) {
+        No base default · the latest base run #{{ latest.run_id }} is used
+      } @else {
+        No trained base model yet
+      }
+    </a>
+  }
+</div>
+
+@if (optionsError) {
+  <div class="card empty-state error">{{ optionsError }}</div>
+}
+
+@if (options) {
+  <!-- scope: base (plant-agnostic) or one battery system -->
+  <section class="card scope-card">
+    <div class="scope-head">
+      <h3 class="panel-title">Scope</h3>
+      <div class="model-switch scope-switch" role="radiogroup" aria-label="Scope">
+        <button type="button" class="model-option" role="radio" [attr.aria-checked]="scope === 'base'"
+          [class.on]="scope === 'base'" (click)="setScope('base')">Base model <span class="muted small">· plant-agnostic</span></button>
+        <button type="button" class="model-option" role="radio" [attr.aria-checked]="scope === 'system'"
+          [class.on]="scope === 'system'" (click)="setScope('system')">Battery system model <span class="muted small">· one plant</span></button>
+      </div>
+    </div>
+
+    @if (scope === 'base') {
+      <p class="muted small scope-help">
+        Trained on the BMS (and module) data of the chosen battery systems. Raw kWh are left out — they depend on plant
+        size — and energy throughput ÷ rated kWh is used instead. The test rows are the latest share of
+        <em>each</em> plant's timeline, and the scores are also shown per plant.
+      </p>
+      <div class="table-scroll">
+        <table class="data-table coverage-table">
+          <thead>
+            <tr>
+              <th class="check-col">Train on</th>
+              <th>Site</th>
+              <th>Battery system</th>
+              <th class="num">Rated</th>
+              <th class="num">BMS days</th>
+              <th>Module data</th>
+              <th class="num">SOH range</th>
+            </tr>
+          </thead>
+          <tbody>
+            @for (x of systems; track x.battery_system_id) {
+              <tr [class.dim]="!x.has_telemetry">
+                <td class="check-col">
+                  <input type="checkbox" class="box" [checked]="baseSystems.has(x.battery_system_id)" [disabled]="!x.has_telemetry"
+                    (change)="toggleBaseSystem(x.battery_system_id)" [attr.aria-label]="'Train on ' + x.system_name" />
+                </td>
+                <td>{{ x.site_name }}</td>
+                <td class="mono small">{{ x.system_name }}
+                  @if (holdoutId === x.battery_system_id) {
+                    <span class="hold-chip">held out</span>
+                  }
+                </td>
+                <td class="num">{{ x.rated_kwh === null ? '—' : (x.rated_kwh | number: '1.0-0') + ' kWh' }}</td>
+                <td class="num">{{ x.bms_days || '—' }}</td>
+                <td class="small">{{ x.module_days ? x.module_days + ' days · ' + x.module_from + ' → ' + x.module_to : '—' }}</td>
+                <td class="num">{{ x.soh_min === null ? '—' : (x.soh_min | number: '1.2-2') + '–' + (x.soh_max | number: '1.2-2') + ' %' }}</td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      </div>
+      <div class="form-grid three holdout-row">
+        <div class="field">
+          <label for="holdout">Hold out a plant for testing</label>
+          <select id="holdout" name="holdout" [(ngModel)]="holdoutId" (ngModelChange)="schedulePreview()">
+            <option [ngValue]="null">None</option>
+            @for (x of systems; track x.battery_system_id) {
+              @if (baseSystems.has(x.battery_system_id)) {
+                <option [ngValue]="x.battery_system_id">{{ x.site_name }} · {{ x.system_name }}</option>
+              }
+            }
+          </select>
+        </div>
+        <p class="muted small holdout-help">
+          The held-out plant is never trained on; the model is scored on all its rows afterwards — how a base model does
+          on a plant it has never seen.
+        </p>
+      </div>
+    } @else {
+      <div class="form-grid three">
+        <div class="field">
+          <label for="site">Site</label>
+          <select id="site" name="site" [(ngModel)]="siteId" (ngModelChange)="onSiteChange()">
+            @for (x of sites; track x.site_id) {
+              <option [ngValue]="x.site_id">{{ x.site_name }}</option>
+            }
+          </select>
+        </div>
+        <div class="field">
+          <label for="bsys">Battery System</label>
+          <select id="bsys" name="bsys" [(ngModel)]="systemId" (ngModelChange)="schedulePreview()">
+            @for (x of siteSystems; track x.battery_system_id) {
+              <option [ngValue]="x.battery_system_id">{{ x.system_name }}{{ x.has_telemetry ? '' : ' (no telemetry)' }}</option>
+            }
+          </select>
+        </div>
+        <div class="field selection-note">
+          @if (system; as x) {
+            <span class="muted small">
+              @if (x.has_telemetry) {
+                {{ x.bms_days }} BMS days · module data {{ x.module_days ? x.module_days + ' days (' + x.module_from + ' → ' + x.module_to + ')' : 'none' }}
+                · SOH {{ x.soh_min | number: '1.2-2' }}–{{ x.soh_max | number: '1.2-2' }} % · rated {{ x.rated_kwh | number: '1.0-0' }} kWh
+              } @else {
+                <span class="bad">No BMS telemetry yet.</span>
+              }
+            </span>
+          }
+        </div>
+      </div>
+      <div class="mode-row">
+        <label class="check-field">
+          <input type="radio" name="mode" [checked]="trainingMode === 'finetune'" (change)="setTrainingMode('finetune')" />
+          <span><strong>Fine-tune a base model</strong> with this plant's rows</span>
+        </label>
+        <select class="parent-select" name="parent" [(ngModel)]="parentRunId" (ngModelChange)="applyParent()"
+          [disabled]="trainingMode !== 'finetune' || !baseRuns.length" aria-label="Base run">
+          @if (!baseRuns.length) {
+            <option [ngValue]="null">No base run yet</option>
+          }
+          @for (b of baseRuns; track b.run_id) {
+            <option [ngValue]="b.run_id">#{{ b.run_id }}{{ b.run_name ? ' ' + b.run_name : '' }} · {{ modelLabel(b.model_type) }} · {{ b.grain }} · R² {{ fmt(b.r2, 'r2') }}{{ b.is_active ? ' · base default' : '' }}</option>
+          }
+        </select>
+        <label class="check-field">
+          <input type="radio" name="mode" [checked]="trainingMode === 'scratch'" (change)="setTrainingMode('scratch')" />
+          <span><strong>From scratch</strong> on this plant's rows only</span>
+        </label>
+      </div>
+      <p class="muted small scope-help">
+        @if (finetuning) {
+          Boosting continues from the base run's trees on this plant's rows, with the base run's algorithm, grain and
+          features; the parameters below set the rounds added. Best when the plant has little data.
+        } @else {
+          The model only sees this plant's rows (it may also use raw kWh). With ~30 days of data and SOH moving a few
+          tenths of a point, expect weak scores.
+        }
+      </p>
+    }
+  </section>
+
+  <form class="train-grid" (ngSubmit)="train()">
+    <!-- model + parameters -->
+    <section class="card panel">
+      <h3 class="panel-title">Model</h3>
+      <div class="model-switch" role="radiogroup" aria-label="Model">
+        @for (m of options.models; track m.key) {
+          <button type="button" class="model-option" role="radio" [attr.aria-checked]="modelType === m.key"
+            [class.on]="modelType === m.key" (click)="setModel(m.key)" [disabled]="finetuning && modelType !== m.key"
+            [title]="finetuning ? 'Fine-tuning keeps the base run\'s algorithm' : ''">
+            <span class="swatch" [style.background]="modelColor(m.key)"></span>{{ m.label }}
+          </button>
+        }
+      </div>
+      <div class="field">
+        <label for="runName">Run name</label>
+        <input id="runName" name="runName" type="text" maxlength="120" [(ngModel)]="runName" placeholder="optional, e.g. deeper trees" />
+      </div>
+
+      @if (finetuning) {
+        <p class="muted small">Fine-tuning base run #{{ parentRunId }}: boosting rounds below are added on top of its trees.</p>
+      }
+      <div class="panel-subhead">
+        <h4>Parameters</h4>
+        <button type="button" class="link-btn" (click)="resetParams()">Defaults</button>
+      </div>
+      <div class="param-grid">
+        @for (p of paramSpecs; track p.name) {
+          @if (p.type === 'bool') {
+            <label class="check-field" [title]="p.help ?? ''">
+              <input type="checkbox" class="box" [name]="'p_' + p.name" [(ngModel)]="params[p.name]" />
+              <span>{{ p.label }}</span>
+            </label>
+          } @else {
+            <div class="field" [title]="p.help ?? ''">
+              <label [for]="'p_' + p.name">{{ p.label }}</label>
+              <input [id]="'p_' + p.name" [name]="'p_' + p.name" type="number" [min]="p.min ?? null" [max]="p.max ?? null"
+                [step]="p.step ?? 'any'" [(ngModel)]="params[p.name]" />
+            </div>
+          }
+        }
+      </div>
+      @for (p of paramSpecs; track p.name) {
+        @if (p.help && (p.type !== 'bool' || params[p.name])) {
+          <p class="param-help"><strong>{{ p.label }}:</strong> {{ p.help }}</p>
+        }
+      }
+    </section>
+
+    <!-- data -->
+    <section class="card panel">
+      <h3 class="panel-title">Data</h3>
+      <div class="form-grid three">
+        <div class="field">
+          <label for="grain">One row per</label>
+          <select id="grain" name="grain" [(ngModel)]="grain" (ngModelChange)="schedulePreview()" [disabled]="finetuning">
+            @for (g of options.grains; track g.key) {
+              <option [ngValue]="g.key">{{ g.label }}</option>
+            }
+          </select>
+        </div>
+        <div class="field">
+          <label for="dateFrom">From</label>
+          <input id="dateFrom" name="dateFrom" type="date" [(ngModel)]="dateFrom" (change)="schedulePreview()" />
+        </div>
+        <div class="field">
+          <label for="dateTo">To</label>
+          <input id="dateTo" name="dateTo" type="date" [(ngModel)]="dateTo" (change)="schedulePreview()" />
+        </div>
+      </div>
+
+      <h4 class="group-head">Features</h4>
+      <div class="feature-groups">
+        @for (g of allowedGroups; track g.key) {
+          <label class="feature-group" [class.on]="groups.has(g.key)" [class.locked]="finetuning">
+            <input type="checkbox" class="box" [checked]="groups.has(g.key)" (change)="toggleGroup(g.key)" [disabled]="finetuning" />
+            <span class="fg-text">
+              <span class="fg-title">{{ g.label }}</span>
+              <span class="fg-meta" [title]="featureList(g)">{{ g.features.length }} feature{{ g.features.length === 1 ? '' : 's' }}</span>
+            </span>
+          </label>
+        }
+      </div>
+
+      <div class="toggles">
+        <label class="check-field">
+          <input type="checkbox" class="box" name="moduleRowsOnly" [(ngModel)]="moduleRowsOnly" (ngModelChange)="schedulePreview()" />
+          <span>Only rows with module data <span class="muted">(module days: {{ options.coverage.module_days.join(', ') || 'none' }})</span></span>
+        </label>
+        <label class="check-field">
+          <input type="checkbox" class="box" name="includeSnapshots" [(ngModel)]="includeSnapshots" (ngModelChange)="schedulePreview()" />
+          <span>Include snapshot / simulated rows <span class="muted">({{ options.coverage.snapshot_days.join(', ') || 'none' }})</span></span>
+        </label>
+      </div>
+
+      <h4 class="group-head">Feature selection</h4>
+      @if (finetuning) {
+        <p class="muted small">Fine-tuning uses exactly the base run's {{ parentRun?.features?.length }} features
+          ({{ parentRun ? parentRun.features.map(featureLabel, this).join(', ') : '' }}).</p>
+      } @else {
+      <div class="form-grid three">
+        <div class="field">
+          <label for="minImp">Keep features with ≥ (% of importance)</label>
+          <input id="minImp" name="minImp" type="number" min="0" max="99" step="0.5" [(ngModel)]="minImportancePct" />
+        </div>
+        <div class="field">
+          <label for="impMethod">Importance</label>
+          <select id="impMethod" name="impMethod" [(ngModel)]="importanceMethod" [disabled]="!minImportancePct">
+            @for (m of options.feature_selection.methods; track m.key) {
+              <option [ngValue]="m.key">{{ m.label }}</option>
+            }
+          </select>
+        </div>
+        <div class="field selection-note">
+          <span class="muted small">
+            @if (minImportancePct > 0) {
+              {{ candidateCount }} candidate features; a screening fit on the training rows keeps only those with at
+              least {{ minImportancePct }}% of the importance. {{ methodHelp }}.
+            } @else {
+              0 = use all {{ candidateCount }} features of the chosen groups.
+            }
+          </span>
+        </div>
+      </div>
+      }
+
+      <h4 class="group-head">Test rows</h4>
+      <div class="form-grid three">
+        <div class="field">
+          <label for="split">Split</label>
+          <select id="split" name="split" [(ngModel)]="splitMethod">
+            <option value="chronological">Chronological (latest rows of each plant)</option>
+            <option value="random">Random</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="testPct">Test share (%)</label>
+          <input id="testPct" name="testPct" type="number" min="5" max="50" step="5" [(ngModel)]="testPercent" />
+        </div>
+        <div class="field">
+          <label for="seed">Random seed</label>
+          <input id="seed" name="seed" type="number" step="1" [(ngModel)]="seed" />
+        </div>
+      </div>
+
+      <!-- what the selection gives -->
+      <div class="preview" [class.warn]="lowVariance || (preview && preview.rows < 10)">
+        @if (previewLoading && !preview) {
+          Counting rows…
+        } @else if (preview) {
+          @if (preview.rows === 0) {
+            No rows match this selection.
+          } @else {
+            <strong>{{ preview.rows }}</strong> rows ({{ preview.days }} day{{ preview.days === 1 ? '' : 's' }},
+            {{ plantTime(preview.from) }} → {{ plantTime(preview.to) }}) · about <strong>{{ testRows }}</strong> test rows ·
+            SOH {{ preview.target_min | number: '1.2-3' }}–{{ preview.target_max | number: '1.2-3' }} %
+            (std {{ preview.target_std | number: '1.3-4' }})
+            @if (preview.by_system && preview.by_system.length) {
+              <div class="by-system">
+                @for (b of preview.by_system; track b.system_id) {
+                  <span class="sys-chip" [title]="plantTime(b.from) + ' → ' + plantTime(b.to)">
+                    {{ shortSystem(b.system_id) }} <strong>{{ b.rows }}</strong> · SOH {{ b.target_min | number: '1.2-2' }}–{{ b.target_max | number: '1.2-2' }}
+                  </span>
+                }
+              </div>
+            }
+            @if (lowVariance) {
+              <div class="preview-warn">
+                SOH hardly varies in these rows, so R² and similar scores say little. Widen the dates or turn off
+                "Only rows with module data".
+              </div>
+            }
+          }
+        }
+      </div>
+
+      @if (trainError) {
+        <div class="form-error">{{ trainError }}</div>
+      }
+      <div class="form-actions">
+        @if (problem) {
+          <span class="problem">{{ problem }}</span>
+        }
+        <button type="submit" class="btn btn-primary train-btn" [disabled]="!!problem || training">
+          @if (training) {
+            <span class="spinner" aria-hidden="true"></span> Training…
+          } @else {
+            {{ finetuning ? 'Fine-tune' : 'Train' }} {{ modelLabel(modelType) }}
+            · {{ scope === 'base' ? 'base model' : (system?.system_name ?? 'battery system') }}
+          }
+        </button>
+      </div>
+    </section>
+  </form>
+}
+
+<!-- one run -->
+@if (run; as r) {
+  <section class="card run-card" id="run-result" [class.refreshing]="runLoading">
+    <div class="run-head">
+      <div>
+        <h3>
+          Run #{{ r.run_id }}{{ r.run_name ? ' · ' + r.run_name : '' }}
+          <span class="model-chip" [style.--c]="modelColor(r.model_type)">{{ modelLabel(r.model_type) }}</span>
+          <span class="scope-chip" [attr.data-scope]="r.scope">{{ scopeLabel(r) }}</span>
+          <span class="status-chip" [attr.data-status]="r.status">{{ r.status }}</span>
+          @if (r.is_active) {
+            <span class="status-chip" data-status="ACTIVE">{{ defaultLabel(r) }}</span>
+          }
+        </h3>
+        <p class="muted small">
+          @if (r.scope === 'system') {
+            {{ r.training_mode === 'finetune' ? 'Fine-tuned from base run #' + r.parent_run_id : 'Trained from scratch' }} on this plant's rows.
+          } @else {
+            Base model on {{ r.systems ? r.systems.length + ' plants (' + r.systems.map(shortSystem, this).join(', ') + ')' : 'every plant' }}
+            @if (r.holdout_system_id) {
+              · {{ shortSystem(r.holdout_system_id) }} held out
+            }
+          }
+        </p>
+        <p class="muted small">
+          {{ r.n_rows }} {{ r.grain }} rows · {{ r.n_train }} train / {{ r.n_test }} test ({{ r.split_method }}) ·
+          uses {{ featureCount(r) }} features · test {{ plantTime(r.test_from) }} → {{ plantTime(r.test_to) }} · {{ r.iterations }} rounds
+          @if (r.best_iteration) {
+            (best {{ r.best_iteration }})
+          }
+          · trained in {{ r.duration_ms }} ms
+        </p>
+      </div>
+      <div class="run-actions">
+        @if (r.status === 'COMPLETED' && !r.is_active) {
+          <button type="button" class="btn btn-primary" [disabled]="activating" (click)="useForPredictions(r)">
+            {{ r.scope === 'system' ? 'Make default for ' + shortSystem(r.battery_system_id) : 'Make base default' }}
+          </button>
+        } @else if (r.is_active) {
+          <button type="button" class="btn btn-secondary" [disabled]="activating" (click)="useForPredictions(r, true)"
+            [title]="r.scope === 'system' ? 'This plant then uses the base default' : 'The latest base run is then used'">Remove as default</button>
+        }
+        @if (r.status === 'COMPLETED') {
+          <a class="btn btn-secondary" routerLink="/ml/soh-estimator"
+            [queryParams]="r.battery_system_id ? { model: r.run_id, system: r.battery_system_id } : { model: r.run_id }">Try in SOH Estimator</a>
+        }
+        <button type="button" class="btn btn-secondary" (click)="reuse(r)">Train a variant</button>
+      </div>
+    </div>
+
+    @if (r.error_message) {
+      <div class="form-error">{{ r.error_message }}</div>
+    }
+    @for (w of r.warnings; track w) {
+      <div class="warn-line">{{ w }}</div>
+    }
+
+    @if (r.status === 'COMPLETED') {
+      <div class="metric-grid">
+        @for (m of options?.metrics ?? []; track m.key) {
+          <div class="metric-tile">
+            <span class="metric-label">{{ m.label }}</span>
+            <span class="metric-value">{{ fmt(r[m.key], m.key) }}</span>
+            <span class="metric-note">test · {{ m.better }} is better</span>
+          </div>
+        }
+        <div class="metric-tile train">
+          <span class="metric-label">Training rows</span>
+          <span class="metric-value small-value">R² {{ fmt(r.train_r2, 'r2') }}</span>
+          <span class="metric-note">RMSE {{ fmt(r.train_rmse, 'rmse') }} · MAE {{ fmt(r.train_mae, 'mae') }}</span>
+        </div>
+      </div>
+
+      @if (bySystem(r).length > 1 || r.holdout_metrics) {
+        <div class="plant-scores">
+          <h4>Scores per plant</h4>
+          <p class="muted small">Test rows of each plant (the latest {{ r.test_fraction * 100 | number: '1.0-0' }}% of its own
+            timeline). A high overall R² with low per-plant R² means the model mostly tells plants apart rather than following
+            each plant's SOH.</p>
+          <table class="data-table plant-table">
+            <thead>
+              <tr>
+                <th>Plant</th>
+                <th class="num">Test rows</th>
+                <th class="num">R²</th>
+                <th class="num">RMSE</th>
+                <th class="num">MAE</th>
+                <th class="num">Mean SOH actual / predicted</th>
+              </tr>
+            </thead>
+            <tbody>
+              @for (p of bySystem(r); track p.id) {
+                <tr>
+                  <td>{{ p.name }}</td>
+                  <td class="num">{{ p.scores.n }}</td>
+                  <td class="num">{{ fmt(p.scores.r2, 'r2') }}</td>
+                  <td class="num">{{ fmt(p.scores.rmse, 'rmse') }}</td>
+                  <td class="num">{{ fmt(p.scores.mae, 'mae') }}</td>
+                  <td class="num">{{ p.scores.actual_mean | number: '1.3-3' }} / {{ p.scores.predicted_mean | number: '1.3-3' }}</td>
+                </tr>
+              }
+              @if (r.holdout_metrics; as h) {
+                <tr class="holdout-row-scores">
+                  <td>{{ h.site_name }} · {{ h.system_name }} <span class="hold-chip">held out · never trained on</span></td>
+                  <td class="num">{{ h.n }}</td>
+                  <td class="num">{{ fmt(h.r2, 'r2') }}</td>
+                  <td class="num">{{ fmt(h.rmse, 'rmse') }}</td>
+                  <td class="num">{{ fmt(h.mae, 'mae') }}</td>
+                  <td class="num">{{ h.actual_mean | number: '1.3-3' }} / {{ h.predicted_mean | number: '1.3-3' }}</td>
+                </tr>
+              }
+            </tbody>
+          </table>
+        </div>
+      }
+
+      <div class="chart-grid">
+        <div class="chart-box wide">
+          <div class="chart-head">
+            <h4>Error while training</h4>
+            <div class="seg">
+              <button type="button" [class.on]="curveMetric === 'rmse'" (click)="setCurveMetric('rmse')">RMSE</button>
+              <button type="button" [class.on]="curveMetric === 'mae'" (click)="setCurveMetric('mae')">MAE</button>
+            </div>
+          </div>
+          <p class="muted small">Error on the training and test rows after each boosting round (log scale). Test error rising
+            while training error falls = over-fitting.</p>
+          @if (curveChart) {
+            <app-chart-canvas [config]="curveChart" [height]="240" />
+          }
+        </div>
+        <div class="chart-box wide">
+          <h4>Predicted vs actual SOH</h4>
+          <p class="muted small">Actual SOH over time with the model's predictions for the training and test rows.</p>
+          @if (predictionChart) {
+            <app-chart-canvas [config]="predictionChart" [height]="260" />
+          }
+        </div>
+        @if (selectionChart) {
+          <div class="chart-box">
+            <h4>Feature selection · {{ featureCount(r) }} kept</h4>
+            <p class="muted small">
+              Screening importance ({{ r.importance_method }}) of every candidate on the training rows; features with at
+              least {{ r.min_importance_pct }}% were kept (dark), the rest dropped (light). The model and the SOH Estimator
+              use only the kept ones.
+            </p>
+            <app-chart-canvas [config]="selectionChart" [height]="selectionHeight" />
+          </div>
+        }
+        <div class="chart-box">
+          <h4>Feature importance</h4>
+          <p class="muted small">Share of the total gain each kept feature brought to the final model's trees.</p>
+          @if (importanceChart) {
+            <app-chart-canvas [config]="importanceChart" [height]="importanceHeight" />
+          }
+        </div>
+        <div class="chart-box">
+          <h4>Settings</h4>
+          <dl class="settings">
+            <dt>Parameters</dt>
+            <dd class="mono small">{{ paramSummary(r) }}</dd>
+            <dt>Feature groups</dt>
+            <dd>{{ groupLabels(r) }}</dd>
+            <dt>Features used</dt>
+            <dd>
+              {{ featureCount(r) }}
+              @if (r.min_importance_pct > 0) {
+                (≥ {{ r.min_importance_pct }}% {{ r.importance_method }} importance)
+              }
+              <span class="muted small"> · {{ r.features.map(featureLabel, this).join(', ') }}</span>
+            </dd>
+            <dt>Data</dt>
+            <dd>
+              {{ r.date_from || 'start' }} → {{ r.date_to || 'end' }} · {{ r.grain }}
+              · {{ r.module_rows_only ? 'module rows only' : 'all rows' }}
+              · {{ r.include_snapshots ? 'with' : 'without' }} snapshot rows
+            </dd>
+            <dt>SOH in the data</dt>
+            <dd>{{ r.target_min | number: '1.2-3' }}–{{ r.target_max | number: '1.2-3' }} % (std {{ r.target_std | number: '1.3-4' }})</dd>
+            <dt>Seed</dt>
+            <dd>{{ r.random_state }}</dd>
+          </dl>
+        </div>
+      </div>
+    }
+  </section>
+}
+
+<!-- history + comparison -->
+<section class="card history-card">
+  <div class="history-head">
+    <div>
+      <h3>Model runs</h3>
+      <p class="muted small">battery_ml.model_run · tick runs to compare them</p>
+    </div>
+    <div class="history-filters">
+      <select class="filter-select" [(ngModel)]="scopeFilter" aria-label="Scope">
+        <option [ngValue]="''">All scopes</option>
+        <option [ngValue]="'base'">Base models</option>
+        @for (id of runSystems; track id) {
+          <option [ngValue]="id">{{ systemName(id) }}</option>
+        }
+      </select>
+      <select class="filter-select" [(ngModel)]="historyFilter" aria-label="Model">
+        <option value="">All models</option>
+        @for (m of options?.models ?? []; track m.key) {
+          <option [value]="m.key">{{ m.label }}</option>
+        }
+      </select>
+    </div>
+  </div>
+
+  @if (runsLoading) {
+    <div class="empty-state">Loading…</div>
+  } @else if (runsError) {
+    <div class="empty-state error">{{ runsError }}</div>
+  } @else if (!filteredRuns.length) {
+    <div class="empty-state">No runs yet. Choose a model and press Train.</div>
+  } @else {
+    <div class="table-scroll">
+      <table class="data-table runs-table">
+        <thead>
+          <tr>
+            <th class="check-col">Compare</th>
+            <th>#</th>
+            <th>Name</th>
+            <th>Scope</th>
+            <th>Model</th>
+            <th>Data</th>
+            <th class="num">Train / test</th>
+            <th class="num">R²</th>
+            <th class="num">RMSE</th>
+            <th class="num">MAE</th>
+            <th class="num">MAPE</th>
+            <th class="num">Max error</th>
+            <th>Trained</th>
+            <th>Status</th>
+            <th class="actions-col"></th>
+          </tr>
+        </thead>
+        <tbody>
+          @for (x of filteredRuns; track x.run_id) {
+            <tr (click)="open(x)" [class.selected]="run?.run_id === x.run_id">
+              <td class="check-col" (click)="$event.stopPropagation()">
+                <input type="checkbox" class="box" [checked]="compareIds.has(x.run_id)" [disabled]="x.status !== 'COMPLETED'"
+                  (change)="toggleCompare(x, $event)" [attr.aria-label]="'Compare run ' + x.run_id" />
+              </td>
+              <td class="mono">{{ x.run_id }}</td>
+              <td>{{ x.run_name || '—' }}</td>
+              <td class="small">
+                <span class="scope-chip" [attr.data-scope]="x.scope">{{ x.scope === 'system' ? shortSystem(x.battery_system_id) : 'Base' }}</span>
+                @if (x.training_mode === 'finetune') {
+                  <span class="muted"> ← #{{ x.parent_run_id }}</span>
+                }
+                @if (x.holdout_system_id) {
+                  <span class="muted"> · holds out {{ shortSystem(x.holdout_system_id) }}</span>
+                }
+              </td>
+              <td><span class="model-chip" [style.--c]="modelColor(x.model_type)">{{ modelLabel(x.model_type) }}</span>
+                @if (x.params['linear_tree']) {
+                  <span class="muted small"> linear</span>
+                }
+              </td>
+              <td class="small">{{ x.grain }} · {{ featureCount(x) }} features · {{ x.split_method }}
+                @if (x.module_rows_only) {
+                  · module rows
+                }
+              </td>
+              <td class="num">{{ x.n_train ?? '—' }} / {{ x.n_test ?? '—' }}</td>
+              <td class="num">{{ fmt(x.r2, 'r2') }}</td>
+              <td class="num">{{ fmt(x.rmse, 'rmse') }}</td>
+              <td class="num">{{ fmt(x.mae, 'mae') }}</td>
+              <td class="num">{{ fmt(x.mape_pct, 'mape_pct') }}</td>
+              <td class="num">{{ fmt(x.max_error, 'max_error') }}</td>
+              <td class="small nowrap">{{ plantTime(x.started_at) }}</td>
+              <td>
+                <span class="status-chip" [attr.data-status]="x.status" [title]="x.error_message ?? ''">{{ x.status }}</span>
+                @if (x.is_active) {
+                  <span class="status-chip" data-status="ACTIVE">{{ x.scope === 'system' ? 'plant default' : 'base default' }}</span>
+                }
+              </td>
+              <td class="actions-col">
+                <button class="btn btn-danger btn-icon" title="Delete run" (click)="confirmDelete(x, $event)">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+                    <path d="M5 7h14M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2m2 0-1 13a1 1 0 0 1-1 1H8a1 1 0 0 1-1-1L6 7"
+                      stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
+                  </svg>
+                </button>
+              </td>
+            </tr>
+          }
+        </tbody>
+      </table>
+    </div>
+  }
+
+  @if (compared.length >= 2) {
+    <div class="compare">
+      <div class="history-head">
+        <h3>Comparing {{ compared.length }} runs</h3>
+        <div class="seg">
+          @for (m of options?.metrics ?? []; track m.key) {
+            <button type="button" [class.on]="compareMetric === m.key" (click)="setCompareMetric(m.key)">{{ m.label }}</button>
+          }
+        </div>
+      </div>
+      <div class="html-legend">
+        @for (m of options?.models ?? []; track m.key) {
+          <span><i [style.background]="modelColor(m.key)"></i>{{ m.label }}</span>
+        }
+      </div>
+      @if (compareChart) {
+        <app-chart-canvas [config]="compareChart" [height]="240" />
+      }
+      <div class="table-scroll">
+        <table class="data-table compare-table">
+          <thead>
+            <tr>
+              <th></th>
+              @for (x of compared; track x.run_id) {
+                <th class="num">#{{ x.run_id }} <span class="muted">{{ modelLabel(x.model_type) }}</span></th>
+              }
+            </tr>
+          </thead>
+          <tbody>
+            @for (m of options?.metrics ?? []; track m.key) {
+              <tr>
+                <td>{{ m.label }} <span class="muted small">({{ m.better }} is better)</span></td>
+                @for (x of compared; track x.run_id) {
+                  <td class="num" [class.best]="x[m.key] !== null && x[m.key] === best(m.key)">{{ fmt(x[m.key], m.key) }}</td>
+                }
+              </tr>
+            }
+            <tr>
+              <td>Train R² / RMSE</td>
+              @for (x of compared; track x.run_id) {
+                <td class="num">{{ fmt(x.train_r2, 'r2') }} / {{ fmt(x.train_rmse, 'rmse') }}</td>
+              }
+            </tr>
+            <tr>
+              <td>Rows (train / test)</td>
+              @for (x of compared; track x.run_id) {
+                <td class="num">{{ x.n_train }} / {{ x.n_test }}</td>
+              }
+            </tr>
+            <tr>
+              <td>Features used</td>
+              @for (x of compared; track x.run_id) {
+                <td class="num">{{ featureCount(x) }}</td>
+              }
+            </tr>
+            <tr>
+              <td>Data</td>
+              @for (x of compared; track x.run_id) {
+                <td class="num small">{{ x.grain }} · {{ x.split_method }} · {{ x.feature_groups.length }} groups</td>
+              }
+            </tr>
+            <tr>
+              <td>Parameters</td>
+              @for (x of compared; track x.run_id) {
+                <td class="small params-cell">{{ paramSummary(x) }}</td>
+              }
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="muted small">Best value per score is highlighted. Runs are only comparable on the same data and test rows.</p>
+    </div>
+  }
+</section>
+
+@if (confirmDeleteId !== null) {
+  <div class="modal-backdrop" (click)="confirmDeleteId = null">
+    <div class="modal" (click)="$event.stopPropagation()">
+      <h3>Delete run #{{ confirmDeleteId }}?</h3>
+      <p>Its scores, training curve and model file are removed. This can't be undone.</p>
+      <div class="modal-actions">
+        <button class="btn btn-secondary" (click)="confirmDeleteId = null">Cancel</button>
+        <button class="btn btn-danger-solid" (click)="deleteConfirmed()">Delete</button>
+      </div>
+    </div>
+  </div>
+}

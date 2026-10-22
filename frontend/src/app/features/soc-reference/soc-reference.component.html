@@ -1,0 +1,150 @@
+<div class="page-header">
+  <div>
+    <h2>SOC Reference</h2>
+    <p class="subtitle">Independent ground-truth SOC of a battery system at given moments — rest-OCV, full-charge and lab anchors — the label the
+      BMS and coulomb-counted SOC estimates are scored against (v_soc_features)</p>
+  </div>
+</div>
+
+<div class="card">
+  <div class="toolbar telemetry-filters">
+    <div class="field">
+      <label for="fSys">Battery system</label>
+      <select id="fSys" [(ngModel)]="filterSystem" (ngModelChange)="fetchRows()">
+        <option [ngValue]="null">All systems</option>
+        @for (s of referencedSystems; track s.system_id) {
+          <option [ngValue]="s.system_id">{{ s.system_name }} · {{ s.site_name }} ({{ s.points }})</option>
+        }
+      </select>
+    </div>
+    <div class="field">
+      <label for="fMethod">Method</label>
+      <select id="fMethod" [(ngModel)]="filterMethod">
+        <option value="">All methods</option>
+        @for (m of options?.methods ?? []; track m) {
+          <option [value]="m">{{ methodLabels[m] }}</option>
+        }
+      </select>
+    </div>
+    <div class="field">
+      <label for="fStart">From</label>
+      <input id="fStart" type="date" [(ngModel)]="filterStart" />
+    </div>
+    <div class="field">
+      <label for="fEnd">To</label>
+      <input id="fEnd" type="date" [(ngModel)]="filterEnd" />
+    </div>
+    <div class="telemetry-filter-actions">
+      <button type="button" class="btn btn-primary" (click)="fetchRows()">Apply</button>
+      <button type="button" class="btn btn-secondary" (click)="clearFilters()">Clear</button>
+    </div>
+  </div>
+
+  @if (loading) {
+    <div class="empty-state">Loading SOC reference…</div>
+  } @else if (error) {
+    <div class="empty-state error">{{ error }}</div>
+  } @else if (!rows.length) {
+    <div class="empty-state">No reference points match the current filters.</div>
+  } @else {
+    <div class="cal-summary">
+      <div class="cal-stat">
+        <span class="cal-stat-value">{{ stats.points }}</span>
+        <span class="cal-stat-label">Reference points · {{ stats.withTelemetry }} with telemetry at that moment</span>
+      </div>
+      @for (m of stats.byMethod; track m.m) {
+        <div class="cal-stat">
+          <span class="cal-stat-value">{{ m.n }}</span>
+          <span class="cal-stat-label">{{ m.label }}</span>
+        </div>
+      }
+      <div class="cal-stat">
+        <span class="cal-stat-value">{{ num(stats.maeBms) }} pp</span>
+        <span class="cal-stat-label">Mean |error| of the BMS SOC</span>
+      </div>
+      <div class="cal-stat">
+        <span class="cal-stat-value">{{ num(stats.maeCoulomb) }}{{ stats.maeCoulomb === null ? '' : ' pp' }}</span>
+        <span class="cal-stat-label">Mean |error| of the coulomb SOC{{ stats.maeCoulomb === null ? ' (no coulomb SOC in the telemetry yet)' : '' }}</span>
+      </div>
+    </div>
+
+    <div class="chart-wrap">
+      @if (chartCfg) {
+        <app-chart-canvas [config]="chartCfg" [height]="280" />
+      }
+    </div>
+    <p class="upload-note" style="padding: 0 20px 6px">Filled dots: the reference (true) SOC by method. Hollow markers: what the BMS and the
+      coulomb counter reported at the same moment — the gap is the estimator's error (pp = percentage points, reference − estimate).</p>
+
+    <div class="table-bar">
+      <span class="table-bar-info">{{ rows.length }} points · times in plant time</span>
+    </div>
+    <app-telemetry-table [columns]="columns" [rows]="tableRows" [actions]="true"
+      (editRow)="openEdit($event)" (deleteRow)="confirmDelete($event)" />
+  }
+</div>
+
+<!-- edit -->
+@if (edit; as e) {
+  <div class="modal-backdrop" (click)="edit = null">
+    <div class="modal edit-modal" (click)="$event.stopPropagation()">
+      <h3>Edit SOC reference · {{ e.row.system_name }} · {{ plantTime(e.row.ts) }}</h3>
+      <p class="derived-note">The system and time identify the point and can't be changed.</p>
+      <div class="form-grid">
+        <div class="field">
+          <label for="eSoc">True SOC (%)</label>
+          <input id="eSoc" type="number" min="0" max="100" step="0.01" [(ngModel)]="e.values.soc_true_pct" />
+        </div>
+        <div class="field">
+          <label for="eMethod">Method</label>
+          <select id="eMethod" [(ngModel)]="e.values.method">
+            <option [ngValue]="null">—</option>
+            @for (m of options?.methods ?? []; track m) {
+              <option [ngValue]="m">{{ methodLabels[m] }}</option>
+            }
+          </select>
+        </div>
+        <div class="field" style="grid-column: 1 / -1">
+          <label for="eNote">Note</label>
+          <input id="eNote" type="text" maxlength="500" [(ngModel)]="e.values.note" />
+        </div>
+      </div>
+      @if (editErrors; as er) {
+        <p class="derived-note">At this moment the BMS read {{ num(e.row.bms_soc_pct) }} % (error {{ num(er.bms) }} pp)
+          @if (e.row.coulomb_soc_pct !== null) { and the coulomb counter {{ num(e.row.coulomb_soc_pct) }} % (error {{ num(er.coulomb) }} pp) }.</p>
+      }
+      @if (editError) {
+        <div class="form-error">{{ editError }}</div>
+      }
+      <div class="modal-actions">
+        @if (editProblem) {
+          <span class="problem-note">{{ editProblem }}</span>
+        }
+        <button class="btn btn-secondary" (click)="edit = null" [disabled]="saving">Cancel</button>
+        <button class="btn btn-primary" (click)="save()" [disabled]="saving || !!editProblem">{{ saving ? 'Saving…' : 'Save changes' }}</button>
+      </div>
+    </div>
+  </div>
+}
+
+<!-- delete -->
+@if (toDelete; as d) {
+  <div class="modal-backdrop" (click)="toDelete = null">
+    <div class="modal" (click)="$event.stopPropagation()">
+      <h3>Delete SOC reference point?</h3>
+      <p>
+        This permanently deletes the <strong>{{ d.system_name }}</strong> reference of <strong>{{ plantTime(d.ts) }}</strong>
+        ({{ num(d.soc_true_pct) }} % SOC{{ d.method ? ', ' + methodLabels[d.method] : '' }}). SOC estimators lose this label. This cannot be undone.
+      </p>
+      @if (deleteError) {
+        <div class="form-error">{{ deleteError }}</div>
+      }
+      <div class="modal-actions">
+        <button class="btn btn-secondary" (click)="toDelete = null" [disabled]="deleting">{{ deleteError ? 'Close' : 'Cancel' }}</button>
+        @if (!deleteError) {
+          <button class="btn btn-danger-solid" (click)="deleteConfirmed()" [disabled]="deleting">{{ deleting ? 'Deleting…' : 'Delete' }}</button>
+        }
+      </div>
+    </div>
+  </div>
+}

@@ -1,0 +1,217 @@
+<div class="page-header">
+  <div>
+    <h2>Weak Module Model</h2>
+    <p class="subtitle">
+      Detect weak battery modules with Isolation Forest and DBSCAN on per-module and per-pack module voltage /
+      temperature deviations. Results open on <a routerLink="/ml/weak-modules">Weak Modules</a>.
+    </p>
+  </div>
+</div>
+
+@if (optionsError) {
+  <div class="card empty-state error">{{ optionsError }}</div>
+}
+
+@if (options) {
+  <div class="train-grid">
+    <!-- data -->
+    <section class="card panel">
+      <h3 class="panel-title">Data</h3>
+      <div class="field">
+        <label for="system">Battery system (with module telemetry)</label>
+        <select id="system" [ngModel]="systemId" (ngModelChange)="selectSystem($event)">
+          @for (s of options.systems; track s.battery_system_id) {
+            <option [ngValue]="s.battery_system_id">
+              {{ s.site_name }} · {{ s.system_name }} · {{ s.modules }} modules / {{ s.packs }} packs · {{ s.days }} days
+            </option>
+          }
+        </select>
+      </div>
+      <div class="form-grid three">
+        <div class="field">
+          <label for="from">From</label>
+          <input id="from" type="date" [(ngModel)]="dateFrom" (ngModelChange)="schedulePreview()"
+            [min]="system?.date_from ?? ''" [max]="system?.date_to ?? ''" />
+        </div>
+        <div class="field">
+          <label for="to">To</label>
+          <input id="to" type="date" [(ngModel)]="dateTo" (ngModelChange)="schedulePreview()"
+            [min]="system?.date_from ?? ''" [max]="system?.date_to ?? ''" />
+        </div>
+        <div class="field">
+          <label for="grain">One row per</label>
+          <select id="grain" [(ngModel)]="grain" (ngModelChange)="schedulePreview()">
+            @for (g of options.grains; track g.key) {
+              <option [value]="g.key">{{ g.label }}</option>
+            }
+          </select>
+        </div>
+      </div>
+
+      <h4 class="group-head">Features <span class="muted small">({{ featureCount }} selected)</span></h4>
+      <div class="feature-groups">
+        @for (g of options.feature_groups; track g.key) {
+          <label class="feature-group" [class.on]="groups.has(g.key)">
+            <input type="checkbox" [checked]="groups.has(g.key)" (change)="toggleGroup(g.key)" />
+            <span class="fg-text">
+              <span class="fg-title">{{ g.label }}</span>
+              <span class="fg-meta">
+                @for (f of g.features; track f.key; let last = $last) {
+                  {{ f.label }}{{ last ? '' : ' · ' }}
+                }
+              </span>
+            </span>
+          </label>
+        }
+      </div>
+
+      @if (preview; as p) {
+        <div class="preview" [class.warn]="p.rows < 20">
+          @if (p.rows) {
+            <strong>{{ p.rows | number }}</strong> rows · {{ p.modules }} modules in {{ p.packs }} packs ·
+            {{ p.days }} days · {{ p.rows_per_module }} rows per module
+          } @else {
+            No module telemetry in this window.
+          }
+        </div>
+      } @else if (previewing) {
+        <div class="preview">Counting rows…</div>
+      }
+    </section>
+
+    <!-- models -->
+    <section class="card panel">
+      <div class="panel-subhead" style="margin-top: 0">
+        <h3 class="panel-title" style="margin: 0">Models</h3>
+        <button type="button" class="link-btn" (click)="resetParams()">Defaults</button>
+      </div>
+      @for (m of options.models; track m.key) {
+        <h4 class="group-head">
+          <span class="swatch" [style.background]="m.key === 'isolation_forest' ? '#6d5bd0' : '#2aa198'"></span>
+          {{ m.label }}
+        </h4>
+        <div class="param-grid">
+          @for (p of m.params; track p.name) {
+            <div class="field" [title]="p.help || ''">
+              <label [for]="m.key + p.name">{{ p.label }}</label>
+              @if (p.type === 'choice') {
+                @if (m.key === 'dbscan') {
+                  <select [id]="m.key + p.name" [(ngModel)]="dbParams[p.name]">
+                    @for (c of p.choices ?? []; track c) {
+                      <option [value]="c">{{ c }}</option>
+                    }
+                  </select>
+                }
+              } @else if (m.key === 'isolation_forest') {
+                <input [id]="m.key + p.name" type="number" [(ngModel)]="ifParams[p.name]" [min]="p.min ?? null"
+                  [max]="p.max ?? null" [step]="p.step ?? 'any'" />
+              } @else {
+                <input [id]="m.key + p.name" type="number" [(ngModel)]="dbParams[p.name]" [min]="p.min ?? null"
+                  [max]="p.max ?? null" [step]="p.step ?? 'any'" />
+              }
+            </div>
+          }
+        </div>
+        @if (m.key === 'dbscan' && autoMinSamples && !dbParams['min_samples']) {
+          <p class="param-help">Auto min rows = {{ autoMinSamples }} (2 × {{ preview?.rows_per_module }} rows per module):
+            a module that deviates every day can't form a cluster of its own, so it shows up as noise.</p>
+        }
+      }
+
+      <h4 class="group-head">Verdict</h4>
+      <div class="param-grid">
+        <div class="field">
+          <label for="share">Flag a module when this share of its rows is anomalous</label>
+          <input id="share" type="number" min="0.05" max="1" step="0.05" [(ngModel)]="minShare" />
+        </div>
+        <div class="field">
+          <label for="name">Run name</label>
+          <input id="name" type="text" [(ngModel)]="runName" placeholder="optional" maxlength="120" />
+        </div>
+      </div>
+      <p class="param-help">
+        <strong>Weak</strong> = flagged by both models · <strong>Suspect</strong> = flagged by one. Modules are ranked by
+        a combined score (IF share, DBSCAN noise share and mean IF score).
+      </p>
+
+      <div class="form-actions">
+        @if (runError) {
+          <span class="problem">{{ runError }}</span>
+        }
+        <button type="button" class="btn btn-primary train-btn" [disabled]="!canRun" (click)="run()">
+          @if (running) {
+            <span class="spinner" aria-hidden="true"></span> Detecting…
+          } @else {
+            Run detection
+          }
+        </button>
+      </div>
+    </section>
+  </div>
+}
+
+<!-- history -->
+<div class="card history-card">
+  <div class="history-head">
+    <div>
+      <h3>Runs</h3>
+      <p class="muted small">battery_ml.anomaly_run · click a completed run to open its results</p>
+    </div>
+  </div>
+  @if (runsLoading && !runs.length) {
+    <div class="empty-state">Loading…</div>
+  } @else if (!runs.length) {
+    <div class="empty-state">No runs yet.</div>
+  } @else {
+    <div class="table-scroll">
+      <table class="data-table runs-table">
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>Name</th>
+            <th>Kind</th>
+            <th>System</th>
+            <th>Window</th>
+            <th>Grain</th>
+            <th class="num">Rows</th>
+            <th class="num">Weak</th>
+            <th class="num">Suspect</th>
+            <th class="num">IF / DBSCAN rows</th>
+            <th>Status</th>
+            <th class="num">Time</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          @for (r of runs; track r.run_id) {
+            <tr (click)="open(r)">
+              <td class="mono">{{ r.run_id }}</td>
+              <td>{{ r.run_name || '—' }}</td>
+              <td>
+                {{ r.run_kind === 'train' ? 'Train' : 'Score' }}
+                @if (r.parent_run_id) {
+                  <span class="muted small">(model #{{ r.parent_run_id }})</span>
+                }
+              </td>
+              <td>{{ r.system_name }}</td>
+              <td class="nowrap">{{ window(r) }}</td>
+              <td>{{ r.grain }}</td>
+              <td class="num">{{ r.n_rows ?? '—' }}</td>
+              <td class="num"><strong>{{ r.n_weak ?? '—' }}</strong></td>
+              <td class="num">{{ r.n_suspect ?? '—' }}</td>
+              <td class="num">{{ r.if_anomalies ?? '—' }} / {{ r.db_noise ?? '—' }}</td>
+              <td>
+                <span class="status-chip" [attr.data-status]="r.status">{{ r.status }}</span>
+                @if (r.error_message) {
+                  <div class="problem small">{{ r.error_message }}</div>
+                }
+              </td>
+              <td class="num">{{ duration(r.duration_ms) }}</td>
+              <td><button type="button" class="link-btn" (click)="deleteRun(r, $event)">Delete</button></td>
+            </tr>
+          }
+        </tbody>
+      </table>
+    </div>
+  }
+</div>

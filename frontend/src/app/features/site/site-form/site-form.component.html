@@ -1,0 +1,179 @@
+<div class="page-header">
+  <div>
+    <a class="back-link" routerLink="/sites">← Back to sites</a>
+    <h2>{{ isEditMode ? 'Edit Site' : 'Add Site' }}</h2>
+  </div>
+</div>
+
+<div class="card">
+  @if (loading) {
+    <div class="empty-state">Loading…</div>
+  } @else {
+    <form [formGroup]="form" (ngSubmit)="submit()">
+      @if (error) {
+        <div class="form-error">{{ error }}</div>
+      }
+
+      <div class="form-grid">
+        <div class="field">
+          <label for="site_code">Site Code *</label>
+          <input id="site_code" type="text" formControlName="site_code" />
+          @if (form.get('site_code')?.invalid && form.get('site_code')?.touched) {
+            <span class="field-error">Site code is required.</span>
+          }
+        </div>
+
+        <div class="field">
+          <label for="site_name">Site Name *</label>
+          <input id="site_name" type="text" formControlName="site_name" />
+          @if (form.get('site_name')?.invalid && form.get('site_name')?.touched) {
+            <span class="field-error">Site name is required.</span>
+          }
+        </div>
+
+        <div class="field">
+          <label for="latitude">Latitude</label>
+          <input id="latitude" type="number" step="0.0000001" formControlName="latitude" />
+        </div>
+
+        <div class="field">
+          <label for="longitude">Longitude</label>
+          <input id="longitude" type="number" step="0.0000001" formControlName="longitude" />
+        </div>
+
+        <div class="field span-2">
+          <label for="address">Address</label>
+          <textarea id="address" rows="2" formControlName="address"></textarea>
+        </div>
+
+        <div class="field">
+          <label for="state">State</label>
+          <select id="state" formControlName="state">
+            <option value="">Select a state</option>
+            @for (stateName of states; track stateName) {
+              <option [value]="stateName">{{ stateName }}</option>
+            }
+          </select>
+        </div>
+
+        <div class="field">
+          <label for="grid_operator">Grid Operator</label>
+          <input id="grid_operator" type="text" formControlName="grid_operator" />
+        </div>
+
+        <div class="field">
+          <label for="timezone">Timezone {{ isEditMode ? '' : '*' }}</label>
+          <select id="timezone" formControlName="timezone">
+            @for (tz of timezones; track tz) {
+              <option [value]="tz">{{ tz }}</option>
+            }
+          </select>
+          @if (isEditMode) {
+            <span class="field-hint">Timezone can't be changed after a site is created.</span>
+          } @else if (form.get('timezone')?.invalid && form.get('timezone')?.touched) {
+            <span class="field-error">Timezone is required.</span>
+          }
+        </div>
+
+        <div class="field">
+          <label for="rated_power_mw">Rated Power (MW)</label>
+          <input id="rated_power_mw" type="number" step="0.01" min="0.01" formControlName="rated_power_mw" />
+          @if (form.get('rated_power_mw')?.hasError('greaterThanZero') && form.get('rated_power_mw')?.touched) {
+            <span class="field-error">Rated power must be greater than 0.</span>
+          }
+        </div>
+
+        <div class="field">
+          <label for="rated_energy_mwh">Rated Energy (MWh)</label>
+          <input id="rated_energy_mwh" type="number" step="0.01" min="0.01" formControlName="rated_energy_mwh" />
+          @if (form.get('rated_energy_mwh')?.hasError('greaterThanZero') && form.get('rated_energy_mwh')?.touched) {
+            <span class="field-error">Rated energy must be greater than 0.</span>
+          }
+        </div>
+
+        <div class="field">
+          <label for="commission_date">Commission Date</label>
+          <input id="commission_date" type="date" formControlName="commission_date" />
+        </div>
+
+        <div class="field">
+          <label for="grid_voltage_kv">Grid Voltage (kV)</label>
+          <input id="grid_voltage_kv" type="number" formControlName="grid_voltage_kv" min="0" step="0.1" />
+        </div>
+      </div>
+
+      <div class="owners-section" formArrayName="owners">
+        <div class="owners-head">
+          <div>
+            <h3>Owners</h3>
+            <p class="field-hint">Tenants that own this site, with their share. Optional.</p>
+          </div>
+          <button type="button" class="btn btn-secondary" (click)="addOwner()" [disabled]="owners.length >= tenants.length">
+            + Add owner
+          </button>
+        </div>
+
+        @if (tenants.length === 0) {
+          <p class="field-hint">No tenants yet. <a routerLink="/tenants/new">Add a tenant</a> to record who owns this site.</p>
+        } @else if (owners.length === 0) {
+          <p class="owners-empty">No owners recorded.</p>
+        } @else {
+          <div class="owners-table">
+            <div class="owners-row owners-row-head">
+              <span>Tenant *</span>
+              <span>Ownership %</span>
+              <span>Primary</span>
+              <span></span>
+            </div>
+            @for (row of owners.controls; track row; let i = $index) {
+              <div class="owners-row" [formGroupName]="i">
+                <select formControlName="tenant_id" [attr.aria-label]="'Owner ' + (i + 1) + ' tenant'">
+                  <option [ngValue]="null" disabled>Select a tenant</option>
+                  @for (t of tenantOptions(i); track t.tenant_id) {
+                    <option [ngValue]="t.tenant_id">{{ t.name }}{{ t.status !== 'active' ? ' (' + t.status + ')' : '' }}</option>
+                  }
+                </select>
+                <input type="number" step="0.01" min="0.01" max="100" formControlName="ownership_pct" placeholder="—"
+                  [attr.aria-label]="'Owner ' + (i + 1) + ' ownership percent'" />
+                <label class="primary-choice">
+                  <input type="radio" name="primaryOwner" [checked]="row.value.is_primary_owner" (change)="setPrimary(i)" />
+                  <span>Primary</span>
+                </label>
+                <button type="button" class="btn btn-danger btn-icon" title="Remove owner" (click)="removeOwner(i)">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
+                    <path d="M6 6l12 12M18 6 6 18" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+                  </svg>
+                </button>
+                @if (row.get('tenant_id')?.invalid && row.get('tenant_id')?.touched) {
+                  <span class="field-error owners-row-error">Choose a tenant.</span>
+                }
+                @if (row.get('ownership_pct')?.invalid) {
+                  <span class="field-error owners-row-error">Ownership must be between 0.01 and 100%.</span>
+                }
+              </div>
+            }
+            <div class="owners-total" [class.over]="ownershipTotal > 100">
+              Total: {{ ownershipTotal | number: '1.0-2' }}%
+              @if (ownershipTotal < 100 && ownershipTotal > 0) {
+                <span class="owners-total-note">({{ 100 - ownershipTotal | number: '1.0-2' }}% unassigned)</span>
+              }
+            </div>
+          </div>
+        }
+        @if (owners.hasError('over100')) {
+          <span class="field-error">Ownership cannot add up to more than 100%.</span>
+        }
+        @if (owners.hasError('duplicateTenant')) {
+          <span class="field-error">Each tenant can be listed only once.</span>
+        }
+      </div>
+
+      <div class="form-actions">
+        <a class="btn btn-secondary" routerLink="/sites">Cancel</a>
+        <button type="submit" class="btn btn-primary" [disabled]="saving">
+          {{ saving ? 'Saving…' : 'Save Site' }}
+        </button>
+      </div>
+    </form>
+  }
+</div>

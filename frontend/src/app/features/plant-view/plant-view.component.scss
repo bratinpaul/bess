@@ -1,0 +1,330 @@
+/* Cutaway stage, after "BESS Container — 3D Cutaway": dark scene, glass panels, mono labels. */
+:host {
+  --cut-panel: #121a20;
+  --cut-panel2: #0e151a;
+  --cut-ink: #e9eef0;
+  --cut-ink2: #aebac1;
+  --cut-muted: #73838c;
+  --cut-line: #223038;
+  --cut-accent: #2fb3ad;
+}
+
+.plant-detail-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  margin-top: 14px;
+  text-decoration: none;
+}
+
+.plant-canvas-wrap.cutaway {
+  height: 680px;
+  overflow: hidden;
+  background: #0b1014;
+}
+
+.cut-labels {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+:host ::ng-deep .cut-lab {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  padding: 3px 8px;
+  font-family: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 11px;
+  font-weight: 500;
+  color: #fff;
+  white-space: nowrap;
+  border: 1px solid var(--cut-line);
+  border-radius: 6px;
+  background: rgba(12, 18, 22, 0.84);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+
+  &.minor {
+    padding: 1px 6px;
+    font-size: 10px;
+    color: var(--cut-ink2);
+    background: rgba(12, 18, 22, 0.62);
+  }
+
+  .d {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    margin-right: 6px;
+    border-radius: 50%;
+    vertical-align: -1px;
+  }
+}
+
+:host ::ng-deep .cut-dim {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  padding: 1px 5px;
+  font-family: 'IBM Plex Mono', ui-monospace, Consolas, monospace;
+  font-size: 10px;
+  color: var(--cut-accent);
+  border-radius: 4px;
+  background: rgba(12, 18, 22, 0.6);
+}
+
+.cut-loading {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: var(--cut-ink2);
+}
+
+.cut-panel {
+  position: absolute;
+  top: 14px;
+  left: 14px;
+  width: 248px;
+  max-height: calc(100% - 28px);
+  overflow: auto;
+  padding: 14px 12px 12px;
+  color: var(--cut-ink);
+  border: 1px solid var(--cut-line);
+  border-radius: 14px;
+  background: linear-gradient(180deg, var(--cut-panel), var(--cut-panel2));
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+}
+
+.cut-title {
+  font-size: 15px;
+  font-weight: 800;
+  letter-spacing: -0.01em;
+}
+
+.cut-sub {
+  margin: 2px 0 6px;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--cut-muted);
+}
+
+.cut-sec {
+  margin: 12px 2px 6px;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--cut-muted);
+}
+
+.cut-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  padding: 6px 8px;
+  font: inherit;
+  text-align: left;
+  border: none;
+  border-radius: 8px;
+  background: none;
+  cursor: pointer;
+
+  &:hover {
+    background: #1a242b;
+  }
+
+  .sw {
+    flex: none;
+    width: 13px;
+    height: 13px;
+    border: 2px solid currentColor;
+    border-radius: 4px;
+  }
+
+  &.on .sw {
+    background: currentColor;
+  }
+
+  .nm {
+    font-size: 12.5px;
+    font-weight: 500;
+    color: var(--cut-ink2);
+  }
+
+  &.on .nm {
+    color: var(--cut-ink);
+  }
+
+  .ct {
+    max-width: 90px;
+    margin-left: auto;
+    overflow: hidden;
+    font-family: 'IBM Plex Mono', ui-monospace, Consolas, monospace;
+    font-size: 10.5px;
+    color: var(--cut-muted);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+}
+
+.cut-ctl {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin: 6px 2px 8px;
+  font-size: 12px;
+  color: var(--cut-ink2);
+
+  span {
+    width: 52px;
+  }
+
+  input {
+    flex: 1;
+    accent-color: var(--cut-accent);
+  }
+}
+
+.cut-seg {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin: 8px 2px;
+  font-size: 12px;
+  color: var(--cut-ink2);
+
+  span {
+    width: 58px;
+  }
+
+  button {
+    flex: 1;
+    padding: 5px 0;
+    font: inherit;
+    font-size: 11.5px;
+    font-weight: 600;
+    color: var(--cut-ink2);
+    border: 1px solid var(--cut-line);
+    border-radius: 7px;
+    background: #1a242b;
+    cursor: pointer;
+
+    &.on {
+      color: #0b1014;
+      border-color: var(--cut-accent);
+      background: var(--cut-accent);
+    }
+
+    &:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+    }
+  }
+}
+
+.soh-legend {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 2px 8px;
+  font-family: 'IBM Plex Mono', ui-monospace, Consolas, monospace;
+  font-size: 10px;
+  color: var(--cut-muted);
+
+  .ramp {
+    flex: 1;
+    height: 8px;
+    border-radius: 4px;
+    background: linear-gradient(90deg, #c7dcff, #1d4ed8);
+  }
+}
+
+.cut-btn {
+  display: flex;
+  justify-content: center;
+  width: 100%;
+  margin-top: 6px;
+  padding: 7px 10px;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--cut-ink2);
+  border: 1px solid var(--cut-line);
+  border-radius: 8px;
+  background: #1a242b;
+  cursor: pointer;
+
+  &:hover {
+    color: var(--cut-ink);
+    border-color: var(--cut-accent);
+  }
+}
+
+.cut-badge {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  padding: 8px 12px;
+  font-family: 'IBM Plex Mono', ui-monospace, Consolas, monospace;
+  font-size: 11px;
+  line-height: 1.5;
+  text-align: right;
+  color: var(--cut-ink2);
+  border: 1px solid var(--cut-line);
+  border-radius: 10px;
+  background: var(--cut-panel);
+  pointer-events: none;
+
+  b {
+    color: var(--cut-accent);
+  }
+}
+
+.cut-notes {
+  position: absolute;
+  left: 50%;
+  bottom: 12px;
+  max-width: 70%;
+  padding: 6px 14px;
+  font-size: 11.5px;
+  color: #f5d48a;
+  border: 1px solid #5a4a22;
+  border-radius: 10px;
+  background: rgba(30, 24, 10, 0.85);
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+
+.cut-detail {
+  top: 92px;
+  max-height: calc(100% - 106px);
+  overflow: auto;
+
+  h3 {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 14px;
+  }
+
+  .dot {
+    flex: none;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+  }
+}
+
+@media (max-width: 900px) {
+  .cut-panel {
+    width: calc(100% - 28px);
+    max-height: 46%;
+  }
+
+  .cut-badge {
+    display: none;
+  }
+}

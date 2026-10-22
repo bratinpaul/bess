@@ -1,0 +1,288 @@
+<div class="page-header">
+  <div>
+    <h2>Arbitrage Optimizer</h2>
+    <p class="subtitle">
+      Dispatch-optimization MILP (energy arbitrage + frequency-regulation capacity − degradation − grid cost) run day by day
+      on the day-ahead forecast, executed against what actually cleared and scored against a perfect-foresight oracle.
+      Inspect the days in the <a routerLink="/ml/arbitrage">Dispatch Viewer</a>.
+    </p>
+  </div>
+</div>
+
+@if (optionsError) {
+  <div class="card empty-state error">{{ optionsError }}</div>
+}
+
+@if (options && form) {
+  <div class="arb-grid">
+    <section class="card arb-panel">
+      <h3 class="arb-panel-title">Study</h3>
+      <div class="form-grid two">
+        <div class="field">
+          <label for="sys">Battery system</label>
+          <select id="sys" [(ngModel)]="form.system_id">
+            @for (s of options.systems; track s.system_id) {
+              <option [ngValue]="s.system_id">{{ s.system_name }} · {{ s.site_name }}</option>
+            }
+          </select>
+        </div>
+        <div class="field">
+          <label for="name">Name (optional)</label>
+          <input id="name" type="text" maxlength="120" [(ngModel)]="form.study_name" placeholder="e.g. August deterministic" />
+        </div>
+        <div class="field">
+          <label for="from">From</label>
+          <input id="from" type="date" [(ngModel)]="form.date_from" [min]="system?.first_day ?? ''" [max]="system?.last_day ?? ''" />
+        </div>
+        <div class="field">
+          <label for="to">To</label>
+          <input id="to" type="date" [(ngModel)]="form.date_to" [min]="system?.first_day ?? ''" [max]="system?.last_day ?? ''" />
+        </div>
+      </div>
+      @if (system) {
+        <p class="arb-note">Price node {{ system.node_code }} · day-ahead forecasts {{ system.first_day }} → {{ system.last_day }}</p>
+      }
+
+      <h4 class="arb-group">Uncertainty</h4>
+      <div class="arb-choices">
+        @for (mode of options.modes; track mode.key) {
+          <label class="arb-choice" [class.on]="form.mode === mode.key">
+            <input type="radio" name="mode" [value]="mode.key" [(ngModel)]="form.mode" />
+            <span>{{ mode.label }}</span>
+          </label>
+        }
+      </div>
+      @if (form.mode === 'stochastic') {
+        <div class="form-grid three">
+          <div class="field" title="Here-and-now block length; the rest of the day is scenario recourse">
+            <label for="rs">Re-solve every (h)</label>
+            <input id="rs" type="number" min="1" max="24" [(ngModel)]="form.resolve_every_h" />
+          </div>
+          <div class="field" title="0 = maximize expected profit; 1 = maximize CVaR only">
+            <label for="lam">CVaR weight λ</label>
+            <input id="lam" type="number" min="0" max="1" step="0.1" [(ngModel)]="form.cvar_lambda" />
+          </div>
+          <div class="field">
+            <label for="alpha">CVaR α</label>
+            <input id="alpha" type="number" min="0.5" max="0.99" step="0.05" [(ngModel)]="form.cvar_alpha" />
+          </div>
+        </div>
+      }
+
+      <h4 class="arb-group">Model</h4>
+      <div class="form-grid two">
+        <div class="field">
+          <label for="eff">Efficiency</label>
+          <select id="eff" [(ngModel)]="form.efficiency">
+            <option value="scalar">Scalar √rte_ac each way</option>
+            <option value="curve">Efficiency curve (power-fraction segments)</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="deg">Degradation cost</label>
+          <select id="deg" [(ngModel)]="form.degradation">
+            <option value="scalar">Scalar $/MWh throughput</option>
+            <option value="curve">DoD curve (deeper daily range costs more)</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="term">Terminal SOC</label>
+          <select id="term" [(ngModel)]="form.terminal">
+            <option value="next_open">Planned next-day opening SOC</option>
+            <option value="start">Day's starting SOC</option>
+            <option value="value">Fixed value</option>
+            <option value="free">Free</option>
+          </select>
+        </div>
+        @if (form.terminal === 'value') {
+          <div class="field">
+            <label for="tsoc">Terminal SOC (%)</label>
+            <input id="tsoc" type="number" min="0" max="100" [(ngModel)]="form.terminal_soc" />
+          </div>
+        }
+        <label class="arb-check">
+          <input type="checkbox" [(ngModel)]="form.as_stacking" />
+          Stack FREQ_REG capacity (revenue + power / energy headroom, standing awards)
+        </label>
+        @if (form.as_stacking) {
+          <div class="field" title="Blank = the decision state's AS reservation (reserved_mw_as)">
+            <label for="ascap">AS capacity cap (MW)</label>
+            <input id="ascap" type="number" min="0" step="0.05" [(ngModel)]="asCapText" placeholder="decision state" />
+          </div>
+        }
+        <div class="field">
+          <label for="tl">Solver time limit per solve (s)</label>
+          <input id="tl" type="number" min="1" max="300" [(ngModel)]="form.time_limit" />
+        </div>
+      </div>
+
+      <div class="arb-actions">
+        <span class="arb-note">Solver: {{ options.solver }} · a month takes ~10 s deterministic, ~40 s stochastic</span>
+        <button type="button" class="btn btn-primary" [disabled]="running" (click)="run()">
+          {{ running ? 'Solving…' : 'Run study' }}
+        </button>
+      </div>
+      @if (runError) {
+        <div class="form-error">{{ runError }}</div>
+      }
+    </section>
+
+    <section class="card arb-panel">
+      <div class="arb-panel-head">
+        <h3 class="arb-panel-title">Studies</h3>
+        <button type="button" class="btn btn-secondary" (click)="loadStudies()">Refresh</button>
+      </div>
+      @if (studies.length === 0) {
+        <div class="empty-state">No studies yet - run one.</div>
+      } @else {
+        <div class="table-scroll">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Study</th>
+                <th>Range</th>
+                <th class="num">Net + AS</th>
+                <th class="num">Capture</th>
+                <th>Status</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              @for (s of studies; track s.study_id) {
+                <tr [class.arb-selected]="selected?.study_id === s.study_id">
+                  <td class="mono">{{ s.study_id }}</td>
+                  <td>
+                    <button type="button" class="link-btn" (click)="open(s.study_id)">{{ s.study_name || (s.mode + ' study') }}</button>
+                    <div class="arb-sub">{{ s.mode }} · eff {{ s.params.efficiency }} · deg {{ s.params.degradation }}{{ s.params.as_stacking ? ' · AS' : '' }}</div>
+                  </td>
+                  <td class="mono">{{ s.date_from }} → {{ s.date_to }}</td>
+                  <td class="num mono">{{ num($any(s.metrics?.['total_usd']), 0) }}</td>
+                  <td class="num mono">{{ num($any(s.metrics?.['capture_pct']), 1) }}%</td>
+                  <td><span class="arb-status" [attr.data-status]="s.status">{{ s.status }}</span></td>
+                  <td class="arb-row-actions">
+                    @if (s.status === 'COMPLETED') {
+                      <a class="btn btn-secondary btn-sm" routerLink="/ml/arbitrage" [queryParams]="{ study: s.study_id }">View</a>
+                    }
+                    <button type="button" class="btn btn-danger btn-icon" title="Delete" (click)="confirmDelete(s)">✕</button>
+                  </td>
+                </tr>
+              }
+            </tbody>
+          </table>
+        </div>
+      }
+    </section>
+  </div>
+
+  @if (selected) {
+    <section class="card arb-result">
+      <div class="arb-panel-head">
+        <h3 class="arb-panel-title">
+          Study #{{ selected.study_id }} {{ selected.study_name ? '· ' + selected.study_name : '' }}
+          <span class="arb-sub">{{ selected.mode }} · {{ selected.date_from }} → {{ selected.date_to }} · {{ m('days') }} days ·
+            {{ num(selected.duration_ms! / 1000, 1) }} s</span>
+        </h3>
+        @if (selected.status === 'COMPLETED') {
+          <a class="btn btn-primary" routerLink="/ml/arbitrage" [queryParams]="{ study: selected.study_id }">Open in Dispatch Viewer</a>
+        }
+      </div>
+
+      @if (selected.status === 'FAILED') {
+        <div class="form-error">{{ selected.error_message }}</div>
+      } @else {
+        <div class="metric-grid arb-metrics">
+          <div class="metric-card"><div class="metric-body"><span class="metric-label">Realized energy net</span><span class="metric-value">{{ num(m('net_usd'), 0) }}<span class="metric-unit">USD</span></span><span class="metric-sub">gross {{ num(m('gross_usd'), 0) }} − degr. {{ num(m('degr_usd'), 0) }} − grid {{ num(m('grid_usd'), 0) }}</span></div></div>
+          <div class="metric-card"><div class="metric-body"><span class="metric-label">AS capacity revenue</span><span class="metric-value">{{ num(m('as_usd'), 0) }}<span class="metric-unit">USD</span></span><span class="metric-sub">total {{ num(m('total_usd'), 0) }} USD</span></div></div>
+          <div class="metric-card"><div class="metric-body"><span class="metric-label">Perfect-foresight oracle</span><span class="metric-value">{{ num(m('oracle_total_usd'), 0) }}<span class="metric-unit">USD</span></span><span class="metric-sub">capture {{ num(m('capture_pct'), 1) }} %</span></div></div>
+          <div class="metric-card"><div class="metric-body"><span class="metric-label">Forecast value</span><span class="metric-value">{{ num(m('forecast_value_usd'), 0) }}<span class="metric-unit">USD</span></span><span class="metric-sub">oracle − policy: what better forecasts are worth</span></div></div>
+          <div class="metric-card"><div class="metric-body"><span class="metric-label">Optimizer optimism</span><span class="metric-value">{{ num(m('optimism_gap_usd'), 0) }}<span class="metric-unit">USD</span></span><span class="metric-sub">expected {{ num(m('expected_usd'), 0) }} − realized</span></div></div>
+          <div class="metric-card"><div class="metric-body"><span class="metric-label">Pack realized (same days)</span><span class="metric-value">{{ num(m('pack_net_usd'), 0) }}<span class="metric-unit">USD</span></span><span class="metric-sub">policy energy net {{ num(m('policy_net_on_pack_days_usd'), 0) }} on {{ m('pack_days') }} days</span></div></div>
+          <div class="metric-card"><div class="metric-body"><span class="metric-label">Cycles</span><span class="metric-value">{{ num(m('cycles'), 2) }}</span><span class="metric-sub">{{ num(m('discharge_mwh'), 1) }} MWh discharged · RTE {{ num(m('rte_pct'), 1) }} % (SOC-corrected)</span></div></div>
+          <div class="metric-card"><div class="metric-body"><span class="metric-label">Net per MWh discharged</span><span class="metric-value">{{ num(m('usd_per_mwh_discharged'), 2) }}<span class="metric-unit">USD/MWh</span></span><span class="metric-sub">solver {{ num(m('solve_seconds'), 1) }} s in total</span></div></div>
+        </div>
+
+        <div class="arb-two">
+          <div>
+            <h4 class="arb-group">Sanity checks</h4>
+            <ul class="arb-checks">
+              @for (c of checkEntries; track c.key) {
+                <li [class.fail]="!c.ok"><span class="arb-tick">{{ c.ok ? '✓' : '✕' }}</span>{{ c.label }}</li>
+              }
+            </ul>
+            <p class="arb-note">
+              Throughput with degradation cost = 0: {{ num(detail('deg_zero_throughput_kwh'), 0) }} kWh vs {{ num(detail('deg_base_throughput_kwh'), 0) }} kWh
+              (first day) · implied RTE {{ num(detail('implied_rte_pct'), 1) }} %
+              @if (packRef?.logged) {
+                · pack P&L logged {{ num(packRef!.logged!['net'], 2) }} vs model {{ num(packRef!.model!['net'], 2) }} USD
+              }
+            </p>
+            @for (w of selected.warnings ?? []; track $index) {
+              <div class="arb-warning">⚠ {{ w }}</div>
+            }
+          </div>
+          @if (dayChart) {
+            <div class="chart-card arb-chart">
+              <h3>Profit per day - policy vs oracle vs pack</h3>
+              <app-chart-canvas [config]="dayChart" [height]="250" />
+            </div>
+          }
+        </div>
+
+        <h4 class="arb-group">Days</h4>
+        <div class="table-scroll arb-days">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Day</th>
+                <th>Run</th>
+                <th>Status</th>
+                <th class="num">SOC start → end</th>
+                <th class="num">Expected</th>
+                <th class="num">Energy net</th>
+                <th class="num">AS</th>
+                <th class="num">Oracle</th>
+                <th class="num">Pack</th>
+                <th class="num">Cycles</th>
+                <th class="num">Solve (s)</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              @for (d of selected.days ?? []; track d.kpi_date) {
+                <tr>
+                  <td class="mono">{{ d.kpi_date }}</td>
+                  <td class="mono">#{{ d.run_id }}</td>
+                  <td>{{ d.solver_status }}</td>
+                  <td class="num mono">{{ num(d.soc_start_pct, 1) }} → {{ num(d.soc_end_pct, 1) }}</td>
+                  <td class="num mono">{{ num(d.expected_profit_usd, 2) }}</td>
+                  <td class="num mono">{{ num(d.net_usd, 2) }}</td>
+                  <td class="num mono">{{ num($any(d.checks['as_usd']), 2) }}</td>
+                  <td class="num mono">{{ num(d.oracle_net_usd, 2) }}</td>
+                  <td class="num mono">{{ num(d.pack_net_usd, 2) }}</td>
+                  <td class="num mono">{{ num(d.cycles, 3) }}</td>
+                  <td class="num mono">{{ num(d.solve_seconds, 2) }}</td>
+                  <td><a class="btn btn-secondary btn-sm" routerLink="/ml/arbitrage" [queryParams]="{ study: selected.study_id, day: d.kpi_date }">View</a></td>
+                </tr>
+              }
+            </tbody>
+          </table>
+        </div>
+      }
+    </section>
+  }
+}
+
+@if (toDelete; as d) {
+  <div class="modal-backdrop" (click)="toDelete = null">
+    <div class="modal" (click)="$event.stopPropagation()">
+      <h3>Delete study #{{ d.study_id }}?</h3>
+      <p>This deletes the study, its daily optimization runs (with their decision states and schedules) and its backtest.
+        The data pack's own runs are not touched. This cannot be undone.</p>
+      <div class="modal-actions">
+        <button class="btn btn-secondary" (click)="toDelete = null">Cancel</button>
+        <button class="btn btn-danger-solid" (click)="deleteConfirmed()">Delete</button>
+      </div>
+    </div>
+  </div>
+}

@@ -1,0 +1,174 @@
+<div class="page-header">
+  <div>
+    <h2>Snapshot Simulator</h2>
+    <p class="subtitle">
+      Writes one plant snapshot file (bess_snapshot.json format) per 5 minutes into the realtime inbox, with values
+      sampled from the telemetry already stored — the realtime batch then loads them
+    </p>
+  </div>
+</div>
+
+@if (infoError) {
+  <div class="card empty-state error">{{ infoError }}</div>
+}
+
+<div class="sim-layout">
+  <!-- inputs -->
+  <form class="card sim-form" (ngSubmit)="generate()">
+    <h3 class="form-section-title">Simulated period</h3>
+    <div class="form-grid">
+      <div class="field">
+        <label for="simStart">Start *</label>
+        <input id="simStart" name="start" type="datetime-local" step="300" [(ngModel)]="start" required />
+        <span class="field-hint">Plant local time; rounded up to 5 minutes.</span>
+      </div>
+      <div class="field">
+        <label for="simEnd">End *</label>
+        <input id="simEnd" name="end" type="datetime-local" step="300" [(ngModel)]="end" required />
+        <span class="field-hint">Included; rounded down to 5 minutes.</span>
+      </div>
+    </div>
+    <div class="quick-range">
+      <span class="muted small">Length from the start:</span>
+      <button type="button" class="chip-btn" (click)="setDuration(60)">1 hour</button>
+      <button type="button" class="chip-btn" (click)="setDuration(360)">6 hours</button>
+      <button type="button" class="chip-btn" (click)="setDuration(1440)">1 day</button>
+      <button type="button" class="chip-btn" (click)="setDuration(10080)">7 days</button>
+    </div>
+
+    <button type="button" class="link-btn advanced-toggle" (click)="showAdvanced = !showAdvanced">
+      {{ showAdvanced ? 'Hide' : 'Show' }} sampling options
+    </button>
+    @if (showAdvanced) {
+      <div class="form-grid three">
+        <div class="field">
+          <label for="simFrom">Sample from day</label>
+          <input id="simFrom" name="sourceFrom" type="date" [(ngModel)]="sourceFrom"
+            [min]="info?.source_days?.[0] ?? ''" [max]="info?.source_days?.[(info?.source_days?.length ?? 1) - 1] ?? ''" />
+        </div>
+        <div class="field">
+          <label for="simTo">Sample to day</label>
+          <input id="simTo" name="sourceTo" type="date" [(ngModel)]="sourceTo"
+            [min]="info?.source_days?.[0] ?? ''" [max]="info?.source_days?.[(info?.source_days?.length ?? 1) - 1] ?? ''" />
+        </div>
+        <div class="field">
+          <label for="simSeed">Random seed</label>
+          <input id="simSeed" name="seed" type="number" step="1" [(ngModel)]="seed" placeholder="random" />
+        </div>
+      </div>
+      <p class="field-hint">
+        Each simulated day replays one historical day, picked at random from the sample period
+        ({{ sampleDays }} day{{ sampleDays === 1 ? '' : 's' }}). The same seed and period give the same days again.
+      </p>
+      <label class="check-label">
+        <input type="checkbox" class="box" name="overwrite" [(ngModel)]="overwrite" />
+        Replace files of the same name still waiting in the inbox
+      </label>
+    }
+
+    <div class="sim-summary" [class.bad]="problem">
+      @if (problem) {
+        {{ problem }}
+      } @else {
+        <strong>{{ fileCount }}</strong> file{{ fileCount === 1 ? '' : 's' }}:
+        <span class="mono">{{ firstName }}</span>
+        @if (fileCount > 1) {
+          … <span class="mono">{{ lastName }}</span>
+        }
+      }
+    </div>
+
+    <div class="form-actions">
+      <button data-perm="batch:execute" type="submit" class="btn btn-primary" [disabled]="!!problem || running || !info">
+        @if (running) {
+          <span class="spinner" aria-hidden="true"></span> Generating…
+        } @else {
+          Generate files
+        }
+      </button>
+    </div>
+  </form>
+
+  <!-- where the data comes from -->
+  <aside class="card sim-info">
+    <h3>Sampled from</h3>
+    @if (info) {
+      <dl>
+        <dt>Battery system</dt>
+        <dd>{{ info.system_name }}</dd>
+        <dt>Historical days</dt>
+        <dd>
+          {{ info.source_days.length }} complete day{{ info.source_days.length === 1 ? '' : 's' }}
+          @if (info.source_days.length) {
+            <span class="muted">({{ info.source_days[0] }} → {{ info.source_days[info.source_days.length - 1] }})</span>
+          }
+        </dd>
+        <dt>Module data</dt>
+        <dd>
+          {{ info.module_days.length }} day{{ info.module_days.length === 1 ? '' : 's' }}
+          <span class="muted">— used for the same time of day</span>
+        </dd>
+        <dt>Latest telemetry</dt>
+        <dd>{{ plantTime(info.latest_telemetry) }}</dd>
+        <dt>Writes to</dt>
+        <dd class="mono small">{{ info.inbox }}</dd>
+      </dl>
+      <p class="muted small">
+        Every 5-minute file takes BMS, module, PCS, EMS and HVAC values, the running dispatch and the active alarms
+        from the same moment of the source day. Cumulative energy counters keep rising from the last stored value.
+      </p>
+    } @else if (!infoError) {
+      <p class="muted">Loading…</p>
+    }
+  </aside>
+</div>
+
+@if (error) {
+  <div class="card result-card failed"><strong>No files written.</strong> {{ error }}</div>
+}
+
+@if (result; as r) {
+  <div class="card result-card">
+    <div class="result-head">
+      <h3>{{ r.written }} file{{ r.written === 1 ? '' : 's' }} written</h3>
+      <a class="btn btn-secondary" routerLink="/batch/realtime">Open Realtime Load</a>
+    </div>
+    <p>
+      {{ plantTime(r.start) }} → {{ plantTime(r.end) }} · {{ r.intervals }} interval{{ r.intervals === 1 ? '' : 's' }}
+      @if (r.first_file) {
+        · <span class="mono">{{ r.first_file }}</span>
+        @if (r.last_file !== r.first_file) {
+          … <span class="mono">{{ r.last_file }}</span>
+        }
+      }
+      @if (r.skipped_existing) {
+        · <strong>{{ r.skipped_existing }}</strong> skipped (already waiting in the inbox)
+      }
+    </p>
+    <p class="muted small">
+      The realtime batch loads them within a minute, oldest first (up to 500 files per run), or press
+      "Run batch now" on the Realtime Load page.
+    </p>
+    @for (w of r.warnings; track w) {
+      <div class="warn-line">{{ w }}</div>
+    }
+    @if (dayMap.length) {
+      <table class="data-table day-table">
+        <thead>
+          <tr>
+            <th>Simulated day</th>
+            <th>Replays historical day</th>
+          </tr>
+        </thead>
+        <tbody>
+          @for (row of dayMap; track row.day) {
+            <tr>
+              <td>{{ row.day }}</td>
+              <td>{{ row.source }}</td>
+            </tr>
+          }
+        </tbody>
+      </table>
+    }
+  </div>
+}

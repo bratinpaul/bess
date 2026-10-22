@@ -1,0 +1,87 @@
+.kpi-high {
+  border-left: 4px solid #b2471b;
+}
+
+.kpi-watch {
+  border-left: 4px solid #eda100;
+}
+
+.click-row {
+  cursor: pointer;
+
+  &:hover td {
+    background: rgba(99, 248, 186, 0.08);
+  }
+}
+
+.risk-dot {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  margin-right: 6px;
+  border-radius: 50%;
+  background: #1baf7a;
+
+  &[data-risk='watch'] {
+    background: #eda100;
+  }
+
+  &[data-risk='high'] {
+    background: #b2471b;
+  }
+}
+
+.fleet-table {
+  margin-top: 10px;
+}
+
+.whatif {
+  align-items: center;
+
+  label {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+}
+
+.num-input {
+  width: 78px;
+  padding: 4px 6px;
+  font: inherit;
+  font-size: 13px;
+  text-align: right;
+}
+
+.btn-sm {
+  padding: 4px 12px;
+  font-size: 13px;
+}
+
+.method-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 10px;
+  margin: 10px 0 14px;
+}
+
+.m-card {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 12px;
+  border: 1px solid var(--color-border);
+  border-left: 4px solid #8a8f98;
+  border-radius: var(--radius);
+  cursor: pointer;
+
+  strong {
+    font-size: 18px;
+    font-variant-numeric: tabular-nums;
+  }
+
+  &.on {
+    background: rgba(99, 248, 186, 0.1);
+    border-color: #63f8ba;
+  }
+}

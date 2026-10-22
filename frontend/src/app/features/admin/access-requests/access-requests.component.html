@@ -1,0 +1,85 @@
+<div class="page-header">
+  <div>
+    <h2>Access Requests</h2>
+    <p class="subtitle">People who signed up and are waiting for access. Assign a role to approve them - they can sign in straight away
+      with the password they chose. Tenant Viewers also need the tenant whose sites they may see.</p>
+  </div>
+</div>
+
+<div class="view-tabs" role="tablist" aria-label="Request status">
+  <button type="button" role="tab" class="view-tab" [class.active]="filter === 'PENDING'" (click)="setFilter('PENDING')">Pending</button>
+  <button type="button" role="tab" class="view-tab" [class.active]="filter === 'APPROVED'" (click)="setFilter('APPROVED')">Approved</button>
+  <button type="button" role="tab" class="view-tab" [class.active]="filter === 'REJECTED'" (click)="setFilter('REJECTED')">Declined</button>
+  <button type="button" role="tab" class="view-tab" [class.active]="filter === null" (click)="setFilter(null)">All</button>
+</div>
+
+@if (flash) {
+  <div class="ar-flash" role="status">{{ flash }} <button type="button" class="link-btn" (click)="flash = null">Dismiss</button></div>
+}
+@if (error) {
+  <div class="card empty-state error">{{ error }}</div>
+}
+@if (!error && !loading && !requests.length) {
+  <div class="card empty-state">{{ filter === 'PENDING' ? 'No requests are waiting.' : 'Nothing here yet.' }}</div>
+}
+
+<div class="ar-list">
+  @for (q of requests; track q.request_id) {
+    <article class="card ar-card" [attr.data-status]="q.status">
+      <header class="ar-head">
+        <div>
+          <h3>{{ q.full_name }}</h3>
+          <span class="ar-sub">{{ q.email }}{{ q.organisation ? ' · ' + q.organisation : '' }} · requested {{ q.requested_at | date: 'yyyy-MM-dd HH:mm' }}</span>
+        </div>
+        <span class="ar-status" [attr.data-status]="q.status">{{ q.status === 'REJECTED' ? 'DECLINED' : q.status }}</span>
+      </header>
+      <p class="ar-reason">{{ q.reason }}</p>
+
+      @if (q.status === 'PENDING') {
+        @if (decisions[q.request_id]; as d) {
+          <div class="ar-decide">
+            <div class="field">
+              <label [for]="'role' + q.request_id">Role</label>
+              <select [id]="'role' + q.request_id" [(ngModel)]="d.role" [disabled]="d.busy">
+                <option value="" disabled>Choose a role…</option>
+                @for (r of roles; track r.role_code) {
+                  <option [value]="r.role_code">{{ r.role_name }}</option>
+                }
+              </select>
+            </div>
+            @if (role(d.role)?.is_tenant_scoped) {
+              <div class="field">
+                <label [for]="'tenant' + q.request_id">Tenant</label>
+                <select [id]="'tenant' + q.request_id" [(ngModel)]="d.tenant" [disabled]="d.busy">
+                  <option [ngValue]="null" disabled>Choose a tenant…</option>
+                  @for (t of tenants; track t.tenant_id) {
+                    <option [ngValue]="t.tenant_id">{{ t.name }}</option>
+                  }
+                </select>
+              </div>
+            }
+            <div class="field ar-note">
+              <label [for]="'note' + q.request_id">Note <span class="ar-sub">(optional - shown to the user if declined)</span></label>
+              <input [id]="'note' + q.request_id" type="text" maxlength="1000" [(ngModel)]="d.note" [disabled]="d.busy" />
+            </div>
+            <div class="ar-actions">
+              <button type="button" class="btn btn-primary" [disabled]="!canApprove(q)" (click)="approve(q)">Approve</button>
+              <button type="button" class="btn btn-danger" [disabled]="d.busy" (click)="reject(q)">Decline</button>
+            </div>
+          </div>
+          @if (d.role && role(d.role)?.description) {
+            <p class="ar-sub ar-role-hint">{{ role(d.role)?.role_name }}: {{ role(d.role)?.description }}</p>
+          }
+          @if (d.error) {
+            <div class="form-error">{{ d.error }}</div>
+          }
+        }
+      } @else {
+        <p class="ar-sub">
+          {{ q.status === 'APPROVED' ? 'Approved as ' + q.role_name + (q.tenant_id ? ' (' + tenantName(q.tenant_id) + ')' : '') : 'Declined' }}
+          by {{ q.reviewed_by }} on {{ q.reviewed_at | date: 'yyyy-MM-dd HH:mm' }}{{ q.decision_note ? ' · "' + q.decision_note + '"' : '' }}
+        </p>
+      }
+    </article>
+  }
+</div>

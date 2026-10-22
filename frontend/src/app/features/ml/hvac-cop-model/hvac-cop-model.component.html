@@ -1,0 +1,276 @@
+<div class="page-header">
+  <div>
+    <h2>HVAC COP Model</h2>
+    <p class="subtitle">
+      Coefficient of performance and cooling capacity as functions of the thermodynamic lift and part load: DOE-2-style performance maps,
+      a Carnot-anchored η<sub>2nd law</sub> grey-box and a GBM residual, fitted on steady-state intervals; plus the closure audit and the
+      scorecard. Results go to the <a routerLink="/ml/hvac-cop">HVAC COP &amp; Cooling</a> viewer.
+    </p>
+  </div>
+</div>
+
+@if (optionsError) {
+  <div class="card empty-state error">{{ optionsError }}</div>
+}
+
+@if (options && form) {
+  <div class="lm-grid">
+    <section class="card lm-panel">
+      <h3 class="lm-title">New run</h3>
+      <h4 class="lm-group">HVAC units</h4>
+      <div class="lm-systems">
+        @for (u of options.units; track u.hvac_id) {
+          <label class="lm-system" [class.on]="selectedUnits.has(u.hvac_id)">
+            <input type="checkbox" [checked]="selectedUnits.has(u.hvac_id)" (change)="toggleUnit(u.hvac_id)" />
+            <span><strong>{{ u.hvac_code }}</strong> · {{ u.site_name }}
+              <span class="lm-sub">{{ u.model ?? 'unit' }}{{ u.rated_kw ? ' · ' + u.rated_kw + ' kW rated' : '' }} · {{ u.cooling_intervals | number }} cooling intervals</span></span>
+          </label>
+        }
+      </div>
+      <div class="form-grid three">
+        <div class="field"><label for="from">From</label><input id="from" type="date" [(ngModel)]="form.date_from" [min]="span?.first ?? ''" [max]="span?.last ?? ''" /></div>
+        <div class="field"><label for="to">To</label><input id="to" type="date" [(ngModel)]="form.date_to" [min]="span?.first ?? ''" [max]="span?.last ?? ''" /></div>
+        <div class="field"><label for="name">Name (optional)</label><input id="name" type="text" maxlength="120" [(ngModel)]="form.run_name" placeholder="e.g. Aug–Sep fleet" /></div>
+      </div>
+
+      <h4 class="lm-group">What is measured</h4>
+      <div class="form-grid three">
+        <div class="field span-2">
+          <label for="cd">COP definition (the target)</label>
+          <select id="cd" [(ngModel)]="form.cop_definition">
+            @for (c of options.cop_definitions; track c.key) {
+              <option [ngValue]="c.key">{{ c.label }}</option>
+            }
+          </select>
+        </div>
+        <div class="field">
+          <label for="kd">Capacity</label>
+          <select id="kd" [(ngModel)]="form.capacity_definition">
+            @for (c of options.capacity_definitions; track c.key) {
+              <option [ngValue]="c.key">{{ c.label }}</option>
+            }
+          </select>
+        </div>
+        <div class="field" title="30 % glycol ≈ 1.04 kg/L"><label for="rho">Coolant density (kg/L)</label><input id="rho" type="number" step="0.01" [(ngModel)]="form.fluid_density_kg_l" /></div>
+        <div class="field" title="30 % glycol ≈ 3.7 kJ/kg·K"><label for="cp">Coolant cp (kJ/kg·K)</label><input id="cp" type="number" step="0.05" [(ngModel)]="form.fluid_cp_kj_kgk" /></div>
+        <div class="field" title="Blank = hvac_unit rating × the most units running"><label for="rc">Rated capacity (kW)</label><input id="rc" type="number" [(ngModel)]="ui.rated" placeholder="master data" /></div>
+      </div>
+
+      <h4 class="lm-group">Lift (thermodynamic driver)</h4>
+      <div class="form-grid three">
+        <div class="field">
+          <label for="ls">Lift from</label>
+          <select id="ls" [(ngModel)]="form.lift_source">
+            <option value="temperature">Ambient + approach / coolant supply − approach</option>
+            <option value="pressure">Refrigerant pressures (approx. R-410A saturation)</option>
+          </select>
+        </div>
+        <div class="field" title="T_evap = coolant supply − approach"><label for="ea">Evaporator approach (K)</label><input id="ea" type="number" step="0.5" [(ngModel)]="form.evap_approach_k" /></div>
+        <div class="field" title="T_cond = ambient + approach"><label for="ca">Condenser approach (K)</label><input id="ca" type="number" step="0.5" [(ngModel)]="form.cond_approach_k" /></div>
+      </div>
+
+      <h4 class="lm-group">Steady-state filter &amp; split</h4>
+      <div class="form-grid four">
+        <div class="field"><label for="ms">Min compressor speed (%)</label><input id="ms" type="number" min="0" max="100" [(ngModel)]="form.min_speed_pct" /></div>
+        <div class="field"><label for="mp">Min HVAC power (kW)</label><input id="mp" type="number" min="0" step="0.5" [(ngModel)]="form.min_power_kw" /></div>
+        <div class="field" title="Largest change of the coolant ΔT between intervals that still counts as steady"><label for="dt">Max ΔT step (K)</label><input id="dt" type="number" min="0.05" step="0.05" [(ngModel)]="form.max_dt_step_k" /></div>
+        <div class="field"><label for="tr">Training share (%)</label><input id="tr" type="number" min="30" max="95" [(ngModel)]="ui.trainPct" /></div>
+      </div>
+
+      <h4 class="lm-group">Models &amp; monitoring</h4>
+      <div class="form-grid four">
+        <div class="field span-2">
+          <label for="em">Expected COP for degradation monitoring</label>
+          <select id="em" [(ngModel)]="form.expected_model">
+            <option value="map">Performance map (recommended - extrapolates safely)</option>
+            <option value="grey">Carnot-anchored grey-box</option>
+            <option value="hybrid">Map + GBM residual</option>
+          </select>
+        </div>
+        <div class="field"><label for="ne">GBM rounds</label><input id="ne" type="number" min="20" max="3000" step="10" [(ngModel)]="form.n_estimators" /></div>
+        <div class="field"><label for="lr">GBM learning rate</label><input id="lr" type="number" min="0.001" max="1" step="0.01" [(ngModel)]="form.learning_rate" /></div>
+        <div class="field"><label for="ra">Reference ambient (°C)</label><input id="ra" type="number" [(ngModel)]="form.ref_ambient_c" /></div>
+        <div class="field"><label for="rs">Reference coolant supply (°C)</label><input id="rs" type="number" [(ngModel)]="form.ref_supply_c" /></div>
+        <div class="field"><label for="rp">Reference part load</label><input id="rp" type="number" min="0.05" max="1" step="0.05" [(ngModel)]="form.ref_plr" /></div>
+        <div class="field"><label for="el">EWMA λ</label><input id="el" type="number" min="0.01" max="1" step="0.05" [(ngModel)]="form.ewma_lambda" /></div>
+        <div class="field"><label for="eL">EWMA limit (σ)</label><input id="eL" type="number" min="0.5" step="0.5" [(ngModel)]="form.ewma_l" /></div>
+        <div class="field"><label for="ck">CUSUM k (σ)</label><input id="ck" type="number" min="0" step="0.1" [(ngModel)]="form.cusum_k" /></div>
+        <div class="field"><label for="ch">CUSUM h (σ)</label><input id="ch" type="number" min="0.5" step="0.5" [(ngModel)]="form.cusum_h" /></div>
+      </div>
+
+      <div class="lm-actions">
+        <span class="lm-note">{{ selectedUnits.size }} unit(s) · about 3 s per unit</span>
+        <button type="button" class="btn btn-primary" [disabled]="running || !selectedUnits.size" (click)="run()">{{ running ? 'Fitting…' : 'Fit models' }}</button>
+      </div>
+      @if (runError) {
+        <div class="form-error">{{ runError }}</div>
+      }
+    </section>
+
+    <section class="card lm-panel">
+      <div class="lm-head">
+        <h3 class="lm-title">Runs</h3>
+        <button type="button" class="btn btn-secondary" (click)="loadRuns()">Refresh</button>
+      </div>
+      @if (runs.length === 0) {
+        <div class="empty-state">No runs yet - fit one.</div>
+      } @else {
+        <div class="table-scroll">
+          <table class="data-table lm-runs">
+            <thead><tr><th>#</th><th>Run</th><th>Range</th><th>Status</th><th></th></tr></thead>
+            <tbody>
+              @for (r of runs; track r.run_id) {
+                <tr [class.lm-selected]="selected?.run_id === r.run_id">
+                  <td class="mono">{{ r.run_id }}</td>
+                  <td>
+                    <button type="button" class="link-btn" (click)="open(r.run_id)">{{ r.run_name || 'COP run' }}</button>
+                    <div class="lm-sub">{{ r.hvac_ids.length }} unit(s) · COP {{ r.params.cop_definition }} · lift {{ r.params.lift_source }}</div>
+                  </td>
+                  <td class="mono">{{ r.date_from }} → {{ r.date_to }}</td>
+                  <td><span class="lm-status" [attr.data-status]="r.status">{{ r.status }}</span></td>
+                  <td class="lm-row-actions">
+                    @if (r.status === 'COMPLETED') {
+                      <a class="btn btn-secondary btn-sm" routerLink="/ml/hvac-cop" [queryParams]="{ run: r.run_id }">View</a>
+                    }
+                    <button type="button" class="btn btn-danger btn-icon" title="Delete" (click)="confirmDelete(r)">✕</button>
+                  </td>
+                </tr>
+              }
+            </tbody>
+          </table>
+        </div>
+      }
+    </section>
+  </div>
+
+  @if (selected) {
+    <section class="card lm-result">
+      <div class="lm-head">
+        <h3 class="lm-title">Run #{{ selected.run_id }} {{ selected.run_name ? '· ' + selected.run_name : '' }}
+          <span class="lm-sub">{{ selected.date_from }} → {{ selected.date_to }} · {{ selected.hvac_ids.length }} unit(s) · {{ num((selected.duration_ms ?? 0) / 1000, 1) }} s</span></h3>
+        @if (selected.status === 'COMPLETED') {
+          <a class="btn btn-primary" routerLink="/ml/hvac-cop" [queryParams]="{ run: selected.run_id }">Open in HVAC COP &amp; Cooling</a>
+        }
+      </div>
+      @if (selected.status === 'FAILED') {
+        <div class="form-error">{{ selected.error_message }}</div>
+      } @else if (selected.summary) {
+        <h4 class="lm-group">Fleet</h4>
+        <div class="table-scroll">
+          <table class="data-table">
+            <thead><tr><th>Unit</th><th class="num">Map R² / MAE (test)</th><th class="num">Hybrid MAE</th><th class="num">Seasonal COP</th><th class="num">Logged COP</th>
+              <th class="num">kW/ton</th><th class="num">IPLV-style</th><th class="num">η<sub>2nd</sub></th><th class="num">Logged ÷ loop cooling</th><th class="num">Starts / day</th><th class="num">Alarm days</th></tr></thead>
+            <tbody>
+              @for (f of selected.summary.fleet; track f.hvac_id) {
+                <tr>
+                  <td>{{ f.hvac_code }}<div class="lm-sub">{{ f.site_name }}</div></td>
+                  <td class="num mono">{{ num(f.map_test_r2, 3) }} / {{ num(f.map_test_mae, 3) }}</td>
+                  <td class="num mono">{{ num(f.hybrid_test_mae, 3) }}</td>
+                  <td class="num mono"><strong>{{ num(f.seasonal_cop, 2) }}</strong></td>
+                  <td class="num mono">{{ num(f.logged_cop_mean, 2) }}</td>
+                  <td class="num mono">{{ num(f.kw_per_ton, 2) }}</td>
+                  <td class="num mono">{{ num(f.iplv_style, 2) }}</td>
+                  <td class="num mono">{{ num(f.eta_2nd_law, 2) }}</td>
+                  <td class="num mono" [class.lm-bad]="Math.abs((f.loop_ratio ?? 1) - 1) > 0.15">{{ num(f.loop_ratio, 2) }}×</td>
+                  <td class="num mono">{{ num(f.starts_per_day, 1) }}</td>
+                  <td class="num mono" [class.lm-bad]="f.alarm_days > 0">{{ f.alarm_days }}</td>
+                </tr>
+              }
+            </tbody>
+          </table>
+        </div>
+
+        @if (selected.warnings.length) {
+          <div class="lm-warning">
+            <button type="button" class="link-btn" (click)="showWarnings = !showWarnings">⚠ {{ selected.warnings.length }} data note(s) {{ showWarnings ? '▴' : '▾' }}</button>
+            @if (showWarnings) {
+              <ul class="lm-notes">
+                @for (w of selected.warnings; track $index) {
+                  <li>{{ w }}</li>
+                }
+              </ul>
+            }
+          </div>
+        }
+
+        <div class="lm-system-pick">
+          <label for="unit">HVAC unit</label>
+          <select id="unit" [(ngModel)]="unitKey">
+            @for (id of selected.hvac_ids; track id) {
+              <option [ngValue]="'' + id">{{ unitName(id) }}</option>
+            }
+          </select>
+        </div>
+
+        @if (summary && model; as s) {
+          <div class="lm-two">
+            <div>
+              <h4 class="lm-group">Scores · {{ model.train_rows | number }} steady training / {{ model.test_rows | number }} test intervals (from {{ summary.test_from | date: 'yyyy-MM-dd' }})</h4>
+              <table class="data-table lm-models">
+                <thead><tr><th>Model</th><th class="num">Train R²</th><th class="num">Test R²</th><th class="num">Test MAE</th><th class="num">MAPE</th><th class="num">Bias</th></tr></thead>
+                <tbody>
+                  @for (r of scoreRows; track r.key) {
+                    <tr>
+                      <td>{{ r.label }}</td>
+                      <td class="num mono">{{ num(r.train?.['r2'], 3) }}</td>
+                      <td class="num mono"><strong>{{ num(r.test['r2'], 3) }}</strong></td>
+                      <td class="num mono">{{ num(r.test['mae'], 3) }}</td>
+                      <td class="num mono">{{ num(r.test['mape_pct'], 2) }} %</td>
+                      <td class="num mono">{{ num(r.test['bias'], 3) }}</td>
+                    </tr>
+                  }
+                </tbody>
+              </table>
+              <h4 class="lm-group">Fitted maps (T in °C, PLR 0–1)</h4>
+              <table class="data-table lm-audit">
+                <tbody>
+                  <tr><td>COP biquadratic [1, Te, Te², Tc, Tc², Te·Tc]</td><td class="mono lm-formula">{{ coef(model.cop_map.biquad) }}</td></tr>
+                  <tr><td>COP part-load f(PLR) [1, PLR, PLR²]</td><td class="mono lm-formula">{{ coef(model.cop_map.plr) }}</td></tr>
+                  <tr><td>CAP biquadratic</td><td class="mono lm-formula">{{ coef(model.cap_map.biquad) }}</td></tr>
+                  <tr><td>CAP part-load g(PLR) [1, PLR]</td><td class="mono lm-formula">{{ coef(model.cap_map.plr) }}</td></tr>
+                  <tr><td>η<sub>2nd</sub> = [1, PLR, PLR², lift]</td><td class="mono lm-formula">{{ coef(model.grey.coef) }}</td></tr>
+                </tbody>
+              </table>
+              <p class="lm-note">Training range: ambient {{ num(model.ranges['ambient_temp_c'][0], 1) }}–{{ num(model.ranges['ambient_temp_c'][1], 1) }} °C · supply {{ num(model.ranges['coolant_supply_temp_c'][0], 1) }}–{{ num(model.ranges['coolant_supply_temp_c'][1], 1) }} °C · PLR {{ num(model.ranges['plr'][0], 2) }}–{{ num(model.ranges['plr'][1], 2) }}. Expected COP for monitoring: {{ model.expected_model }}.</p>
+            </div>
+            <div>
+              <h4 class="lm-group">Closure audit (cooling intervals)</h4>
+              <table class="data-table lm-audit">
+                <tbody>
+                  <tr><td>Logged cooling ÷ coolant loop (flow × ρ·cp × ΔT)</td><td class="num mono" [class.lm-bad]="Math.abs((closure('loop_vs_logged_ratio_median') ?? 1) - 1) > 0.15">{{ num(closure('loop_vs_logged_ratio_median'), 2) }}× · {{ num(closure('cooling_logged_mean_kw'), 1) }} vs {{ num(closure('q_loop_mean_kw'), 1) }} kW</td></tr>
+                  <tr><td>HVAC battery heat-load reading</td><td class="num mono">{{ num(closure('heat_load_sensor_mean_kw'), 1) }} kW</td></tr>
+                  <tr><td>Logged cop − cooling ÷ power</td><td class="num mono">{{ num(closure('cop_logged_minus_ratio_median'), 2) }} (r {{ num(closure('cop_logged_vs_ratio_corr'), 2) }})</td></tr>
+                  <tr><td>heat_rejected − (cooling + power)</td><td class="num mono">{{ num(closure('rej_closure_median_kw'), 2) }} kW median · {{ num(closure('rej_closure_pct_of_rejected'), 1) }} % · p95 |{{ num(closure('rej_closure_p95_abs_kw'), 1) }}| kW</td></tr>
+                  <tr><td>return − supply vs logged ΔT</td><td class="num mono">max {{ num(closure('dt_consistency_max_k'), 3) }} K</td></tr>
+                  <tr><td>Idle / free-cooling HVAC power (parasitics)</td><td class="num mono">{{ num(closure('idle_hvac_power_kw'), 1) }} / {{ num(closure('free_cooling_power_kw'), 1) }} kW</td></tr>
+                  <tr><td>Steady share of cooling intervals</td><td class="num mono">{{ pct(closure('steady_share_of_cooling'), 0) }} %</td></tr>
+                </tbody>
+              </table>
+              <h4 class="lm-group">GBM residual - top features</h4>
+              <table class="data-table lm-audit">
+                <tbody>
+                  @for (f of importance; track f.f) {
+                    <tr><td>{{ f.f }}</td><td class="num mono">{{ pct(f.v, 1) }} %</td></tr>
+                  }
+                </tbody>
+              </table>
+            </div>
+          </div>
+        }
+      }
+    </section>
+  }
+}
+
+@if (toDelete; as d) {
+  <div class="modal-backdrop" (click)="toDelete = null">
+    <div class="modal" (click)="$event.stopPropagation()">
+      <h3>Delete run #{{ d.run_id }}?</h3>
+      <p>This deletes the run, its fitted maps and its interval points. The telemetry is not touched. This cannot be undone.</p>
+      <div class="modal-actions">
+        <button class="btn btn-secondary" (click)="toDelete = null">Cancel</button>
+        <button class="btn btn-danger-solid" (click)="deleteConfirmed()">Delete</button>
+      </div>
+    </div>
+  </div>
+}

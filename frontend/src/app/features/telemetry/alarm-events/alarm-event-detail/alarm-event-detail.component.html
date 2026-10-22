@@ -1,0 +1,139 @@
+<div class="page-header">
+  <div>
+    <a class="back-link" routerLink="/telemetry/alarms">← Back to alarms</a>
+    @if (item) {
+      <h2 class="alarm-title">
+        {{ item.alarm_id }}
+        @if (item.status === 'Active') {
+          <span class="status-pill active"><span class="dot"></span>Active</span>
+        } @else {
+          <span class="status-pill cleared">Cleared</span>
+        }
+      </h2>
+    }
+  </div>
+  @if (item) {
+    <div class="header-actions">
+      <button type="button" class="btn btn-danger" (click)="deleteError = null; confirmDelete = true">Delete</button>
+      <a class="btn btn-primary" [routerLink]="['/telemetry/alarms', item.alarm_id, 'edit']">Edit Alarm</a>
+    </div>
+  }
+</div>
+
+@if (loading) {
+  <div class="card"><div class="empty-state">Loading…</div></div>
+} @else if (error) {
+  <div class="card"><div class="empty-state error">{{ error }}</div></div>
+} @else if (item) {
+  <div class="card">
+    <div class="alarm-headline">
+      <span class="source-chip" [attr.data-source]="item.source">{{ item.source }}</span>
+      <span class="severity-badge" [attr.data-level]="item.severity_level">{{ item.severity_name }}</span>
+      <span class="headline-text">{{ item.description }}</span>
+    </div>
+
+    <!-- raise -> acknowledge -> clear -->
+    <ol class="alarm-timeline">
+      <li class="done">
+        <span class="step-dot"></span>
+        <span class="step-label">Raised</span>
+        <span class="step-time">{{ plantTime(item.start_time) }}</span>
+      </li>
+      <li [class.done]="!!item.acknowledged_at">
+        <span class="step-dot"></span>
+        <span class="step-label">Acknowledged</span>
+        @if (item.acknowledged_at) {
+          <span class="step-time">{{ plantTime(item.acknowledged_at) }}</span>
+          <span class="step-note">by {{ item.acknowledged_by }} · after {{ minutesToAck }} min</span>
+        } @else {
+          <span class="step-note">not acknowledged</span>
+        }
+      </li>
+      <li [class.done]="!!item.end_time" [class.pending]="!item.end_time">
+        <span class="step-dot"></span>
+        <span class="step-label">Cleared</span>
+        @if (item.end_time) {
+          <span class="step-time">{{ plantTime(item.end_time) }}</span>
+          <span class="step-note">lasted {{ item.duration_min | number: '1.0-1' }} min</span>
+        } @else {
+          <span class="step-note">still active</span>
+        }
+      </li>
+    </ol>
+
+    <dl class="detail-grid">
+      <div class="detail-item">
+        <dt>Alarm</dt>
+        <dd>
+          <a [routerLink]="['/alarm-catalog', item.alarm_catalog_id]" class="mono">{{ item.alarm_code }}</a>
+          <span class="muted">· {{ item.alarm_type }}</span>
+        </dd>
+      </div>
+      <div class="detail-item">
+        <dt>Severity</dt>
+        <dd>{{ item.severity_name }} <span class="muted">(level {{ item.severity_level }})</span></dd>
+      </div>
+      <div class="detail-item">
+        <dt>Asset</dt>
+        <dd>
+          @if (assetLink) {
+            <a [routerLink]="assetLink">{{ item.linked_asset_name }}</a>
+            <span class="muted">{{ assetLabels[item.linked_asset_type!] }}</span>
+          } @else {
+            {{ item.asset_code || '—' }} <span class="muted">{{ item.asset_type }}</span>
+          }
+        </dd>
+      </div>
+      <div class="detail-item">
+        <dt>Battery System</dt>
+        <dd>
+          @if (item.battery_system_id) {
+            <a [routerLink]="['/battery-systems', item.battery_system_id]">{{ item.system_name }}</a>
+          } @else {
+            —
+          }
+        </dd>
+      </div>
+      <div class="detail-item">
+        <dt>Trigger / Threshold</dt>
+        <dd>
+          @if (item.trigger_value !== null || item.threshold_value !== null) {
+            <strong>{{ item.trigger_value ?? '—' }}</strong> / {{ item.threshold_value ?? '—' }} {{ item.unit }}
+          } @else {
+            — <span class="muted">(event alarm)</span>
+          }
+        </dd>
+      </div>
+      <div class="detail-item span-2">
+        <dt>Probable Cause</dt>
+        <dd>{{ item.probable_cause || '—' }}</dd>
+      </div>
+      <div class="detail-item">
+        <dt>Recorded</dt>
+        <dd>{{ plantTime(item.created_at) }}</dd>
+      </div>
+      <div class="detail-item">
+        <dt>Last Updated</dt>
+        <dd>{{ plantTime(item.updated_at) }}</dd>
+      </div>
+    </dl>
+  </div>
+}
+
+@if (confirmDelete && item) {
+  <div class="modal-backdrop" (click)="confirmDelete = false">
+    <div class="modal" (click)="$event.stopPropagation()">
+      <h3>Delete alarm?</h3>
+      <p>This will permanently delete <strong>{{ item.alarm_id }}</strong>. This action cannot be undone.</p>
+      @if (deleteError) {
+        <div class="form-error">{{ deleteError }}</div>
+      }
+      <div class="modal-actions">
+        <button class="btn btn-secondary" (click)="confirmDelete = false" [disabled]="deleting">Cancel</button>
+        <button class="btn btn-danger-solid" (click)="deleteConfirmed()" [disabled]="deleting">
+          {{ deleting ? 'Deleting…' : 'Delete' }}
+        </button>
+      </div>
+    </div>
+  </div>
+}

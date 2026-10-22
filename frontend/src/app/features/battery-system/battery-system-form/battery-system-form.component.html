@@ -1,0 +1,120 @@
+<div class="page-header">
+  <div>
+    <a class="back-link" routerLink="/battery-systems">← Back to battery systems</a>
+    <h2>{{ isEditMode ? 'Edit Battery System' : 'Add Battery System' }}</h2>
+  </div>
+  @if (isEditMode && batterySystemId) {
+    <app-asset-links assetType="battery_system" [assetId]="batterySystemId" [name]="savedName" />
+  }
+</div>
+
+<div class="card">
+  @if (loading) {
+    <div class="empty-state">Loading…</div>
+  } @else {
+    <form [formGroup]="form" (ngSubmit)="submit()">
+      @if (error) {
+        <div class="form-error">{{ error }}</div>
+      }
+
+      <div class="form-grid">
+        <div class="field">
+          <label for="site_id">Site *</label>
+          <select id="site_id" formControlName="site_id">
+            <option [ngValue]="null" disabled>Select a site</option>
+            @for (site of sites; track site.site_id) {
+              <option [ngValue]="site.site_id">{{ site.site_name }}</option>
+            }
+          </select>
+          @if (form.get('site_id')?.invalid && form.get('site_id')?.touched) {
+            <span class="field-error">Site is required.</span>
+          }
+        </div>
+
+        <div class="field">
+          <label for="system_name">System Name *</label>
+          <input id="system_name" type="text" formControlName="system_name" />
+          @if (form.get('system_name')?.invalid && form.get('system_name')?.touched) {
+            <span class="field-error">System name is required.</span>
+          }
+        </div>
+
+        <div class="field">
+          <label for="manufacturer">Manufacturer</label>
+          <input id="manufacturer" type="text" formControlName="manufacturer" />
+        </div>
+
+        <div class="field">
+          <label for="model">Model</label>
+          <input id="model" type="text" formControlName="model" />
+        </div>
+
+        <div class="field">
+          <label for="chemistry_code">Chemistry *</label>
+          <select id="chemistry_code" formControlName="chemistry_code">
+            <option value="" disabled>Select a chemistry</option>
+            @for (chemistry of chemistries; track chemistry.chemistry_code) {
+              <option [value]="chemistry.chemistry_code">{{ chemistry.chemistry_code }} — {{ chemistry.description }}</option>
+            }
+          </select>
+          @if (form.get('chemistry_code')?.invalid && form.get('chemistry_code')?.touched) {
+            <span class="field-error">Chemistry is required.</span>
+          }
+        </div>
+
+        <div class="field">
+          <label for="series_cells">Series Cells *</label>
+          <input id="series_cells" type="number" step="1" min="1" formControlName="series_cells" />
+          @if (form.get('series_cells')?.invalid && form.get('series_cells')?.touched) {
+            <span class="field-error">Series cells must be at least 1.</span>
+          }
+        </div>
+
+        <div class="field">
+          <label for="parallel_cells">Parallel Cells *</label>
+          <input id="parallel_cells" type="number" step="1" min="1" formControlName="parallel_cells" />
+          @if (form.get('parallel_cells')?.invalid && form.get('parallel_cells')?.touched) {
+            <span class="field-error">Parallel cells must be at least 1.</span>
+          }
+        </div>
+
+        <div class="field">
+          <label for="commissioned_on">Commissioned On</label>
+          <input id="commissioned_on" type="date" formControlName="commissioned_on" />
+        </div>
+
+        <div class="field">
+          <label for="bms_firmware">BMS Firmware</label>
+          <input id="bms_firmware" type="text" formControlName="bms_firmware" placeholder="e.g. v2.3.1" />
+        </div>
+
+        <div class="field">
+          <label for="rated_power_mw">Rated Power (MW)</label>
+          <input id="rated_power_mw" type="number" step="0.01" formControlName="rated_power_mw" />
+        </div>
+
+        <div class="field">
+          <label for="rated_energy_mwh">Rated Energy (MWh)</label>
+          <input id="rated_energy_mwh" type="number" step="0.01" formControlName="rated_energy_mwh" />
+        </div>
+
+        <div class="field">
+          <label for="nominal_dc_voltage">Nominal DC Voltage</label>
+          <input id="nominal_dc_voltage" type="number" step="0.01" formControlName="nominal_dc_voltage" />
+        </div>
+
+        <div class="field">
+          <label for="status">Status</label>
+          <input id="status" type="text" formControlName="status" placeholder="e.g. Active" />
+        </div>
+      </div>
+
+      <div class="form-actions">
+        <a class="btn btn-secondary" routerLink="/battery-systems">Cancel</a>
+        <button type="submit" class="btn btn-primary" [disabled]="saving">
+          {{ saving ? 'Saving…' : 'Save Battery System' }}
+        </button>
+      </div>
+    </form>
+  }
+</div>

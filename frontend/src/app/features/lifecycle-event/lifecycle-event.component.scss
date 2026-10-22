@@ -1,0 +1,59 @@
+.type-stat {
+  font: inherit;
+  cursor: pointer;
+
+  &.on {
+    border-color: #63f8ba;
+    background: rgba(99, 248, 186, 0.18);
+  }
+}
+
+.cal-dot {
+  &[data-type='COMMISSION'] { background: #1baf7a; }
+  &[data-type='AUGMENTATION'] { background: #2f6fed; }
+  &[data-type='MODULE_REPLACE'] { background: #7c5cd6; }
+  &[data-type='EOL_REACHED'] { background: #c47a00; }
+  &[data-type='FAILURE'] { background: #b2471b; }
+  &[data-type='DECOMMISSION'] { background: #6b7280; }
+}
+
+.note-field {
+  grid-column: 1 / -1;
+
+  textarea {
+    width: 100%;
+    font: inherit;
+    resize: vertical;
+  }
+}
+
+.eol-strip {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 20px 4px;
+  font-size: 12px;
+}
+
+.eol-head {
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--color-text-muted);
+}
+
+.eol-chip {
+  padding: 3px 10px;
+  border: 1px solid var(--color-border, #e3e6ea);
+  border-radius: 999px;
+  background: #fafbfc;
+}
+
+.foot-note {
+  padding: 0 20px 14px;
+}
+
+.warn-note {
+  color: #875800;
+}

@@ -1,0 +1,172 @@
+<div class="page-header">
+  <div>
+    <h2>Battery Systems</h2>
+    <p class="subtitle">Battery energy storage systems</p>
+  </div>
+  <a class="btn btn-primary" routerLink="/battery-systems/new">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+      <path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+    </svg>
+    Add Battery System
+  </a>
+</div>
+
+<div class="card">
+  @if (loading) {
+    <div class="empty-state">Loading battery systems…</div>
+  } @else if (error) {
+    <div class="empty-state error">{{ error }}</div>
+  } @else if (batterySystems.length === 0) {
+    <div class="empty-state">No battery systems yet. Click "Add Battery System" to create one.</div>
+  } @else {
+    <div class="toolbar">
+      <div class="search-box">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+          <circle cx="11" cy="11" r="7" stroke="currentColor" stroke-width="1.6" />
+          <path d="m20 20-3.5-3.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
+        </svg>
+        <input
+          type="text"
+          placeholder="Filter by name, manufacturer, chemistry, status or site…"
+          [(ngModel)]="searchTerm"
+          (ngModelChange)="onSearchChange()" />
+      </div>
+      <div class="result-count">{{ totalItems }} system{{ totalItems === 1 ? '' : 's' }}</div>
+    </div>
+
+    @if (totalItems === 0) {
+      <div class="empty-state">No battery systems match "{{ searchTerm }}".</div>
+    } @else {
+      <div class="table-scroll">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th class="sortable" (click)="setSort('system_name')">
+              System Name
+              <span class="sort-icon" [class.active]="sortColumn === 'system_name'">
+                {{ sortColumn === 'system_name' && sortDirection === 'desc' ? '▼' : '▲' }}
+              </span>
+            </th>
+            <th>Site</th>
+            <th class="sortable" (click)="setSort('manufacturer')">
+              Manufacturer
+              <span class="sort-icon" [class.active]="sortColumn === 'manufacturer'">
+                {{ sortColumn === 'manufacturer' && sortDirection === 'desc' ? '▼' : '▲' }}
+              </span>
+            </th>
+            <th class="sortable" (click)="setSort('chemistry_code')">
+              Chemistry
+              <span class="sort-icon" [class.active]="sortColumn === 'chemistry_code'">
+                {{ sortColumn === 'chemistry_code' && sortDirection === 'desc' ? '▼' : '▲' }}
+              </span>
+            </th>
+            <th>Cells (S×P)</th>
+            <th class="sortable" (click)="setSort('rated_power_mw')">
+              Rated Power (MW)
+              <span class="sort-icon" [class.active]="sortColumn === 'rated_power_mw'">
+                {{ sortColumn === 'rated_power_mw' && sortDirection === 'desc' ? '▼' : '▲' }}
+              </span>
+            </th>
+            <th class="sortable" (click)="setSort('rated_energy_mwh')">
+              Rated Energy (MWh)
+              <span class="sort-icon" [class.active]="sortColumn === 'rated_energy_mwh'">
+                {{ sortColumn === 'rated_energy_mwh' && sortDirection === 'desc' ? '▼' : '▲' }}
+              </span>
+            </th>
+            <th class="sortable" (click)="setSort('status')">
+              Status
+              <span class="sort-icon" [class.active]="sortColumn === 'status'">
+                {{ sortColumn === 'status' && sortDirection === 'desc' ? '▼' : '▲' }}
+              </span>
+            </th>
+            <th class="links-col">Open</th>
+            <th class="actions-col"></th>
+          </tr>
+        </thead>
+        <tbody>
+          @for (item of pagedItems; track item.battery_system_id) {
+            <tr (click)="view(item)">
+              <td>{{ item.system_name }}</td>
+              <td>{{ siteName(item.site_id) }}</td>
+              <td>{{ item.manufacturer || '—' }}</td>
+              <td class="mono">{{ item.chemistry_code }}</td>
+              <td>{{ item.series_cells }}×{{ item.parallel_cells }}</td>
+              <td>{{ item.rated_power_mw ?? '—' }}</td>
+              <td>{{ item.rated_energy_mwh ?? '—' }}</td>
+              <td>
+                @if (item.status) {
+                  <span class="status-badge">{{ item.status }}</span>
+                } @else {
+                  —
+                }
+              </td>
+              <td class="links-col">
+                <app-asset-links variant="icons" assetType="battery_system" [assetId]="item.battery_system_id" [name]="item.system_name" />
+              </td>
+              <td class="actions-col">
+                <button class="btn btn-secondary btn-icon" title="Edit" (click)="edit(item, $event)">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+                    <path
+                      d="M4 20h4l10.5-10.5a2.1 2.1 0 0 0-3-3L5 17v3Z"
+                      stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" />
+                  </svg>
+                </button>
+                <button class="btn btn-danger btn-icon" title="Delete" (click)="confirmDelete(item, $event)">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+                    <path
+                      d="M5 7h14M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2m2 0-1 13a1 1 0 0 1-1 1H8a1 1 0 0 1-1-1L6 7"
+                      stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
+                  </svg>
+                </button>
+              </td>
+            </tr>
+          }
+        </tbody>
+      </table>
+      </div>
+
+      <div class="pagination">
+        <div class="page-size">
+          <label for="pageSize">Rows per page</label>
+          <select id="pageSize" [ngModel]="pageSize" (ngModelChange)="setPageSize($event)">
+            @for (size of pageSizeOptions; track size) {
+              <option [ngValue]="size">{{ size }}</option>
+            }
+          </select>
+        </div>
+        <div class="page-range">{{ rangeStart }}–{{ rangeEnd }} of {{ totalItems }}</div>
+        <div class="page-controls">
+          <button class="btn btn-secondary btn-icon" [disabled]="currentPage === 1" (click)="goToPage(currentPage - 1)" title="Previous page">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+              <path d="M15 6l-6 6 6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+            </svg>
+          </button>
+          <span class="page-indicator">Page {{ currentPage }} of {{ totalPages }}</span>
+          <button class="btn btn-secondary btn-icon" [disabled]="currentPage === totalPages" (click)="goToPage(currentPage + 1)" title="Next page">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+              <path d="M9 6l6 6-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+            </svg>
+          </button>
+        </div>
+      </div>
+    }
+  }
+</div>
+
+@if (itemToDelete) {
+  <div class="modal-backdrop" (click)="cancelDelete()">
+    <div class="modal" (click)="$event.stopPropagation()">
+      <h3>Delete battery system?</h3>
+      <p>
+        This will permanently delete <strong>{{ itemToDelete.system_name }}</strong>.
+        This action cannot be undone.
+      </p>
+      <div class="modal-actions">
+        <button class="btn btn-secondary" (click)="cancelDelete()" [disabled]="deleting">Cancel</button>
+        <button class="btn btn-danger-solid" (click)="deleteConfirmed()" [disabled]="deleting">
+          {{ deleting ? 'Deleting…' : 'Delete' }}
+        </button>
+      </div>
+    </div>
+  </div>
+}

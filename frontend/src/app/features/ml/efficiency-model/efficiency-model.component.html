@@ -1,0 +1,637 @@
+<div class="page-header">
+  <div>
+    <h2>Efficiency Model</h2>
+    <p class="subtitle">
+      Learn the PCS conversion efficiency at every operating point and the round-trip efficiency over every
+      charge–discharge cycle. Use the default run on the <a routerLink="/ml/efficiency-estimator">Efficiency Estimator</a>.
+    </p>
+  </div>
+</div>
+
+@if (optionsError) {
+  <div class="card empty-state error">{{ optionsError }}</div>
+}
+
+@if (options) {
+  <div class="train-grid">
+    <!-- data -->
+    <section class="card panel">
+      <h3 class="panel-title">Data</h3>
+      <h4 class="group-head">PCS units</h4>
+      <div class="unit-list">
+        @for (u of options.units; track u.pcs_id) {
+          <label class="feature-group" [class.on]="pcsIds.has(u.pcs_id)" [class.dim]="!u.active">
+            <input type="checkbox" [checked]="pcsIds.has(u.pcs_id)" [disabled]="!u.active" (change)="toggleUnit(u)" />
+            <span class="fg-text">
+              <span class="fg-title">{{ u.site_name ?? u.system_name }} · {{ u.pcs_code }}</span>
+              <span class="fg-meta">
+                {{ u.rated_power_kw | number: '1.0-0' }} kW{{ u.topology ? ' · ' + u.topology : '' }} ·
+                @if (u.active) {
+                  {{ u.active | number }} active readings ({{ u.charging | number }} charge / {{ u.discharging | number }} discharge) ·
+                  {{ u.date_from }} → {{ u.date_to }}
+                } @else {
+                  no active readings
+                }
+                @if (u.dc_voltage_from !== 'master' && u.active) {
+                  · nominal DC voltage from the telemetry median
+                }
+              </span>
+            </span>
+          </label>
+        }
+      </div>
+
+      <div class="form-grid three">
+        <div class="field">
+          <label for="from">From</label>
+          <input id="from" type="date" [(ngModel)]="dateFrom" (ngModelChange)="schedulePreview()" />
+        </div>
+        <div class="field">
+          <label for="to">To</label>
+          <input id="to" type="date" [(ngModel)]="dateTo" (ngModelChange)="schedulePreview()" />
+        </div>
+        <div class="field" title="Readings below this load are standby noise and are left out">
+          <label for="minload">Min load (% of rated)</label>
+          <input id="minload" type="number" min="0" max="50" step="0.5" [(ngModel)]="minLoadPct" (ngModelChange)="schedulePreview()" />
+        </div>
+      </div>
+      <label class="check-field">
+        <input type="checkbox" [(ngModel)]="excludeSnapshots" (ngModelChange)="schedulePreview()" />
+        Leave out snapshot / simulated readings (battery_raw.batchlog)
+      </label>
+
+      <h4 class="group-head">Inputs</h4>
+      <div class="feature-groups">
+        @for (g of options.feature_groups; track g.key) {
+          <label class="feature-group" [class.on]="groups.has(g.key)">
+            <input type="checkbox" [checked]="groups.has(g.key)" [disabled]="g.required" (change)="toggleGroup(g.key, g.required)" />
+            <span class="fg-text">
+              <span class="fg-title">{{ g.label }}{{ g.required ? ' · always' : '' }}</span>
+              <span class="fg-meta">
+                @for (f of g.features; track f.key; let last = $last) {
+                  {{ f.label }}{{ last ? '' : ' · ' }}
+                }
+              </span>
+            </span>
+          </label>
+        }
+      </div>
+      <p class="param-help">
+        Target: <strong>efficiency_pct</strong> (η = P<sub>ac</sub>/P<sub>dc</sub> on discharge, P<sub>dc</sub>/P<sub>ac</sub> on
+        charge) from pcs_telemetry in grid-following mode. Rated power / kVA, nominal DC and AC voltage come from the PCS master.
+        Auxiliary + HVAC load and the energy counters are used by the cycle round-trip analysis.
+      </p>
+
+      @if (preview; as p) {
+        <div class="preview" [class.warn]="p.rows < 200">
+          @if (p.rows) {
+            <strong>{{ p.rows | number }}</strong> active readings · {{ p.charge | number }} charge / {{ p.discharge | number }} discharge ·
+            {{ p.light_load | number }} below 10 % load · η {{ p.eta_mean | number: '1.2-2' }} % ± {{ p.eta_std | number: '1.2-2' }}
+          } @else {
+            No active readings with an efficiency in this selection.
+          }
+        </div>
+      } @else if (previewing) {
+        <div class="preview">Counting readings…</div>
+      }
+    </section>
+
+    <!-- models -->
+    <section class="card panel">
+      <div class="panel-subhead" style="margin-top: 0">
+        <h3 class="panel-title" style="margin: 0">Models</h3>
+        <button type="button" class="link-btn" (click)="resetParams()">Defaults</button>
+      </div>
+
+      <h4 class="group-head"><span class="swatch" [style.background]="modelColors.greybox"></span> 1 · Grey-box loss model (backbone)</h4>
+      <p class="param-help">P<sub>loss</sub> = a + b·I + c·I² per unit of rating — a: standby / gate drive, b: conduction,
+        c: ohmic. b and c may vary with IGBT temperature and DC voltage; η = P<sub>out</sub> / (P<sub>out</sub> + P<sub>loss</sub>).</p>
+      <div class="param-grid">
+        @for (p of gbSpecs; track p.name) {
+          <div class="field" [class.check-field]="p.type === 'bool'" [title]="p.help || ''">
+            @if (p.type === 'bool') {
+              <label><input type="checkbox" [(ngModel)]="gbParams[p.name]" /> {{ p.label }}</label>
+            } @else if (p.type === 'choice') {
+              <label [for]="'gb' + p.name">{{ p.label }}</label>
+              <select [id]="'gb' + p.name" [(ngModel)]="gbParams[p.name]">
+                @for (c of p.choices ?? []; track c) {
+                  <option [value]="c">{{ c === 'ac' ? 'AC current (|S| / V_ac)' : 'DC current (|P| / V_dc)' }}</option>
+                }
+              </select>
+            } @else {
+              <label [for]="'gb' + p.name">{{ p.label }}</label>
+              <input [id]="'gb' + p.name" type="number" [(ngModel)]="gbParams[p.name]" [min]="p.min ?? null" [max]="p.max ?? null" [step]="p.step ?? 'any'" />
+            }
+          </div>
+        }
+      </div>
+
+      <h4 class="group-head"><span class="swatch" [style.background]="modelColors.gam"></span> 2 · GAM</h4>
+      <p class="param-help">Smooth curve per input (cubic splines), one load curve per direction — like a vendor efficiency map.</p>
+      <div class="param-grid">
+        @for (p of gamSpecs; track p.name) {
+          <div class="field" [class.check-field]="p.type === 'bool'" [title]="p.help || ''">
+            @if (p.type === 'bool') {
+              <label><input type="checkbox" [(ngModel)]="gamParams[p.name]" /> {{ p.label }}</label>
+            } @else {
+              <label [for]="'gam' + p.name">{{ p.label }}</label>
+              <input [id]="'gam' + p.name" type="number" [(ngModel)]="gamParams[p.name]" [min]="p.min ?? null" [max]="p.max ?? null" [step]="p.step ?? 'any'" />
+            }
+          </div>
+        }
+      </div>
+
+      <h4 class="group-head"><span class="swatch" [style.background]="modelColors.hybrid"></span> 3 · Gradient boosting on the grey-box residual</h4>
+      <div class="model-switch">
+        @for (b of options.models.boosters; track b.key) {
+          <button type="button" class="model-option" [class.on]="booster === b.key" (click)="setBooster(b.key)">{{ b.label }}</button>
+        }
+      </div>
+      <div class="param-grid">
+        @for (p of boostSpecs; track booster + p.name) {
+          <div class="field" [title]="p.help || ''">
+            <label [for]="'b' + p.name">{{ p.label }}</label>
+            <input [id]="'b' + p.name" type="number" [(ngModel)]="boostParams[p.name]" [min]="p.min ?? null" [max]="p.max ?? null" [step]="p.step ?? 'any'" />
+          </div>
+        }
+      </div>
+      <p class="param-help">Hybrid = grey-box + the trees' correction; TreeSHAP attributes the correction to the inputs.</p>
+
+      <h4 class="group-head">Split, cycles &amp; run</h4>
+      <div class="param-grid">
+        <div class="field">
+          <label for="split">Test rows</label>
+          <select id="split" [(ngModel)]="splitMethod">
+            <option value="chronological">Latest share of each unit</option>
+            <option value="random">Random share</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="test">Test share (%)</label>
+          <input id="test" type="number" min="5" max="50" step="5" [(ngModel)]="testPct" />
+        </div>
+        <div class="field" title="A charge phase starts a new cycle when its energy reaches this share of the unit's typical (p90) charge">
+          <label for="major">Major charge share</label>
+          <input id="major" type="number" min="0.05" max="1" step="0.05" [(ngModel)]="majorShare" />
+        </div>
+        <div class="field" title="A cycle that doesn't come back within this many SOC points of its start is 'open' and left out of the RTE regression">
+          <label for="soctol">SOC closure tolerance (pts)</label>
+          <input id="soctol" type="number" min="0" max="50" step="1" [(ngModel)]="socTolerance" />
+        </div>
+        <div class="field">
+          <label for="name">Run name</label>
+          <input id="name" type="text" [(ngModel)]="runName" placeholder="optional" maxlength="120" />
+        </div>
+        <div class="field check-field">
+          <label><input data-perm="ml.model:approve" type="checkbox" [(ngModel)]="makeDefault" /> Make it the estimator's default</label>
+        </div>
+      </div>
+
+      @if (trainError) {
+        <div class="form-error">{{ trainError }}</div>
+      }
+      <div class="form-actions">
+        @if (problem) {
+          <span class="problem">{{ problem }}</span>
+        }
+        <button type="button" class="btn btn-primary train-btn" [disabled]="!!problem || training" (click)="train()">
+          @if (training) {
+            <span class="spinner" aria-hidden="true"></span> Generating…
+          } @else {
+            Generate models
+          }
+        </button>
+      </div>
+    </section>
+  </div>
+}
+
+<!-- one run -->
+@if (run; as r) {
+  <section class="card run-card" [class.refreshing]="runLoading">
+    <div class="run-head">
+      <div>
+        <h3>
+          Run #{{ r.run_id }}{{ r.run_name ? ' · ' + r.run_name : '' }}
+          <span class="status-chip" [attr.data-status]="r.status">{{ r.status }}</span>
+          @if (r.is_default) {
+            <span class="status-chip" data-status="ACTIVE">Estimator default</span>
+          }
+        </h3>
+        <p class="muted small">
+          {{ r.pcs_ids.length }} PCS ({{ r.pcs_ids.map(shortUnit, this).join(', ') }}) · {{ window(r) }} ·
+          {{ r.n_points | number }} readings · {{ r.n_train | number }} train / {{ r.n_test | number }} test ({{ r.split_method }}) ·
+          {{ r.n_cycles }} cycles · residual {{ r.booster === 'lightgbm' ? 'LightGBM' : 'XGBoost' }} · {{ duration(r.duration_ms) }}
+        </p>
+        @if (r.results; as res) {
+          <p class="muted small">Test {{ plantTime(res.split.test_from) }} → {{ plantTime(res.split.test_to) }} · measured η
+            {{ res.split.eta_min | number: '1.2-2' }} – {{ res.split.eta_max | number: '1.2-2' }} % (σ {{ res.split.eta_std | number: '1.3-3' }})</p>
+        }
+      </div>
+      <div class="run-actions">
+        @if (r.status === 'COMPLETED' && !r.is_default) {
+          <button data-perm="ml.model:approve" type="button" class="btn btn-primary" (click)="makeDefaultRun(r)">Make estimator default</button>
+        }
+        @if (r.status === 'COMPLETED') {
+          <a class="btn btn-secondary" routerLink="/ml/efficiency-estimator" [queryParams]="{ model: r.run_id }">Try in Estimator</a>
+        }
+        <button type="button" class="btn btn-secondary" (click)="reuse(r)">Train a variant</button>
+      </div>
+    </div>
+
+    @if (r.error_message) {
+      <div class="form-error">{{ r.error_message }}</div>
+    }
+    @for (w of r.warnings; track w) {
+      <div class="warn-line">{{ w }}</div>
+    }
+
+    @if (r.status === 'COMPLETED' && r.metrics && r.results; as res) {
+      <!-- model comparison -->
+      <h4 class="section-title">PCS conversion efficiency · test rows</h4>
+      <div class="table-scroll">
+        <table class="data-table compare-table">
+          <thead>
+            <tr>
+              <th>Model</th>
+              <th class="num">R²</th>
+              <th class="num">MAE (pp)</th>
+              <th class="num">RMSE (pp)</th>
+              <th class="num">Max error (pp)</th>
+              <th class="num">Loss MAE (kW)</th>
+              <th class="num">Bias (pp)</th>
+              <th class="num">Train RMSE (pp)</th>
+            </tr>
+          </thead>
+          <tbody>
+            @for (k of modelKeys; track k) {
+              <tr>
+                <td><span class="swatch" [style.background]="modelColors[k]"></span> {{ modelLabels[k] }}
+                  @if (r.best_model === k) { <span class="best-chip">best RMSE</span> }</td>
+                <td class="num" [class.best]="best('r2') === k">{{ score(r.metrics[k].test, 'r2') }}</td>
+                <td class="num" [class.best]="best('mae') === k">{{ score(r.metrics[k].test, 'mae') }}</td>
+                <td class="num" [class.best]="best('rmse') === k">{{ score(r.metrics[k].test, 'rmse') }}</td>
+                <td class="num" [class.best]="best('max_error') === k">{{ score(r.metrics[k].test, 'max_error') }}</td>
+                <td class="num" [class.best]="best('loss_mae_kw') === k">{{ score(r.metrics[k].test, 'loss_mae_kw', 2) }}</td>
+                <td class="num" [class.best]="best('bias_pp') === k">{{ score(r.metrics[k].test, 'bias_pp', 4) }}</td>
+                <td class="num muted">{{ score(r.metrics[k].train, 'rmse') }}</td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      </div>
+      <p class="muted small">pp = percentage points of efficiency. Loss MAE is the error on the loss in kW (what the
+        efficiency error costs at that power). Stored per run in battery_ml.efficiency_score.</p>
+
+      <div class="score-split">
+        <div>
+          <h4 class="mini-title">RMSE (pp) by load band</h4>
+          <table class="data-table compare-table">
+            <thead><tr><th>Load</th><th class="num">n</th>
+              @for (k of modelKeys; track k) { <th class="num">{{ k === 'hybrid' ? 'Hybrid' : k === 'gam' ? 'GAM' : 'Grey-box' }}</th> }
+            </tr></thead>
+            <tbody>
+              @for (b of bandKeys; track b) {
+                <tr><td>{{ b }}</td><td class="num">{{ res.metrics_detail.by_load_band[b].hybrid.n }}</td>
+                  @for (k of modelKeys; track k) { <td class="num">{{ score(res.metrics_detail.by_load_band[b][k], 'rmse') }}</td> }
+                </tr>
+              }
+              @for (d of dirKeys; track d) {
+                <tr class="sep"><td>{{ d === 'charge' ? 'Charge' : 'Discharge' }}</td><td class="num">{{ res.metrics_detail.by_direction[d].hybrid.n }}</td>
+                  @for (k of modelKeys; track k) { <td class="num">{{ score(res.metrics_detail.by_direction[d][k], 'rmse') }}</td> }
+                </tr>
+              }
+            </tbody>
+          </table>
+        </div>
+        <div>
+          <h4 class="mini-title">RMSE (pp) per PCS unit</h4>
+          <table class="data-table compare-table">
+            <thead><tr><th>Unit</th><th class="num">n</th>
+              @for (k of modelKeys; track k) { <th class="num">{{ k === 'hybrid' ? 'Hybrid' : k === 'gam' ? 'GAM' : 'Grey-box' }}</th> }
+            </tr></thead>
+            <tbody>
+              @for (u of unitKeys; track u) {
+                <tr><td>{{ shortUnit(u) }}</td><td class="num">{{ res.metrics_detail.by_unit[u].hybrid.n }}</td>
+                  @for (k of modelKeys; track k) { <td class="num">{{ score(res.metrics_detail.by_unit[u][k], 'rmse') }}</td> }
+                </tr>
+              }
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="chart-grid">
+        <div class="chart-box wide">
+          <div class="chart-head">
+            <h4>Efficiency curve vs load</h4>
+            <div class="head-controls">
+              <select class="filter-select" [(ngModel)]="curveUnit" (ngModelChange)="buildCurve()">
+                @for (u of r.pcs_ids; track u) {
+                  <option [ngValue]="u">{{ unitLabel(u) }}</option>
+                }
+              </select>
+              <div class="seg">
+                <button type="button" [class.on]="curveDirection === 'charge'" (click)="curveDirection = 'charge'; buildCurve()">Charge</button>
+                <button type="button" [class.on]="curveDirection === 'discharge'" (click)="curveDirection = 'discharge'; buildCurve()">Discharge</button>
+              </div>
+            </div>
+          </div>
+          <p class="muted small">Each model along the unit's operating profile (temperatures, voltage and PF as they go with
+            the load in its data) with the measured readings (darker = test rows). The shaded band is the load range the unit
+            ran at; outside it the grey-box extrapolates by physics, the GAM and the trees hold flat.</p>
+          @if (curveChart) {
+            <app-chart-canvas [config]="curveChart" [height]="320" />
+          }
+        </div>
+
+        <div class="chart-box">
+          <div class="chart-head">
+            <h4>Predicted vs measured (test)</h4>
+            <div class="seg">
+              @for (k of modelKeys; track k) {
+                <button type="button" [class.on]="scatterModel === k" (click)="scatterModel = k; buildScatter()">
+                  {{ k === 'hybrid' ? 'Hybrid' : k === 'gam' ? 'GAM' : 'Grey-box' }}</button>
+              }
+            </div>
+          </div>
+          <p class="muted small">Triangles = charge, circles = discharge. Points on the dashed line are exact.</p>
+          @if (scatterChart) {
+            <app-chart-canvas [config]="scatterChart" [height]="280" />
+          }
+        </div>
+
+        <div class="chart-box">
+          <h4>Loss attribution (SHAP)</h4>
+          <p class="muted small">How much each input moves the boosting correction on top of the grey-box, on average
+            ({{ res.shap.n | number }} test rows, TreeSHAP).</p>
+          @if (shapChart) {
+            <app-chart-canvas [config]="shapChart" [height]="shapHeight" />
+          }
+        </div>
+
+        <div class="chart-box">
+          <h4>Grey-box coefficients · health signal</h4>
+          <p class="muted small">Losses in per unit of rated power at {{ res.greybox.reference.igbt_temp_c }} °C IGBT and nominal
+            DC voltage; current = {{ res.greybox.current_basis === 'ac' ? '|S| / V_ac' : '|P| / V_dc' }} (pu). Sensitivities per
+            +10 °C and per +0.1 pu DC voltage.</p>
+          <table class="data-table compare-table coef-table">
+            <thead><tr><th>Direction</th><th>Term</th><th class="num">Value</th><th class="num">/ +10 °C</th><th class="num">/ +0.1 V<sub>dc</sub></th></tr></thead>
+            <tbody>
+              @for (d of gbDirections; track d) {
+                @for (t of ['a', 'b', 'c']; track t; let first = $first) {
+                  <tr [class.sep]="first">
+                    <td>{{ first ? dirLabel(d) : '' }}</td>
+                    <td>{{ t === 'a' ? 'a · constant' : t === 'b' ? 'b · conduction (× I)' : 'c · ohmic (× I²)' }}</td>
+                    <td class="num mono">{{ fmtNum($any(res.greybox.directions[d])[t].value, 5) }}</td>
+                    <td class="num mono">{{ fmtNum($any(res.greybox.directions[d])[t].per_10c, 5) }}</td>
+                    <td class="num mono">{{ fmtNum($any(res.greybox.directions[d])[t].per_0p1_vdc, 5) }}</td>
+                  </tr>
+                }
+              }
+            </tbody>
+          </table>
+          @if (healthUnits().length) {
+            <h4 class="mini-title">Per unit (own fit) — a / b / c</h4>
+            <table class="data-table compare-table coef-table">
+              <thead><tr><th>Unit</th>
+                @for (d of gbDirections; track d) { <th class="num">{{ dirLabel(d) }} a</th><th class="num">b</th><th class="num">c</th> }
+              </tr></thead>
+              <tbody>
+                @for (u of healthUnits(); track u) {
+                  <tr><td>{{ shortUnit(u) }}</td>
+                    @for (d of gbDirections; track d) {
+                      <td class="num mono">{{ fmtNum($any(res.health.per_unit[u])[d]?.a.value, 5) }}</td>
+                      <td class="num mono">{{ fmtNum($any(res.health.per_unit[u])[d]?.b.value, 5) }}</td>
+                      <td class="num mono">{{ fmtNum($any(res.health.per_unit[u])[d]?.c.value, 5) }}</td>
+                    }
+                  </tr>
+                }
+              </tbody>
+            </table>
+          }
+        </div>
+
+        <div class="chart-box">
+          <h4>Loss index per week</h4>
+          <p class="muted small">Measured losses ÷ the pooled grey-box losses for the same operating points. 1.0 = as modelled;
+            a unit drifting upward is losing efficiency (ageing, fouled cooling, failing fans).</p>
+          @if (healthChart) {
+            <app-chart-canvas [config]="healthChart" [height]="260" />
+          }
+        </div>
+
+        <div class="chart-box">
+          <div class="chart-head">
+            <h4>GAM partial dependence</h4>
+            <select class="filter-select" [(ngModel)]="pdTerm" (ngModelChange)="buildPd()">
+              @for (k of pdKeys(); track k) {
+                <option [value]="k">{{ featureLabel(k) }}</option>
+              }
+            </select>
+          </div>
+          <p class="muted small">The GAM's shape function for one input: how much it adds to or takes from η (percentage
+            points) over its range, centred on its average effect. η = intercept + the sum of these curves.</p>
+          @if (pdChart) {
+            <app-chart-canvas [config]="pdChart" [height]="240" />
+          }
+        </div>
+
+        <div class="chart-box">
+          <h4>Residual model training</h4>
+          <p class="muted small">RMSE of the boosting correction per round. Test error rising while training error falls = over-fitting.</p>
+          @if (boostChart) {
+            <app-chart-canvas [config]="boostChart" [height]="240" />
+          }
+        </div>
+      </div>
+
+      <!-- round trip -->
+      <h4 class="section-title">Round-trip efficiency over cycles</h4>
+      <div class="metric-grid">
+        <div class="metric-tile">
+          <span class="metric-label">DC RTE · battery</span>
+          <span class="metric-value">{{ fmtPct(res.rte.rte_dc_pct?.median) }}</span>
+          <span class="metric-note">median of {{ res.rte.n_closed }} closed cycles</span>
+        </div>
+        <div class="metric-tile">
+          <span class="metric-label">AC RTE · PCS terminals</span>
+          <span class="metric-value">{{ fmtPct(res.rte.rte_ac_pct?.median) }}</span>
+          <span class="metric-note">composed {{ fmtPct(res.rte.rte_ac_comp_pct?.median) }}</span>
+        </div>
+        <div class="metric-tile">
+          <span class="metric-label">System RTE · POI</span>
+          <span class="metric-value">{{ fmtPct(res.rte.rte_sys_pct?.median) }}</span>
+          <span class="metric-note">with auxiliaries + HVAC · composed {{ fmtPct(res.rte.rte_sys_comp_pct?.median) }}</span>
+        </div>
+        <div class="metric-tile">
+          <span class="metric-label">Composition check</span>
+          <span class="metric-value small-value">MAE {{ score(res.rte.ac_composition_scores, 'mae') }} pp</span>
+          <span class="metric-note">AC RTE from measured DC RTE × the hybrid PCS model vs measured</span>
+        </div>
+        <div class="metric-tile train">
+          <span class="metric-label">DC RTE regression</span>
+          <span class="metric-value small-value">R² {{ score(res.rte.dc_model?.scores_cv, 'r2') }}</span>
+          <span class="metric-note">MAE {{ score(res.rte.dc_model?.scores_cv, 'mae') }} pp · {{ res.rte.dc_model?.folds ?? 0 }}-fold CV ·
+            {{ res.rte.dc_model?.n ?? 0 }} cycles</span>
+        </div>
+      </div>
+
+      <div class="chart-grid">
+        <div class="chart-box wide">
+          <div class="chart-head">
+            <h4>Measured round-trip per cycle</h4>
+            <select class="filter-select" [(ngModel)]="cycleUnit" (ngModelChange)="buildCycleCharts()">
+              @for (u of r.pcs_ids; track u) {
+                <option [ngValue]="u">{{ unitLabel(u) }}</option>
+              }
+            </select>
+          </div>
+          <p class="muted small">Cycle = start of a major charge to the start of the next one (the auxiliaries of the whole day
+            land in it). Outputs corrected for the SOC difference at the end; × = open cycle (SOC didn't return within the tolerance).
+            {{ closedShare }} cycles closed.</p>
+          @if (rteChart) {
+            <app-chart-canvas [config]="rteChart" [height]="280" />
+          }
+        </div>
+        <div class="chart-box wide">
+          <h4>Measured vs composed (DC RTE × PCS model, + auxiliaries)</h4>
+          <p class="muted small">The composed AC / system round-trip uses the measured DC round-trip and the hybrid model's
+            conversion efficiency over the cycle's own readings — how the instantaneous model adds up over a cycle.</p>
+          @if (compChart) {
+            <app-chart-canvas [config]="compChart" [height]="260" />
+          }
+        </div>
+        @if (res.rte.dc_model; as dm) {
+          <div class="chart-box">
+            <h4>DC round-trip regression (Ridge, α {{ dm.alpha }})</h4>
+            <p class="muted small">DC RTE (%) of closed cycles on the cycle features. Standardised coefficient = change in
+              DC RTE (pp) for one standard deviation of the feature.</p>
+            <table class="data-table compare-table">
+              <thead><tr><th>Feature</th><th class="num">Std. coef (pp)</th><th class="num">Per unit</th><th class="num">Range</th></tr></thead>
+              <tbody>
+                @for (c of dcCoefs(); track c.label) {
+                  <tr><td>{{ c.label }}</td><td class="num">{{ fmtNum(c.std, 3) }}</td><td class="num">{{ fmtNum(c.raw, 4) }}</td>
+                    <td class="num muted small nowrap">{{ fmtNum(dm.ranges[c.key].min, 2) }} – {{ fmtNum(dm.ranges[c.key].max, 2) }}</td></tr>
+                }
+              </tbody>
+            </table>
+          </div>
+        }
+        <div class="chart-box" [class.wide]="!res.rte.dc_model">
+          <h4>Cycles · {{ unitLabel(cycleUnit ?? 0) }}</h4>
+          <div class="table-scroll cycle-scroll">
+            <table class="data-table compare-table cycle-table">
+              <thead>
+                <tr>
+                  <th>Start</th><th class="num">Depth %</th><th class="num">DC in kWh</th><th class="num">DC</th><th class="num">AC</th>
+                  <th class="num">System</th><th class="num">Aux kWh</th><th class="num">η chg</th><th class="num">η dis</th><th>Set</th>
+                </tr>
+              </thead>
+              <tbody>
+                @for (c of cycleRows; track c.cycle_no) {
+                  <tr [class.dim]="!c.closed">
+                    <td class="nowrap">{{ plantTime(c.start_ts) }}</td>
+                    <td class="num">{{ fmtNum(c.depth_pct, 1) }}</td>
+                    <td class="num">{{ fmtNum(c.e_dc_in_kwh, 0) }}</td>
+                    <td class="num">{{ fmtNum(c.rte_dc_pct, 2) }}</td>
+                    <td class="num">{{ fmtNum(c.rte_ac_pct, 2) }}</td>
+                    <td class="num">{{ fmtNum(c.rte_sys_pct, 2) }}</td>
+                    <td class="num">{{ fmtNum(c.e_aux_kwh, 0) }}</td>
+                    <td class="num">{{ fmtNum(c.eta_chg_meas_pct, 2) }}</td>
+                    <td class="num">{{ fmtNum(c.eta_dis_meas_pct, 2) }}</td>
+                    <td>{{ c.data_set }}{{ c.closed ? '' : ' · open' }}</td>
+                  </tr>
+                }
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <div class="chart-box">
+          <h4>Settings</h4>
+          <dl class="settings">
+            <dt>Inputs</dt>
+            <dd>{{ groupLabels(r) }}</dd>
+            <dt>Grey-box</dt>
+            <dd class="mono small">{{ paramSummary(r.params['greybox']) }}</dd>
+            <dt>GAM</dt>
+            <dd class="mono small">{{ paramSummary(r.params['gam']) }}</dd>
+            <dt>{{ r.booster === 'lightgbm' ? 'LightGBM' : 'XGBoost' }}</dt>
+            <dd class="mono small">{{ paramSummary(r.params[r.booster]) }}</dd>
+            <dt>Cycles</dt>
+            <dd>major charge ≥ {{ r.params['major_share'] }} × p90 · SOC tolerance {{ r.params['soc_tolerance_pct'] }} pts</dd>
+          </dl>
+        </div>
+      </div>
+    }
+  </section>
+}
+
+<!-- history -->
+<div class="card history-card">
+  <div class="history-head">
+    <div>
+      <h3>Runs</h3>
+      <p class="muted small">battery_ml.efficiency_run · click a run to open it · test RMSE in efficiency percentage points</p>
+    </div>
+  </div>
+  @if (runsLoading && !runs.length) {
+    <div class="empty-state">Loading…</div>
+  } @else if (!runs.length) {
+    <div class="empty-state">No runs yet — generate the models above.</div>
+  } @else {
+    <div class="table-scroll">
+      <table class="data-table runs-table">
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>Name</th>
+            <th>Units</th>
+            <th>Window</th>
+            <th class="num">Readings</th>
+            <th class="num">Grey-box</th>
+            <th class="num">GAM</th>
+            <th class="num">Hybrid</th>
+            <th class="num">Cycles</th>
+            <th>Status</th>
+            <th class="num">Time</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          @for (x of runs; track x.run_id) {
+            <tr (click)="openRun(x.run_id)" [class.selected]="run?.run_id === x.run_id">
+              <td class="mono">{{ x.run_id }}</td>
+              <td>
+                {{ x.run_name || '—' }}
+                @if (x.is_default) {
+                  <span class="status-chip" data-status="ACTIVE">default</span>
+                }
+              </td>
+              <td class="small">{{ x.pcs_ids.map(shortUnit, this).join(', ') }}</td>
+              <td class="nowrap">{{ window(x) }}</td>
+              <td class="num">{{ x.n_points ?? '—' }}</td>
+              <td class="num">{{ score(x.metrics?.greybox?.test, 'rmse') }}</td>
+              <td class="num">{{ score(x.metrics?.gam?.test, 'rmse') }}</td>
+              <td class="num"><strong>{{ score(x.metrics?.hybrid?.test, 'rmse') }}</strong></td>
+              <td class="num">{{ x.n_cycles ?? '—' }}</td>
+              <td>
+                <span class="status-chip" [attr.data-status]="x.status">{{ x.status }}</span>
+                @if (x.error_message) {
+                  <div class="problem small">{{ x.error_message }}</div>
+                }
+              </td>
+              <td class="num">{{ duration(x.duration_ms) }}</td>
+              <td class="nowrap">
+                @if (x.status === 'COMPLETED' && !x.is_default) {
+                  <button data-perm="ml.model:approve" type="button" class="link-btn" (click)="makeDefaultRun(x, $event)">Default</button> ·
+                }
+                <button type="button" class="link-btn" (click)="deleteRun(x, $event)">Delete</button>
+              </td>
+            </tr>
+          }
+        </tbody>
+      </table>
+    </div>
+  }
+</div>

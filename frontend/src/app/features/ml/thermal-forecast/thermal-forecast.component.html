@@ -1,0 +1,178 @@
+<div class="page-header">
+  <div>
+    <h2>Temperature Forecast</h2>
+    <p class="subtitle">Cell, coolant, IGBT and enclosure temperature over the next minutes (P10–P90) per asset — to pre-cool and get ahead of derates and alarms.</p>
+  </div>
+  <a class="link training-link" routerLink="/ml/thermal-forecast-model">Open Temperature Forecast Model →</a>
+</div>
+
+<div class="card picker-card">
+  <div class="picker-row">
+    <div class="field picker-field">
+      <label for="model">Model run</label>
+      <select id="model" [ngModel]="modelKey" (ngModelChange)="selectModel($event)" [disabled]="!models.length">
+        <option value="active">Default run</option>
+        @for (m of models; track m.run_id) {
+          <option [value]="'' + m.run_id">{{ optionLabel(m) }}</option>
+        }
+      </select>
+      @if (modelsError) {
+        <span class="field-error">{{ modelsError }}</span>
+      }
+    </div>
+    @if (run; as r) {
+      <div class="field picker-field">
+        <label for="sys">Battery system</label>
+        <select id="sys" [ngModel]="systemId" (ngModelChange)="selectSystem($event)">
+          @for (s of r.system_ids; track s) {
+            <option [ngValue]="s">{{ systemLabel(s) }}</option>
+          }
+        </select>
+      </div>
+    }
+  </div>
+</div>
+
+@if (modelsLoaded && !models.length && !modelsError) {
+  <div class="card">
+    <div class="empty-state">No temperature forecast model yet. <a routerLink="/ml/thermal-forecast-model">Build one on the Temperature Forecast Model page</a>.</div>
+  </div>
+}
+
+@if (run; as r) {
+  <div class="tab-row">
+    <button type="button" class="tab" [class.on]="tab === 'live'" (click)="setTab('live')">Next {{ r.horizons_min[r.horizons_min.length - 1] }} min</button>
+    <button type="button" class="tab" [class.on]="tab === 'backtest'" (click)="setTab('backtest')">Backtest</button>
+  </div>
+
+  @if (tab === 'live') {
+    <div class="card view-card">
+      <div class="view-controls">
+        <div class="control-group">
+          <span class="control-label">Planned load</span>
+          <div class="seg">
+            <button type="button" [class.on]="planSource === 'scheduled'" (click)="planSource = 'scheduled'; loadPrediction()">Dispatch schedule</button>
+            <button type="button" [class.on]="planSource === 'typical'" (click)="planSource = 'typical'; loadPrediction()">Typical day</button>
+          </div>
+        </div>
+        <div class="toggles">
+          <label title="Return NULL forecasts when the newest reading is older than 60 min (the serving guard)">
+            <input type="checkbox" [(ngModel)]="enforceAge" (ngModelChange)="loadPrediction()" /> Require data &lt; 60 min old
+          </label>
+          <button type="button" class="link-btn" (click)="loadPrediction()" [disabled]="loading">{{ loading ? 'Forecasting…' : 'Refresh' }}</button>
+        </div>
+      </div>
+
+      @if (error) {
+        <div class="empty-state error">{{ error }}</div>
+      } @else if (prediction) {
+        <p class="muted small">
+          From the newest reading ({{ originTime() }}, plant time) — data is {{ dataAge }} old.
+          @if ((prediction.data_age_min ?? 0) > 60 && !enforceAge) {
+            <span class="note-warn">Forecasting as of that reading; tick "Require data &lt; 60 min old" to apply the staleness guard.</span>
+          }
+        </p>
+        <div class="target-cards">
+          @for (c of cards; track c.target) {
+            <div class="t-card" [attr.data-status]="c.status">
+              <div class="t-head">
+                <div>
+                  <h3>{{ c.label }}</h3>
+                  <span class="muted small">{{ c.assetType.replace('_', ' ') }} {{ c.assetId ?? '' }} · pre-alarm {{ num(c.threshold, 0) }} °C
+                    @if (c.alarm) { · alarm {{ c.alarm }} °C }</span>
+                </div>
+                <span class="status-pill" [attr.data-status]="c.status">
+                  @switch (c.status) {
+                    @case ('ALERT') { ▲ Alert — P50 reaches pre-alarm }
+                    @case ('WATCH') { ● Watch — P90 reaches pre-alarm }
+                    @case ('STALE') { ✕ {{ c.flag === 'stale' ? 'Stale inputs' : 'Missing inputs' }} — no forecast }
+                    @default { ✓ OK }
+                  }
+                </span>
+              </div>
+              <div class="t-values">
+                <div><span class="tile-label">Now</span><strong>{{ num(c.now) }} °C</strong></div>
+                @for (row of c.rows; track row.horizon_min) {
+                  <div>
+                    <span class="tile-label">+{{ row.horizon_min }} min</span>
+                    <strong>{{ num(row.pred_c) }} °C</strong>
+                    <span class="muted small">{{ num(row.p10_c) }} – {{ num(row.p90_c) }}</span>
+                  </div>
+                }
+              </div>
+              @if (c.chart) {
+                <app-chart-canvas [config]="c.chart" [height]="190" />
+              }
+            </div>
+          }
+        </div>
+        <p class="muted small">Forecast = RC grey-box (steady state of the planned load, heat sink and ambient, approached with a fitted time
+          constant) + LightGBM quantile correction. Ambient ahead = now + the typical daily swing (no weather feed yet).</p>
+      } @else if (loading) {
+        <div class="empty-state">Forecasting…</div>
+      }
+    </div>
+  }
+
+  @if (tab === 'backtest') {
+    <div class="card view-card">
+      <div class="view-controls">
+        <div class="control-group">
+          <span class="control-label">Target</span>
+          <select class="filter-select" [(ngModel)]="btTarget" (ngModelChange)="loadBacktest()">
+            @for (t of r.targets; track t) {
+              <option [value]="t">{{ targetLabel(t) }}</option>
+            }
+          </select>
+          <span class="control-label">Horizon</span>
+          <select class="filter-select" [(ngModel)]="btHorizon" (ngModelChange)="loadBacktest()">
+            @for (h of r.horizons_min; track h) {
+              <option [ngValue]="h">{{ h }} min</option>
+            }
+          </select>
+        </div>
+        <div class="toggles">
+          @for (m of methods; track m) {
+            <label><input type="checkbox" [checked]="btShow.has(m)" (change)="toggleMethod(m)" />
+              <span class="swatch line" [style.background]="methodColors[m]"></span> {{ methodLabels[m] }}</label>
+          }
+        </div>
+      </div>
+      <div class="origin-row">
+        <button type="button" class="btn btn-secondary" [disabled]="btOffset === 0" (click)="shiftWindow(-btDays)">◀</button>
+        <span class="small">{{ windowLabel() }}</span>
+        <button type="button" class="btn btn-secondary" [disabled]="btOffset + btDays >= btSpanDays" (click)="shiftWindow(btDays)">▶</button>
+        <select class="filter-select narrow" [(ngModel)]="btDays" (ngModelChange)="buildBacktest()">
+          @for (d of [1, 2, 4, 7]; track d) {
+            <option [ngValue]="d">{{ d }} day{{ d > 1 ? 's' : '' }}</option>
+          }
+        </select>
+        <span class="muted small">test period, {{ btHorizon }} min ahead · each point is the forecast made {{ btHorizon }} min earlier</span>
+      </div>
+      @if (btLoading && !btCfg) {
+        <div class="empty-state">Loading…</div>
+      }
+      @if (btCfg) {
+        <app-chart-canvas [config]="btCfg" [height]="320" />
+      }
+      <h4 class="sub-title">Scores · {{ targetLabel(btTarget) }} · {{ btHorizon }} min · all systems</h4>
+      <table class="data-table bt-table">
+        <thead><tr><th>Method</th><th class="num">MAE °C</th><th class="num">Pinball</th><th class="num">Cover</th><th class="num">Recall P50 · P90</th><th class="num">Events</th></tr></thead>
+        <tbody>
+          @for (m of methods; track m) {
+            @if (metric(m); as s) {
+              <tr [class.best]="m === 'hybrid'">
+                <td><span class="swatch line" [style.background]="methodColors[m]"></span> {{ methodLabels[m] }}</td>
+                <td class="num">{{ num(s.mae, 2) }}</td>
+                <td class="num">{{ num(s.pinball, 3) }}</td>
+                <td class="num">{{ num(s.coverage_pct, 0) }} %</td>
+                <td class="num">{{ pct(s.recall_p50) }} · {{ pct(s.recall_p90) }}</td>
+                <td class="num">{{ s.events ?? '—' }}</td>
+              </tr>
+            }
+          }
+        </tbody>
+      </table>
+    </div>
+  }
+}

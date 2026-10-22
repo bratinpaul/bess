@@ -1,0 +1,61 @@
+<div class="page-header">
+  <div>
+    <a class="back-link" routerLink="/ems-controllers">← Back to EMS controllers</a>
+    @if (item) {
+      <h2>{{ item.ems_code }}</h2>
+    }
+  </div>
+  @if (item) {
+    <div class="header-actions">
+      <app-asset-links assetType="ems_controller" [assetId]="item.ems_id" [name]="item.ems_code" [systemId]="item.battery_system_id" />
+      <a class="btn btn-primary" [routerLink]="['/ems-controllers', item.ems_id, 'edit']">Edit Controller</a>
+    </div>
+  }
+</div>
+
+<div class="card">
+  @if (loading) {
+    <div class="empty-state">Loading…</div>
+  } @else if (error) {
+    <div class="empty-state error">{{ error }}</div>
+  } @else if (item) {
+    <dl class="detail-grid">
+      <div class="detail-item">
+        <dt>EMS Code</dt>
+        <dd class="mono">{{ item.ems_code }}</dd>
+      </div>
+      <div class="detail-item">
+        <dt>Battery System</dt>
+        <dd>
+          @if (item.battery_system_id) {
+            <a [routerLink]="['/battery-systems', item.battery_system_id]">{{ item.system_name }}</a>
+          } @else {
+            <span class="status-badge warn">Not assigned</span>
+          }
+        </dd>
+      </div>
+      <div class="detail-item">
+        <dt>Manufacturer</dt>
+        <dd>{{ item.manufacturer ?? '—' }}</dd>
+      </div>
+      <div class="detail-item">
+        <dt>Model</dt>
+        <dd>{{ item.model ?? '—' }}</dd>
+      </div>
+      <div class="detail-item">
+        <dt>Firmware Version</dt>
+        <dd>{{ item.firmware_version ?? '—' }}</dd>
+      </div>
+      <div class="detail-item">
+        <dt>Control Mode</dt>
+        <dd>{{ item.control_mode ?? '—' }}</dd>
+      </div>
+      @if (item.source_uuid) {
+        <div class="detail-item">
+          <dt>Source UUID</dt>
+          <dd class="mono small">{{ item.source_uuid }}</dd>
+        </div>
+      }
+    </dl>
+  }
+</div>

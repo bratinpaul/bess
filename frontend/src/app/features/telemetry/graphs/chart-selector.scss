@@ -1,0 +1,97 @@
+/* Chart selector: the grid of checkbox cards above the graphs on every telemetry page. */
+.chart-selector {
+  padding: 16px 20px 18px;
+}
+
+.chart-selector-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.chart-selector-head h3 {
+  display: inline;
+  margin: 0 10px 0 0;
+  font-size: 14px;
+}
+
+.chart-selector-count {
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+
+.chart-selector-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.btn-sm {
+  padding: 5px 12px;
+  font-size: 12px;
+}
+
+.chart-selector-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+  grid-auto-rows: 1fr;
+  gap: 8px;
+}
+
+.chart-option {
+  --box: #63f8ba;
+  --tick: #10312a;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  background: var(--color-surface);
+  cursor: pointer;
+  user-select: none;
+  transition: border-color 0.12s ease, background 0.12s ease;
+}
+
+.chart-option:hover {
+  border-color: #9aa1ab;
+}
+
+.chart-option.on {
+  border-color: #3fcf95;
+  background: rgba(99, 248, 186, 0.1);
+}
+
+.chart-option .box {
+  margin-top: 1px;
+}
+
+.chart-option-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.chart-option-title {
+  overflow: hidden;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.chart-option:not(.on) .chart-option-title {
+  color: var(--color-text-muted);
+}
+
+.chart-option-meta {
+  overflow: hidden;
+  font-size: 11px;
+  color: var(--color-text-muted);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}

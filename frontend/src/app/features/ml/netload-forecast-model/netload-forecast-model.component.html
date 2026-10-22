@@ -1,0 +1,472 @@
+<div class="page-header">
+  <div>
+    <h2>Net-load Forecast Model</h2>
+    <p class="subtitle">
+      Train net-load forecasters (P10 / P50 / P90 every 5 min, up to 48 h ahead) and the daily billing-peak forecast, and
+      compare them on the same backtest. View the forecasts on <a routerLink="/ml/netload-forecast">Demand / Peak Forecast</a>.
+    </p>
+  </div>
+</div>
+
+@if (optionsError) {
+  <div class="card empty-state error">{{ optionsError }}</div>
+}
+
+@if (options) {
+  <div class="train-grid">
+    <!-- data -->
+    <section class="card panel">
+      <h3 class="panel-title">Data</h3>
+      <h4 class="group-head">Metering point (net load = gross − behind-the-meter generation)</h4>
+      <div class="unit-list">
+        @for (u of options.units; track u.mp_id) {
+          <label class="feature-group" [class.on]="mpIds.has(u.mp_id)" [class.dim]="!u.readings">
+            <input type="checkbox" [checked]="mpIds.has(u.mp_id)" [disabled]="!u.readings" (change)="toggleUnit(u)" />
+            <span class="fg-text">
+              <span class="fg-title">{{ unitLabel(u) }}</span>
+              <span class="fg-meta">
+                @if (u.readings) {
+                  {{ u.readings | number }} 5-min readings · {{ u.date_from }} → {{ u.date_to }} · mean {{ num(u.net_mean, 0) }} ·
+                  max {{ num(u.net_max, 0) }} kW · weather {{ u.station_code ?? 'none' }} ({{ u.wx_fc_runs }} forecast runs)
+                } @else {
+                  no demand readings
+                }
+              </span>
+            </span>
+          </label>
+        }
+      </div>
+
+      <div class="form-grid three">
+        <div class="field">
+          <label for="from">From</label>
+          <input id="from" type="date" [(ngModel)]="dateFrom" (ngModelChange)="schedulePreview()" />
+        </div>
+        <div class="field">
+          <label for="to">To</label>
+          <input id="to" type="date" [(ngModel)]="dateTo" (ngModelChange)="schedulePreview()" />
+        </div>
+        <div class="field" title="The daily billing-window peak the BESS should keep the site under; empty = the 75th percentile of the training days' peaks">
+          <label for="thr">Peak threshold (kW)</label>
+          <input id="thr" type="number" min="1" step="10" [(ngModel)]="threshold" (ngModelChange)="buildPreviewChart()"
+            [placeholder]="autoThreshold ? 'auto ≈ ' + autoThreshold : 'auto'" />
+        </div>
+      </div>
+
+      @if (firstTariff; as t) {
+        <div class="tariff-strip">
+          <span><strong>Billing window</strong> {{ hours([t.peak_window_start ?? 17, t.peak_window_end ?? 22]) }}</span>
+          <span><strong>Demand charge</strong> {{ num(t.demand_charge_per_kw, 2) }} / kW</span>
+          <span><strong>Measurement</strong> {{ t.measurement_minutes ?? '—' }} min</span>
+          <span><strong>Ratchet</strong> {{ num(t.ratchet_pct, 0) }} %</span>
+          <span class="muted small">battery_master.demand_tariff · {{ t.name }}</span>
+        </div>
+      }
+
+      <h4 class="group-head">Weather input</h4>
+      <div class="radio-row">
+        <label class="feature-group" [class.on]="weatherSource === 'forecast'">
+          <input type="radio" name="wx" value="forecast" [(ngModel)]="weatherSource" />
+          <span class="fg-text">
+            <span class="fg-title">Forecast as issued</span>
+            <span class="fg-meta">The newest weather_forecast run issued before each origin — what you'd have live</span>
+          </span>
+        </label>
+        <label class="feature-group" [class.on]="weatherSource === 'actual'">
+          <input type="radio" name="wx" value="actual" [(ngModel)]="weatherSource" />
+          <span class="fg-text">
+            <span class="fg-title">Measured (perfect forecast)</span>
+            <span class="fg-meta">weather_actual at each target — an upper bound on what better weather forecasts buy</span>
+          </span>
+        </label>
+      </div>
+
+      <h4 class="group-head">Features</h4>
+      <div class="feature-groups">
+        @for (g of options.feature_groups; track g.key) {
+          <label class="feature-group" [class.on]="groups.has(g.key)">
+            <input type="checkbox" [checked]="groups.has(g.key)" [disabled]="g.required" (change)="toggleGroup(g.key, g.required)" />
+            <span class="fg-text">
+              <span class="fg-title">{{ g.label }}{{ g.required ? ' · always' : '' }}</span>
+              <span class="fg-meta">{{ g.features.join(', ') }}</span>
+            </span>
+          </label>
+        }
+      </div>
+
+      @for (p of preview; track p.mp_id) {
+        <div class="preview">
+          <strong>{{ p.days ?? 0 }}</strong> days · {{ p.workdays ?? 0 }} workdays · {{ p.holidays ?? 0 }} holiday(s) ·
+          {{ p.weather_runs ?? 0 }} weather-forecast runs
+          @if (p.missing) {
+            <div class="preview-warn">{{ p.missing }} missing 5-min readings (interpolated up to 30 min).</div>
+          }
+          @if (p.calendar_missing) {
+            <div class="preview-warn">{{ p.calendar_missing }} day(s) not in the calendar (Core → Reference → Calendar):
+              Saturday / Sunday counted as weekend, no holidays.</div>
+          }
+        </div>
+      } @empty {
+        @if (previewing) {
+          <div class="preview">Reading the demand…</div>
+        }
+      }
+      @if (previewChart) {
+        <div class="chart-box flat">
+          <h4>Daily billing-window peaks</h4>
+          <app-chart-canvas [config]="previewChart" [height]="190" />
+        </div>
+      }
+    </section>
+
+    <!-- models -->
+    <section class="card panel">
+      <div class="panel-subhead" style="margin-top: 0">
+        <h3 class="panel-title" style="margin: 0">Models</h3>
+        <button type="button" class="link-btn" (click)="resetParams()">Defaults</button>
+      </div>
+      <div class="model-list">
+        @for (m of options.models; track m.key) {
+          <div class="model-row" [class.on]="chosen.has(m.key)">
+            <label class="model-check">
+              <input type="checkbox" [checked]="chosen.has(m.key)" [disabled]="m.always" (change)="toggleModel(m)" />
+              <span class="swatch line" [style.background]="colors[m.key]"></span>
+              <span>
+                <strong>{{ m.label }}</strong>
+                <span class="fam">{{ familyLabel(m.family) }}{{ m.always ? ' · always (skill reference)' : '' }}</span>
+              </span>
+            </label>
+            @if (m.params.length) {
+              <button type="button" class="link-btn" (click)="openParams = openParams === m.key ? null : m.key">
+                {{ openParams === m.key ? 'Hide' : 'Parameters' }}
+              </button>
+            }
+            @if (openParams === m.key) {
+              <div class="param-grid model-params">
+                @for (p of m.params; track p.name) {
+                  <div class="field" [title]="p.help || ''">
+                    <label [for]="m.key + p.name">{{ p.label }}</label>
+                    <input [id]="m.key + p.name" type="number" [(ngModel)]="params[m.key][p.name]" [min]="p.min" [max]="p.max" [step]="p.step" />
+                  </div>
+                }
+              </div>
+            }
+          </div>
+        }
+        <div class="model-row off-row" title="Needs PyTorch, which the ML service doesn't use">
+          <span class="fam">Temporal Fusion Transformer / LSTM — not available (no PyTorch); the N-BEATS-style MLP covers the
+            deep multi-horizon slot.</span>
+        </div>
+      </div>
+
+      <h4 class="group-head">Horizon &amp; backtest</h4>
+      <div class="param-grid">
+        <div class="field">
+          <label for="h">Horizon (hours ahead)</label>
+          <input id="h" type="number" min="1" max="48" step="1" [(ngModel)]="horizon" />
+        </div>
+        <div class="field">
+          <label for="tp">Test share (%)</label>
+          <input id="tp" type="number" min="10" max="50" step="5" [(ngModel)]="testPct" />
+        </div>
+        <div class="field" title="Hours between the backtest forecast origins in the test period">
+          <label for="os">Backtest origin every (h)</label>
+          <input id="os" type="number" min="1" max="48" step="1" [(ngModel)]="originStep" />
+        </div>
+        <div class="field" title="Hours between training origins (1 = every hour, slower)">
+          <label for="ts">Training origin every (h)</label>
+          <input id="ts" type="number" min="1" max="24" step="1" [(ngModel)]="trainStep" />
+        </div>
+        <div class="field">
+          <label for="name">Run name</label>
+          <input id="name" type="text" [(ngModel)]="runName" placeholder="optional" maxlength="120" />
+        </div>
+        <div class="field check-field">
+          <label><input data-perm="ml.model:approve" type="checkbox" [(ngModel)]="makeDefault" /> Make it the viewer's default</label>
+        </div>
+      </div>
+      <p class="param-help">Resolution: 5 min (the tariff's demand measurement). Every model is backtested from the same
+        origins (on whole hours); scores are on the test period only. Daily peaks are scored on test days whose whole
+        billing window lies inside a forecast's horizon.</p>
+
+      @if (trainError) {
+        <div class="form-error">{{ trainError }}</div>
+      }
+      <div class="form-actions">
+        @if (problem) {
+          <span class="problem">{{ problem }}</span>
+        }
+        <button type="button" class="btn btn-primary train-btn" [disabled]="!!problem || training" (click)="train()">
+          @if (training) {
+            <span class="spinner" aria-hidden="true"></span> Training {{ chosen.size }} models… {{ elapsed }} s
+          } @else {
+            Train &amp; backtest
+          }
+        </button>
+      </div>
+    </section>
+  </div>
+}
+
+<!-- one run -->
+@if (run; as r) {
+  <section class="card run-card" [class.refreshing]="runLoading">
+    <div class="run-head">
+      <div>
+        <h3>
+          Run #{{ r.run_id }}{{ r.run_name ? ' · ' + r.run_name : '' }}
+          <span class="status-chip" [attr.data-status]="r.status">{{ r.status }}</span>
+          @if (r.is_default) {
+            <span class="status-chip" data-status="ACTIVE">Viewer default</span>
+          }
+        </h3>
+        <p class="muted small">
+          {{ r.mp_ids.map(shortUnit, this).join(', ') }} · {{ window(r) }} · {{ r.n_readings | number }} readings ·
+          {{ r.horizon_hours }} h horizon · {{ r.n_train_rows | number }} training rows · {{ r.n_test_origins }} backtest
+          origins (every {{ r.origin_step_h }} h) · {{ r.n_test_days }} test days · weather
+          {{ r.weather_source === 'actual' ? 'measured (upper bound)' : 'as forecast' }} · {{ duration(r.duration_ms) }}
+        </p>
+      </div>
+      <div class="run-actions">
+        @if (r.status === 'COMPLETED' && !r.is_default) {
+          <button data-perm="ml.model:approve" type="button" class="btn btn-primary" (click)="makeDefaultRun(r)">Make viewer default</button>
+        }
+        @if (r.status === 'COMPLETED') {
+          <a class="btn btn-secondary" routerLink="/ml/netload-forecast" [queryParams]="{ model: r.run_id }">Open in Demand / Peak Forecast</a>
+        }
+        <button type="button" class="btn btn-secondary" (click)="reuse(r)">Train a variant</button>
+      </div>
+    </div>
+
+    @if (r.error_message) {
+      <div class="form-error">{{ r.error_message }}</div>
+    }
+    @for (w of r.warnings; track w) {
+      <div class="warn-line">{{ w }}</div>
+    }
+
+    @if (r.status === 'COMPLETED' && r.metrics && r.results; as res) {
+      <h4 class="section-title">Net-load backtest · test period · kW</h4>
+      <div class="table-scroll">
+        <table class="data-table compare-table score-table">
+          <thead>
+            <tr>
+              <th>Model</th>
+              @for (c of loadCols; track c.key) {
+                <th class="num" [title]="c.help">{{ c.label }}</th>
+              }
+              <th class="num">Fit + backtest</th>
+            </tr>
+          </thead>
+          <tbody>
+            @for (k of modelKeys; track k) {
+              <tr>
+                <td class="nowrap"><span class="swatch line" [style.background]="colors[k]"></span> {{ labels[k] }}
+                  @if (r.best_model === k) { <span class="best-chip">best pinball</span> }</td>
+                @for (c of loadCols; track c.key) {
+                  <td class="num" [class.best]="isBest(k, c, modelKeys)">{{ cell(k, c) }}</td>
+                }
+                <td class="num muted">{{ timing(k) }}</td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      </div>
+      <p class="muted small">Green = best in its column. Coverage: 80 % is right (P10–P90). Skill below 0 means the model loses
+        to "the same slot on the last day of the same type". Stored per run in battery_ml.netload_forecast_score.</p>
+
+      <h4 class="section-title">Daily billing peak · {{ res.threshold.test_days }} test days ·
+        threshold {{ num(res.threshold.kw, 0) }} kW {{ res.threshold.given ? '' : '(auto: 75th percentile of training peaks)' }} ·
+        {{ res.threshold.test_days_above }} test day(s) above it</h4>
+      <div class="table-scroll">
+        <table class="data-table compare-table score-table">
+          <thead>
+            <tr>
+              <th>Model</th>
+              @for (c of peakCols; track c.key) {
+                <th class="num" [title]="c.help">{{ c.label }}</th>
+              }
+            </tr>
+          </thead>
+          <tbody>
+            @for (k of peakKeys; track k) {
+              <tr>
+                <td class="nowrap"><span class="swatch line" [style.background]="colors[k]"></span> {{ labels[k] }}</td>
+                @for (c of peakCols; track c.key) {
+                  <td class="num" [class.best]="isBest(k, c, peakKeys)">{{ cell(k, c) }}</td>
+                }
+              </tr>
+            }
+            @if (res.classifier?.reference) {
+              <tr class="ref-row">
+                <td class="nowrap muted">Reference: training breach rate per day class</td>
+                @for (c of peakCols; track c.key) {
+                  <td class="num muted">{{ c.key.startsWith('exceed') ? refCell(c) : '' }}</td>
+                }
+              </tr>
+            }
+          </tbody>
+        </table>
+      </div>
+      <p class="muted small">Peaks per (origin, test day) with the whole billing window in the horizon. Regressors: peak =
+        highest P50 of the window plus the held-out calibration below; probability from their peak band. The classifier
+        (and its reference) give a probability only. Demand charge {{ num(res.demand_charge_per_kw, 2) }} / kW: a peak
+        error of 100 kW on the month's billing peak is {{ num((res.demand_charge_per_kw ?? 0) * 100, 0) }} of demand charge.</p>
+
+      <div class="chart-grid">
+        <div class="chart-box wide">
+          <h4>Day-ahead peak vs actual</h4>
+          <p class="muted small">Each test day: every model's P50 peak from the backtest origin closest to 24 h before the
+            window, the actual billing-window peak and the threshold.</p>
+          @if (peakChart) {
+            <app-chart-canvas [config]="peakChart" [height]="280" />
+          } @else {
+            <div class="empty-state">Loading peaks…</div>
+          }
+        </div>
+        <div class="chart-box">
+          <h4>Error by hours ahead</h4>
+          <p class="muted small">MAE of P50 per hour of lead; the best model (pinball) is thicker.</p>
+          @if (leadChart) {
+            <app-chart-canvas [config]="leadChart" [height]="260" />
+          }
+        </div>
+        <div class="chart-box">
+          <h4>Error by hour of day</h4>
+          <p class="muted small">MAE of P50 per target hour: midday misses come from PV under passing cloud; the evening ramp after PV fades is where the billing peak forms.</p>
+          @if (hourChart) {
+            <app-chart-canvas [config]="hourChart" [height]="260" />
+          }
+        </div>
+        <div class="chart-box">
+          <div class="chart-head">
+            <h4>Feature importance</h4>
+            <select class="filter-select" [(ngModel)]="importanceModel" (ngModelChange)="buildImportance()">
+              @for (m of importanceModels; track m) {
+                <option [value]="m">{{ modelName(m) }}{{ m === 'peak_classifier' ? ' · coefficients' : ' · P50' }}</option>
+              }
+            </select>
+          </div>
+          <p class="muted small">anchor = mean of the same slot on the last 3 same-type days; *_fc = weather as known at the origin.</p>
+          @if (importanceChart) {
+            <app-chart-canvas [config]="importanceChart" [height]="importanceHeight" />
+          }
+        </div>
+        <div class="chart-box">
+          <h4>Peak calibration (held-out training days)</h4>
+          <p class="muted small">The highest point of a smooth P50 path misses the 5-min noise of the real peak; this offset
+            (actual − highest P50) is added back. The naïve uses a real day's peak and needs none.</p>
+          <table class="data-table compare-table">
+            <thead><tr><th>Model</th><th class="num">Peaks</th><th class="num">Median</th><th class="num">P10</th><th class="num">P90</th></tr></thead>
+            <tbody>
+              @for (x of calRows; track x.k) {
+                <tr>
+                  <td class="nowrap">{{ labels[x.k] }}</td>
+                  <td class="num">{{ x.c.n }}{{ x.c.days ? ' (' + x.c.days + ' days)' : '' }}</td>
+                  <td class="num">{{ num(x.c.median, 0) }}</td>
+                  <td class="num">{{ num(x.c.q10, 0) }}</td>
+                  <td class="num">{{ num(x.c.q90, 0) }}</td>
+                </tr>
+              }
+            </tbody>
+          </table>
+          @if (res.classifier; as clf) {
+            <h4 class="mini-title">Peak classifier · {{ clf.train_days }} training days</h4>
+            <p class="muted small">Training breach rate: workdays {{ num((clf.class_rate['workday'] ?? 0) * 100, 0) }} %,
+              other days {{ num((clf.class_rate['non-workday'] ?? 0) * 100, 0) }} %. Standardised coefficients (+ = more
+              likely to breach):</p>
+            <div class="coef-list">
+              @for (x of coefRows; track x.f) {
+                <span class="coef" [class.neg]="x.v < 0">{{ x.f }} <strong>{{ x.v > 0 ? '+' : '' }}{{ num(x.v, 2) }}</strong></span>
+              }
+            </div>
+          }
+        </div>
+        <div class="chart-box">
+          <h4>Split</h4>
+          <table class="data-table compare-table">
+            <thead><tr><th>Metering point</th><th>Training to</th><th>Test</th></tr></thead>
+            <tbody>
+              @for (x of splitRows; track x.mp) {
+                <tr><td>{{ shortUnit(x.mp) }}</td><td class="nowrap">{{ plantTime(x.s.train_to) }}</td>
+                  <td class="nowrap">{{ plantTime(x.s.test_from) }} → {{ plantTime(x.s.test_to) }}</td></tr>
+              }
+            </tbody>
+          </table>
+          <p class="muted small">Billing window {{ hours(res.window) }} · weather from forecast runs on
+            {{ num((res.weather_share ?? 0) * 100, 0) }} % of test targets · PV per W/m²:
+            {{ num(res.pv_ratio[r.mp_ids[0]], 2) }} kW.</p>
+        </div>
+      </div>
+    }
+  </section>
+}
+
+<!-- history -->
+<div class="card history-card">
+  <div class="history-head">
+    <div>
+      <h3>Runs</h3>
+      <p class="muted small">battery_ml.netload_forecast_run · click a run to open it</p>
+    </div>
+  </div>
+  @if (runsLoading && !runs.length) {
+    <div class="empty-state">Loading…</div>
+  } @else if (!runs.length) {
+    <div class="empty-state">No runs yet — train the models above.</div>
+  } @else {
+    <div class="table-scroll">
+      <table class="data-table runs-table">
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>Name</th>
+            <th>Metering point</th>
+            <th>Window</th>
+            <th class="num">Horizon</th>
+            <th>Best</th>
+            <th class="num">Best MAE</th>
+            <th class="num">Naïve MAE</th>
+            <th class="num">Peak MAE</th>
+            <th>Status</th>
+            <th class="num">Time</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          @for (x of runs; track x.run_id) {
+            <tr (click)="openRun(x.run_id)" [class.selected]="run?.run_id === x.run_id">
+              <td class="mono">{{ x.run_id }}</td>
+              <td>
+                {{ x.run_name || '—' }}
+                @if (x.is_default) {
+                  <span class="status-chip" data-status="ACTIVE">default</span>
+                }
+              </td>
+              <td class="small">{{ x.mp_ids.map(shortUnit, this).join(', ') }}</td>
+              <td class="nowrap">{{ window(x) }}</td>
+              <td class="num">{{ x.horizon_hours }} h</td>
+              <td>{{ x.best_model ? labels[x.best_model] : '—' }}</td>
+              <td class="num"><strong>{{ num(x.best_model ? x.metrics?.[x.best_model]?.mae : null) }}</strong></td>
+              <td class="num">{{ num(x.metrics?.['seasonal_naive']?.mae) }}</td>
+              <td class="num">{{ num(x.best_model ? x.metrics?.[x.best_model]?.peak_mae_kw : null) }}</td>
+              <td>
+                <span class="status-chip" [attr.data-status]="x.status">{{ x.status }}</span>
+                @if (x.error_message) {
+                  <div class="problem small">{{ x.error_message }}</div>
+                }
+              </td>
+              <td class="num">{{ duration(x.duration_ms) }}</td>
+              <td class="nowrap">
+                @if (x.status === 'COMPLETED' && !x.is_default) {
+                  <button data-perm="ml.model:approve" type="button" class="link-btn" (click)="makeDefaultRun(x, $event)">Default</button> ·
+                }
+                <button type="button" class="link-btn" (click)="deleteRun(x, $event)">Delete</button>
+              </td>
+            </tr>
+          }
+        </tbody>
+      </table>
+    </div>
+  }
+</div>

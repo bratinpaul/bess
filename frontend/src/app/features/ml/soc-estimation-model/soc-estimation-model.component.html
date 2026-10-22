@@ -1,0 +1,422 @@
+<div class="page-header">
+  <div>
+    <h2>SOC Estimation Model</h2>
+    <p class="subtitle">
+      Build the SOC estimator: an extended Kalman filter (coulomb counting with a sensor-bias state, rested-OCV updates,
+      FULL_CHARGE recalibration) plus LightGBM quantile corrections — scored against the soc_reference anchors and the flat
+      mid-SOC region where it must beat coulomb counting. Use it on the <a routerLink="/ml/soc-estimator">SOC Estimator</a>.
+    </p>
+  </div>
+</div>
+
+@if (optionsError) {
+  <div class="card empty-state error">{{ optionsError }}</div>
+}
+
+@if (options) {
+  <div class="train-grid">
+    <section class="card panel">
+      <h3 class="panel-title">Data</h3>
+      <h4 class="group-head">Battery systems (v_soc_features)</h4>
+      <div class="unit-list">
+        @for (s of options.systems; track s.system_id) {
+          <label class="feature-group" [class.on]="systemIds.has(s.system_id)" [class.dim]="!s.readings">
+            <input type="checkbox" [checked]="systemIds.has(s.system_id)" [disabled]="!s.readings" (change)="toggleSystem(s)" />
+            <span class="fg-text">
+              <span class="fg-title">{{ systemLabel(s) }}</span>
+              <span class="fg-meta">
+                @if (s.readings) {
+                  {{ s.readings | number }} rows · {{ s.date_from }} → {{ s.date_to }} · {{ s.chemistry }} ·
+                  @if (s.anchors) {
+                    {{ s.anchors }} anchors ({{ s.full_charge }} FULL_CHARGE, {{ s.rest_ocv }} REST_OCV)
+                  } @else {
+                    <span class="problem">no anchors — EKF not tuned on it, scored on nothing</span>
+                  }
+                } @else {
+                  no SOC-estimation inputs (soc_coulomb_pct …)
+                }
+              </span>
+            </span>
+          </label>
+        }
+      </div>
+      <div class="form-grid three">
+        <div class="field">
+          <label for="from">From</label>
+          <input id="from" type="date" [(ngModel)]="dateFrom" />
+        </div>
+        <div class="field">
+          <label for="to">To</label>
+          <input id="to" type="date" [(ngModel)]="dateTo" />
+        </div>
+        <div class="field">
+          <label for="tp">Test share, by time (%)</label>
+          <input id="tp" type="number" min="10" max="50" step="5" [(ngModel)]="testPct" />
+        </div>
+      </div>
+
+      <h4 class="group-head">Training labels</h4>
+      <div class="model-switch">
+        <button type="button" class="model-option" [class.on]="labelSource === 'anchors'" (click)="labelSource = 'anchors'">Anchors (soc_reference)</button>
+        <button type="button" class="model-option" [class.on]="labelSource === 'dense'" (click)="labelSource = 'dense'">Dense sample truth</button>
+      </div>
+      @if (labelSource === 'anchors') {
+        <p class="param-help">The real labels: FULL_CHARGE and REST_OCV anchors in the training period (≈ 70 on the sample). They sit
+          near 10 % and 96 % only, so the corrections never see the flat region — there the hybrid keeps the EKF band.</p>
+      } @else {
+        <p class="param-help">Sample data only: every row's true SOC from the loaded file (battery_raw.soc_estimation_data.soc_true_pct).
+          A real plant has no such series — use it to see what a dense reference would buy. Systems without it fall back to anchors.</p>
+      }
+
+      <h4 class="group-head">Inputs</h4>
+      <p class="param-help">
+        <strong>EKF:</strong> measured current − sensor offset − estimated bias, × coulombic efficiency ÷ usable Ah; rested OCV
+        (after the relaxation time) against the OCV curve by direction and temperature.<br />
+        <strong>Corrections:</strong> coulomb SOC, raw &amp; corrected current, pack / cell voltage, rested OCV and its implied SOC,
+        cell temperature, usable Ah, C-rate, coulombic efficiency, at rest &amp; rest minutes, time and Ah since the last
+        recalibration, current direction — plus the EKF SOC, sd, bias and gain for the hybrid.
+      </p>
+    </section>
+
+    <section class="card panel">
+      <div class="panel-subhead" style="margin-top: 0">
+        <h3 class="panel-title" style="margin: 0">Methods &amp; settings</h3>
+      </div>
+      <div class="model-list">
+        @for (m of methods; track m) {
+          <div class="model-row on">
+            <span class="model-check">
+              <span class="swatch line" [style.background]="colors[m]"></span>
+              <span><strong>{{ labels[m] }}</strong>
+                <span class="fam">
+                  @switch (m) {
+                    @case ('coulomb') { must beat: the raw soc_coulomb_pct }
+                    @case ('ocv_lookup') { must beat: MEAN-curve SOC of the rested OCV, coulomb otherwise }
+                    @case ('bms') { reference: the BMS's reported soc_bms_pct }
+                    @case ('ekf') { Kalman filter, band from its variance }
+                    @case ('gbm') { coulomb + quantile models of the drift }
+                    @case ('hybrid') { EKF + quantile models of its residual (recommended) }
+                  }
+                </span>
+              </span>
+            </span>
+          </div>
+        }
+      </div>
+
+      <div class="param-grid">
+        <div class="field check-field">
+          <label><input type="checkbox" [(ngModel)]="tuneEkf" /> Tune the EKF on the training period</label>
+        </div>
+        <div class="field check-field">
+          <label><input type="checkbox" [(ngModel)]="fullChargeReset" /> Hard recalibration at FULL_CHARGE anchors</label>
+        </div>
+      </div>
+      @if (tuneEkf) {
+        <p class="param-help">Grid over OCV noise {{ options.tune_grid['r_mv'].join(' / ') }} mV × bias drift
+          {{ options.tune_grid['q_bias'].join(' / ') }} A × hysteresis weight {{ options.tune_grid['hysteresis'].join(' / ') }};
+          the lowest training-label RMSE wins. The other settings are taken as entered.</p>
+      }
+      <div class="panel-subhead">
+        <button type="button" class="link-btn" (click)="showEkf = !showEkf">{{ showEkf ? 'Hide EKF settings' : 'EKF settings' }}</button>
+        @if (showEkf) {
+          <button type="button" class="link-btn" (click)="resetEkf()">Defaults</button>
+        }
+      </div>
+      @if (showEkf) {
+        <div class="param-grid">
+          @for (p of options.ekf_params; track p.name) {
+            <div class="field" [title]="p.help ?? ''">
+              <label [for]="'e' + p.name">{{ p.label }}</label>
+              <input [id]="'e' + p.name" type="number" [(ngModel)]="ekf[p.name]" [min]="p.min" [max]="p.max" [step]="p.step" />
+            </div>
+          }
+        </div>
+      }
+      <div class="panel-subhead">
+        <button type="button" class="link-btn" (click)="showGbm = !showGbm">{{ showGbm ? 'Hide LightGBM settings' : 'LightGBM settings' }}</button>
+        @if (showGbm) {
+          <button type="button" class="link-btn" (click)="resetGbm()">Defaults</button>
+        }
+      </div>
+      @if (showGbm) {
+        <div class="param-grid">
+          @for (p of options.gbm_params; track p.name) {
+            <div class="field">
+              <label [for]="'g' + p.name">{{ p.label }}</label>
+              <input [id]="'g' + p.name" type="number" [(ngModel)]="gbm[p.name]" [min]="p.min" [max]="p.max" [step]="p.step" />
+            </div>
+          }
+        </div>
+      }
+
+      <div class="param-grid">
+        <div class="field">
+          <label for="name">Run name</label>
+          <input id="name" type="text" [(ngModel)]="runName" placeholder="optional" maxlength="120" />
+        </div>
+        <div class="field check-field">
+          <label><input data-perm="ml.model:approve" type="checkbox" [(ngModel)]="makeDefault" /> Make it the estimator's default</label>
+        </div>
+      </div>
+
+      @if (trainError) {
+        <div class="form-error">{{ trainError }}</div>
+      }
+      <div class="form-actions">
+        @if (problem) {
+          <span class="problem">{{ problem }}</span>
+        }
+        <button type="button" class="btn btn-primary train-btn" [disabled]="!!problem || training" (click)="train()">
+          @if (training) {
+            <span class="spinner" aria-hidden="true"></span> Building… {{ elapsed }} s
+          } @else {
+            Build &amp; evaluate
+          }
+        </button>
+      </div>
+    </section>
+  </div>
+}
+
+@if (run; as r) {
+  <section class="card run-card" [class.refreshing]="runLoading">
+    <div class="run-head">
+      <div>
+        <h3>
+          Run #{{ r.run_id }}{{ r.run_name ? ' · ' + r.run_name : '' }}
+          <span class="status-chip" [attr.data-status]="r.status">{{ r.status }}</span>
+          @if (r.is_default) {
+            <span class="status-chip" data-status="ACTIVE">Estimator default</span>
+          }
+        </h3>
+        <p class="muted small">
+          {{ r.system_ids.map(shortSystem, this).join(', ') }} · {{ window(r) }} · labels: {{ r.label_source === 'dense' ? 'dense sample truth' : 'anchors' }} ·
+          {{ r.n_train_rows | number }} training labels · {{ r.n_test_rows | number }} test rows, {{ r.n_test_anchors }} test anchors ·
+          {{ duration(r.duration_ms) }}
+        </p>
+      </div>
+      <div class="run-actions">
+        @if (r.status === 'COMPLETED' && !r.is_default) {
+          <button data-perm="ml.model:approve" type="button" class="btn btn-primary" (click)="makeDefaultRun(r)">Make estimator default</button>
+        }
+        @if (r.status === 'COMPLETED') {
+          <a class="btn btn-secondary" routerLink="/ml/soc-estimator" [queryParams]="{ model: r.run_id }">Open in SOC Estimator</a>
+        }
+        <button type="button" class="btn btn-secondary" (click)="reuse(r)">Train a variant</button>
+      </div>
+    </div>
+
+    @if (r.error_message) {
+      <div class="form-error">{{ r.error_message }}</div>
+    }
+    @for (w of r.warnings; track w) {
+      <div class="warn-line">{{ w }}</div>
+    }
+
+    @if (r.status === 'COMPLETED' && r.metrics && r.results; as res) {
+      <h4 class="section-title">RMSE by scope · test period · SOC points</h4>
+      <div class="table-scroll">
+        <table class="data-table compare-table score-table">
+          <thead>
+            <tr>
+              <th>Method</th>
+              @for (s of scopeKeys; track s) {
+                <th class="num">{{ scopeLabels[s] }}<br /><span class="muted small">n = {{ r.metrics.coulomb[s].n | number }}</span></th>
+              }
+            </tr>
+          </thead>
+          <tbody>
+            @for (k of methodKeys; track k) {
+              <tr>
+                <td class="nowrap"><span class="swatch line" [style.background]="colors[k]"></span> {{ labels[k] }}
+                  @if (r.best_method === k) { <span class="best-chip">best</span> }</td>
+                @for (s of scopeKeys; track s) {
+                  <td class="num" [class.best]="isBest(k, rmseCol, s)">{{ cell(k, rmseCol, s) }}</td>
+                }
+              </tr>
+            }
+          </tbody>
+        </table>
+      </div>
+      <p class="muted small">
+        Best = lowest RMSE in <strong>{{ scopeLabels[r.primary_scope ?? 'anchors'] }}</strong>. The anchors sit near 10 % and 96 % SOC,
+        where the OCV is steep: REST_OCV anchors are themselves OCV readings (the naïve lookup is nearly exact on them) and
+        FULL_CHARGE anchors are exact wherever the filter recalibrates on them. The flat 25–80 % region — scored against the
+        sample's dense truth — is where an estimator has to earn its place.
+      </p>
+
+      <div class="panel-subhead">
+        <h4 class="section-title" style="margin: 0">All scores</h4>
+        <div class="seg">
+          @for (s of scopeKeys; track s) {
+            <button type="button" [class.on]="scope === s" (click)="scope = s">{{ scopeLabels[s] }}</button>
+          }
+        </div>
+      </div>
+      <div class="table-scroll">
+        <table class="data-table compare-table score-table">
+          <thead>
+            <tr>
+              <th>Method</th>
+              @for (c of cols; track c.key) {
+                <th class="num" [title]="c.help">{{ c.label }}</th>
+              }
+            </tr>
+          </thead>
+          <tbody>
+            @for (k of methodKeys; track k) {
+              <tr>
+                <td class="nowrap"><span class="swatch line" [style.background]="colors[k]"></span> {{ labels[k] }}</td>
+                @for (c of cols; track c.key) {
+                  <td class="num" [class.best]="isBest(k, c)">{{ cell(k, c) }}</td>
+                }
+              </tr>
+            }
+          </tbody>
+        </table>
+      </div>
+      <p class="muted small">Stored in battery_ml.soc_estimation_score (one row per method and scope).</p>
+
+      <div class="chart-grid">
+        <div class="chart-box wide">
+          <h4>Error by true SOC band</h4>
+          <p class="muted small">RMSE per 10 % band of the dense sample truth (log scale) — the flat LFP plateau is 20–90 %.</p>
+          @if (bandChart) {
+            <app-chart-canvas [config]="bandChart" [height]="280" />
+          } @else {
+            <div class="empty-state">No dense truth for these systems — scored on the anchors only.</div>
+          }
+        </div>
+        <div class="chart-box wide">
+          <h4>EKF per system</h4>
+          <div class="table-scroll">
+            <table class="data-table compare-table">
+              <thead>
+                <tr>
+                  <th>System</th>
+                  <th class="num" title="Rested-OCV measurement noise">OCV noise</th>
+                  <th class="num" title="Bias random walk per 5 min">Bias drift</th>
+                  <th class="num" title="0 = MEAN OCV curve, 1 = charge / discharge branch">Hysteresis</th>
+                  <th class="num" title="Step-relative SOC noise">Step noise</th>
+                  <th class="num" title="Factor on the filter's SOC sd so ~80 % of training labels fall in P10–P90">Band scale</th>
+                  <th class="num" title="Residual current-sensor bias learnt by the end of the training / whole window">Bias (A)</th>
+                  <th class="num" title="Capacity scale learnt (SOC moves gain × the coulomb step)">Gain</th>
+                  <th class="num">OCV updates</th>
+                  <th class="num">FULL_CHARGE resets</th>
+                  <th>Test period</th>
+                </tr>
+              </thead>
+              <tbody>
+                @for (x of systemRows; track x.id) {
+                  <tr>
+                    <td class="nowrap">{{ x.r.name }}</td>
+                    <td class="num">{{ num($any(x.r.params['r_mv']), 1) }} mV</td>
+                    <td class="num nowrap">{{ num($any(x.r.params['q_bias']), 3) }} A</td>
+                    <td class="num">{{ num($any(x.r.params['hysteresis']), 2) }}</td>
+                    <td class="num">{{ num($any(x.r.params['q_rel']), 2) }}</td>
+                    <td class="num">{{ num(x.r.band_scale, 2) }}</td>
+                    <td class="num nowrap">{{ num(x.r.train_end_bias_a, 2) }} → {{ num(x.r.end_bias_a, 2) }}</td>
+                    <td class="num nowrap">{{ num(x.r.train_end_gain, 3) }} → {{ num(x.r.end_gain, 3) }}</td>
+                    <td class="num">{{ x.r.ocv_updates | number }}</td>
+                    <td class="num">{{ x.r.full_charge_resets | number }}</td>
+                    <td class="nowrap small">{{ plantTime(x.r.split.test_from) }} → {{ plantTime(x.r.split.to) }}</td>
+                  </tr>
+                }
+              </tbody>
+            </table>
+          </div>
+          @for (x of systemRows; track x.id) {
+            @if (topTrials(x.r).length) {
+              <p class="muted small">
+                <strong>{{ x.r.name }}</strong> tuning (best 5 of {{ x.r.tuning.length }}, training RMSE):
+                @for (t of topTrials(x.r); track $index) {
+                  <span class="nowrap">{{ t.r_mv }} mV · {{ t.q_bias }} A · hyst {{ t.hysteresis }} → {{ num(t.rmse, 3) }}</span>@if (!$last) { ; }
+                }
+              </p>
+            }
+          }
+          <p class="muted small">A positive bias means the sensor reads high beyond the BMS's own offset estimate, which is
+            what makes coulomb counting drift up. A gain above 1 means the battery holds less than usable_capacity_ah says.</p>
+        </div>
+        <div class="chart-box">
+          <div class="chart-head">
+            <h4>Correction model inputs</h4>
+            <div class="seg">
+              <button type="button" [class.on]="importanceModel === 'hybrid'" (click)="importanceModel = 'hybrid'; buildImportance()">Hybrid</button>
+              <button type="button" [class.on]="importanceModel === 'gbm'" (click)="importanceModel = 'gbm'; buildImportance()">Coulomb + GBM</button>
+            </div>
+          </div>
+          <p class="muted small">Share of the P50 model's split gain.</p>
+          @if (importanceChart) {
+            <app-chart-canvas [config]="importanceChart" [height]="importanceHeight" />
+          }
+        </div>
+      </div>
+    }
+  </section>
+}
+
+<div class="card history-card">
+  <div class="history-head">
+    <div>
+      <h3>Runs</h3>
+      <p class="muted small">battery_ml.soc_estimation_run · click a run to open it</p>
+    </div>
+  </div>
+  @if (runsLoading && !runs.length) {
+    <div class="empty-state">Loading…</div>
+  } @else if (!runs.length) {
+    <div class="empty-state">No runs yet — build the model above.</div>
+  } @else {
+    <div class="table-scroll">
+      <table class="data-table runs-table">
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>Name</th>
+            <th>Systems</th>
+            <th>Labels</th>
+            <th>Best</th>
+            <th class="num" title="RMSE in the flat 25–80 % region (dense truth) or on the anchors">Best RMSE</th>
+            <th class="num">Coulomb RMSE</th>
+            <th>Status</th>
+            <th class="num">Time</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          @for (x of runs; track x.run_id) {
+            <tr (click)="openRun(x.run_id)" [class.selected]="run?.run_id === x.run_id">
+              <td class="mono">{{ x.run_id }}</td>
+              <td>
+                {{ x.run_name || '—' }}
+                @if (x.is_default) {
+                  <span class="status-chip" data-status="ACTIVE">default</span>
+                }
+              </td>
+              <td class="small">{{ x.system_ids.map(shortSystem, this).join(', ') }}</td>
+              <td class="small">{{ x.label_source }}</td>
+              <td>{{ x.best_method ? labels[x.best_method] : '—' }}</td>
+              <td class="num"><strong>{{ num(x.best_method && x.primary_scope ? x.metrics?.[x.best_method]?.[x.primary_scope]?.rmse : null) }}</strong></td>
+              <td class="num">{{ num(x.primary_scope ? x.metrics?.coulomb?.[x.primary_scope]?.rmse : null) }}</td>
+              <td>
+                <span class="status-chip" [attr.data-status]="x.status">{{ x.status }}</span>
+                @if (x.error_message) {
+                  <div class="problem small">{{ x.error_message }}</div>
+                }
+              </td>
+              <td class="num">{{ duration(x.duration_ms) }}</td>
+              <td class="nowrap">
+                @if (x.status === 'COMPLETED' && !x.is_default) {
+                  <button data-perm="ml.model:approve" type="button" class="link-btn" (click)="makeDefaultRun(x, $event)">Default</button> ·
+                }
+                <button type="button" class="link-btn" (click)="deleteRun(x, $event)">Delete</button>
+              </td>
+            </tr>
+          }
+        </tbody>
+      </table>
+    </div>
+  }
+</div>

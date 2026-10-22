@@ -1,0 +1,77 @@
+<main class="login-page">
+  <section class="login-card signup-card" aria-labelledby="signup-title">
+    <div class="login-brand">
+      <svg class="login-logo" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <circle cx="10" cy="8" r="3.5" stroke="currentColor" stroke-width="1.8" />
+        <path d="M3.5 19c.8-3.4 3.4-5.5 6.5-5.5s5.7 2.1 6.5 5.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
+        <path d="M18.5 8v6M15.5 11h6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
+      </svg>
+      <div>
+        <h1 id="signup-title">Request access</h1>
+        <p>An administrator reviews every request and assigns your role.</p>
+      </div>
+    </div>
+
+    @if (done) {
+      <div class="login-info" role="status">{{ done }}</div>
+      <a class="btn btn-primary login-submit" routerLink="/login">Back to sign in</a>
+    } @else {
+      <form (ngSubmit)="submit()" novalidate>
+        <div class="field">
+          <label for="name">Full name</label>
+          <input id="name" name="name" type="text" autocomplete="name" maxlength="120" [(ngModel)]="form.full_name" required
+                 [disabled]="busy" />
+        </div>
+        <div class="field">
+          <label for="email">E-mail</label>
+          <input id="email" name="email" type="email" autocomplete="email" maxlength="320" [(ngModel)]="form.email" required
+                 [disabled]="busy" placeholder="name@company.com" />
+          @if (form.email && !emailValid) {
+            <span class="signup-hint bad">Enter a valid e-mail address</span>
+          }
+        </div>
+        <div class="field">
+          <label for="org">Organisation <span class="signup-optional">(optional)</span></label>
+          <input id="org" name="org" type="text" autocomplete="organization" maxlength="160" [(ngModel)]="form.organisation"
+                 [disabled]="busy" />
+        </div>
+        <div class="field">
+          <label for="reason">Why do you need access?</label>
+          <textarea id="reason" name="reason" rows="3" maxlength="2000" [(ngModel)]="form.reason" required [disabled]="busy"
+                    placeholder="e.g. I operate the Bhadla site and need to see live telemetry and alarms"></textarea>
+          <span class="signup-hint">{{ form.reason.trim().length }} / 2000 · at least 10 characters</span>
+        </div>
+        <div class="field">
+          <label for="pw">Password</label>
+          <div class="login-pw">
+            <input id="pw" name="pw" [type]="show ? 'text' : 'password'" autocomplete="new-password" [(ngModel)]="form.password"
+                   required [disabled]="busy" />
+            <button type="button" class="login-eye" (click)="show = !show" [attr.aria-label]="show ? 'Hide passwords' : 'Show passwords'">
+              {{ show ? 'Hide' : 'Show' }}
+            </button>
+          </div>
+        </div>
+        <div class="field">
+          <label for="confirm">Confirm password</label>
+          <input id="confirm" name="confirm" [type]="show ? 'text' : 'password'" autocomplete="new-password"
+                 [(ngModel)]="form.confirm" required [disabled]="busy" />
+        </div>
+        @if (rules.length) {
+          <ul class="cp-rules">
+            @for (r of rules; track r) {
+              <li>{{ r }}</li>
+            }
+          </ul>
+        }
+        @if (mismatch) {
+          <div class="login-error" role="alert">The passwords don't match.</div>
+        }
+        @if (error) {
+          <div class="login-error" role="alert">{{ error }}</div>
+        }
+        <button type="submit" class="btn btn-primary login-submit" [disabled]="!canSubmit">{{ busy ? 'Sending…' : 'Send request' }}</button>
+      </form>
+      <p class="signup-switch">Already have an account? <a routerLink="/login">Sign in</a></p>
+    }
+  </section>
+</main>

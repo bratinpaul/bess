@@ -1,0 +1,200 @@
+<div class="page-header">
+  <div>
+    <h2>Price Forecast</h2>
+    <p class="subtitle">Market price forecast with P10–P90 uncertainty, spike risk and the cheapest / dearest hours for the arbitrage optimizer.</p>
+  </div>
+  <a class="link training-link" routerLink="/ml/price-forecast-model">Open Price Forecast Model →</a>
+</div>
+
+<div class="card picker-card">
+  <div class="picker-row">
+    <div class="field picker-field">
+      <label for="model">Model run</label>
+      <select id="model" [ngModel]="modelKey" (ngModelChange)="selectModel($event)" [disabled]="!models.length">
+        <option value="active">Default run</option>
+        @for (m of models; track m.run_id) {
+          <option [value]="'' + m.run_id">{{ optionLabel(m) }}</option>
+        }
+      </select>
+      @if (modelsError) {
+        <span class="field-error">{{ modelsError }}</span>
+      }
+    </div>
+    @if (run; as r) {
+      <div class="field picker-field">
+        <label for="ems">Site · EMS</label>
+        <select id="ems" [ngModel]="emsId" (ngModelChange)="selectEms($event)">
+          @for (e of r.ems_ids; track e) {
+            <option [ngValue]="e">{{ unitLabel(e) }}</option>
+          }
+        </select>
+      </div>
+    }
+  </div>
+</div>
+
+@if (modelsLoaded && !models.length && !modelsError) {
+  <div class="card">
+    <div class="empty-state">No price forecast model yet. <a routerLink="/ml/price-forecast-model">Train one on the Price Forecast Model page</a>.</div>
+  </div>
+}
+
+@if (run; as r) {
+  <div class="tab-row">
+    <button type="button" class="tab" [class.on]="tab === 'live'" (click)="setTab('live')">Next {{ r.horizon_hours }} h</button>
+    <button type="button" class="tab" [class.on]="tab === 'backtest'" (click)="setTab('backtest')">Backtest</button>
+  </div>
+
+  <div class="card view-card">
+    <div class="view-controls">
+      <div class="seg model-seg">
+        @for (k of runModels; track k) {
+          <button type="button" [class.on]="chartModel === k" (click)="setChartModel(k)">
+            <span class="swatch line" [style.background]="colors[k]"></span>{{ labels[k] }}
+            @if (r.best_model === k) { <small>best</small> }
+          </button>
+        }
+      </div>
+      <div class="toggles">
+        <label><input type="checkbox" [(ngModel)]="compareAll" (ngModelChange)="rebuild()" /> Other models' P50</label>
+        <label><input type="checkbox" [(ngModel)]="show5min" (ngModelChange)="rebuild()" /> 5-min prices</label>
+        @if (chartModel === 'spike_hybrid') {
+          <label><input type="checkbox" [(ngModel)]="showMean" (ngModelChange)="rebuild()" /> Expected value (with spike risk)</label>
+        }
+      </div>
+    </div>
+
+    @if (tab === 'live') {
+      @if (loading && !forecast) {
+        <div class="empty-state">Forecasting…</div>
+      } @else if (error) {
+        <div class="empty-state error">{{ error }}</div>
+      } @else if (forecast) {
+        <p class="muted small">
+          Forecast issued from the newest complete hour of prices ({{ originTime() }} onward, plant time) with run
+          #{{ forecast.run_id }}. Shaded: evening peak and afternoon ramp TOU bands.
+        </p>
+        @if (summary; as s) {
+          <div class="tiles">
+            <div class="tile charge">
+              <span class="tile-label">Charge window · next 24 h</span>
+              <span class="tile-value">{{ s.charge.join(', ') }}</span>
+              <span class="tile-note">avg P50 {{ num(s.chargeAvg) }} $/MWh · lowest {{ num(s.min.p50) }}</span>
+            </div>
+            <div class="tile discharge">
+              <span class="tile-label">Discharge window · next 24 h</span>
+              <span class="tile-value">{{ s.discharge.join(', ') }}</span>
+              <span class="tile-note">avg P50 {{ num(s.dischargeAvg) }} $/MWh · highest {{ num(s.max.p50) }} (P90 {{ num(s.max.p90) }})</span>
+            </div>
+            <div class="tile">
+              <span class="tile-label">Expected spread</span>
+              <span class="tile-value">{{ num(s.spread) }} $/MWh</span>
+              <span class="tile-note">{{ 3 }} dearest − {{ 3 }} cheapest hours (P50)</span>
+            </div>
+            <div class="tile">
+              <span class="tile-label">Highest spike risk · next 24 h</span>
+              @if (s.risk) {
+                <span class="tile-value">{{ pct(s.risk.spike_prob, 1) }}</span>
+                <span class="tile-note">at {{ s.risk.target_ts.slice(11, 16) }} (spike hybrid)</span>
+              } @else {
+                <span class="tile-value">—</span>
+                <span class="tile-note">train the spike hybrid for spike risk</span>
+              }
+            </div>
+            @if (modelScore; as m) {
+              <div class="tile muted-tile">
+                <span class="tile-label">{{ labels[chartModel] }} · backtest</span>
+                <span class="tile-value">MAE {{ num(m.mae, 2) }}</span>
+                <span class="tile-note">P10–P90 covered {{ num(m.coverage_pct, 0) }} % · skill vs naïve {{ num(m.skill_mae_pct, 1) }} %</span>
+              </div>
+            }
+          </div>
+        }
+        @if (fan) {
+          <app-chart-canvas [config]="fan" [height]="360" />
+        }
+        @if (spike) {
+          <h4 class="sub-title">Spike probability per hour <span class="muted small">(spike hybrid · an hour holds a 5-min price above the run's threshold)</span></h4>
+          <app-chart-canvas [config]="spike" [height]="130" />
+        }
+
+        <h4 class="sub-title">Hourly forecast · {{ labels[chartModel] }}</h4>
+        <div class="table-scroll hours-scroll">
+          <table class="data-table hours-table">
+            <thead>
+              <tr>
+                <th>Hour (plant)</th>
+                <th class="num">+h</th>
+                <th>TOU band</th>
+                <th class="num">P10</th>
+                <th class="num">P50</th>
+                <th class="num">P90</th>
+                @if (chartModel === 'spike_hybrid') { <th class="num">Expected</th> }
+                <th class="num">Spike risk</th>
+                <th>Suggestion</th>
+              </tr>
+            </thead>
+            <tbody>
+              @for (h of rows; track h.ts) {
+                <tr [attr.data-action]="h.action">
+                  <td class="nowrap">{{ h.label }}</td>
+                  <td class="num">{{ h.p.horizon }}</td>
+                  <td><span class="band-chip" [attr.data-level]="h.band?.price_level">{{ h.band?.band_code ?? '—' }}</span></td>
+                  <td class="num">{{ num(h.p.p10) }}</td>
+                  <td class="num"><strong>{{ num(h.p.p50) }}</strong></td>
+                  <td class="num">{{ num(h.p.p90) }}</td>
+                  @if (chartModel === 'spike_hybrid') { <td class="num">{{ num(h.p.mean) }}</td> }
+                  <td class="num">{{ h.p.spike_prob === null ? '—' : pct(h.p.spike_prob, 2) }}</td>
+                  <td>
+                    @if (h.action === 'charge') { <span class="act charge">▼ Charge</span> }
+                    @if (h.action === 'discharge') { <span class="act discharge">▲ Discharge</span> }
+                  </td>
+                </tr>
+              }
+            </tbody>
+          </table>
+        </div>
+        <p class="muted small">Suggestions mark the {{ 3 }} cheapest and {{ 3 }} dearest P50 hours of the next 24 h — a simple
+          guide, not the optimizer's schedule (it also weighs SOC, power limits and the uncertainty band).</p>
+      }
+    }
+
+    @if (tab === 'backtest') {
+      @if (!origins.length) {
+        <div class="empty-state">Loading backtest origins…</div>
+      } @else {
+        <div class="origin-row">
+          <button type="button" class="btn btn-secondary" [disabled]="originIdx === 0" (click)="stepOrigin(-1)">◀</button>
+          <select class="filter-select" [ngModel]="originIdx" (ngModelChange)="setOrigin($event)">
+            @for (o of origins; track o; let i = $index) {
+              <option [ngValue]="i">Forecast issued {{ originLabel(o) }}</option>
+            }
+          </select>
+          <button type="button" class="btn btn-secondary" [disabled]="originIdx >= origins.length - 1" (click)="stepOrigin(1)">▶</button>
+          <span class="muted small">{{ originIdx + 1 }} / {{ origins.length }} origins in the test period</span>
+        </div>
+        @if (btError) {
+          <div class="empty-state error">{{ btError }}</div>
+        }
+        @if (btFan) {
+          <app-chart-canvas [config]="btFan" [height]="340" />
+        }
+        @if (btScores.length) {
+          <h4 class="sub-title">This origin · {{ btScores[0].n }} hours</h4>
+          <table class="data-table bt-table">
+            <thead><tr><th>Model</th><th class="num">MAE ($/MWh)</th><th class="num">Inside P10–P90</th></tr></thead>
+            <tbody>
+              @for (s of btScores; track s.model; let first = $first) {
+                <tr [class.best]="first">
+                  <td><span class="swatch line" [style.background]="colors[s.model]"></span> {{ labels[s.model] }}</td>
+                  <td class="num">{{ num(s.mae, 2) }}</td>
+                  <td class="num">{{ num(s.cover, 0) }} %</td>
+                </tr>
+              }
+            </tbody>
+          </table>
+        }
+      }
+    }
+  </div>
+}

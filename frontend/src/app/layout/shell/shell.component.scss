@@ -1,0 +1,355 @@
+.shell {
+  display: flex;
+  min-height: 100vh;
+}
+
+.sidenav {
+  width: 240px;
+  flex-shrink: 0;
+  background: var(--color-sidenav);
+  color: var(--color-sidenav-text);
+  border-right: 1px solid var(--color-sidenav-border);
+  display: flex;
+  flex-direction: column;
+  padding: 20px 0;
+  overflow: hidden;
+  transition: width 0.18s ease;
+}
+
+.shell.collapsed .sidenav {
+  width: 64px;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 16px 20px 20px;
+  border-bottom: 1px solid var(--color-sidenav-border);
+  margin-bottom: 16px;
+}
+
+.shell.collapsed .brand {
+  padding: 0 12px 20px;
+  justify-content: center;
+}
+
+.brand-mark {
+  font-weight: 700;
+  font-size: 18px;
+  letter-spacing: 0.06em;
+  color: var(--color-sidenav-text-active);
+  white-space: nowrap;
+}
+
+.shell.collapsed .brand-mark {
+  display: none;
+}
+
+.collapse-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  flex-shrink: 0;
+  border: none;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.05);
+  color: var(--color-sidenav-text);
+  cursor: pointer;
+}
+
+.collapse-toggle:hover {
+  background: rgba(0, 0, 0, 0.1);
+  color: var(--color-sidenav-text-active);
+}
+
+.nav {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.nav-group-label {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: calc(100% - 24px);
+  margin: 0 12px 2px;
+  padding: 10px 12px;
+  border: none;
+  border-radius: var(--radius);
+  background: none;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--color-sidenav-text);
+  white-space: nowrap;
+  cursor: pointer;
+  text-align: left;
+}
+
+.nav-group-label:hover {
+  background: rgba(0, 0, 0, 0.05);
+  color: var(--color-sidenav-text-active);
+}
+
+.group-icon {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  color: #0b6b46;
+}
+
+.group-label {
+  flex: 1;
+}
+
+.group-chevron {
+  flex-shrink: 0;
+  transform: rotate(-90deg);
+  transition: transform 0.15s ease;
+}
+
+.nav-group-label.open .group-chevron {
+  transform: rotate(0deg);
+}
+
+.shell.collapsed .nav-group-label {
+  justify-content: center;
+  width: calc(100% - 24px);
+  padding: 10px;
+}
+
+.shell.collapsed .group-label,
+.shell.collapsed .group-chevron {
+  display: none;
+}
+
+// in the icon rail, mark the group holding the current page
+.shell.collapsed .nav-group-label.has-active {
+  background: rgba(99, 248, 186, 0.22);
+}
+
+.nav-group {
+  list-style: none;
+  margin: 0 0 8px;
+  padding: 0 12px 0 40px;
+}
+
+.nav-group.hidden {
+  display: none;
+}
+
+.nav-link {
+  display: flex;
+  align-items: center;
+  padding: 8px 12px;
+  border-radius: var(--radius);
+  color: var(--color-sidenav-text);
+  text-decoration: none;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.nav-link:hover {
+  background: rgba(0, 0, 0, 0.05);
+  color: var(--color-sidenav-text-active);
+}
+
+.nav-link.active {
+  background: rgba(99, 248, 186, 0.22);
+  color: #0e8f66;
+}
+
+/* collapsible sub-groups inside a group (Master Data: Actor / Asset / Reference) */
+.nav-subgroup {
+  margin-bottom: 2px;
+}
+
+.nav-section {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  margin-top: 4px;
+  padding: 6px 12px;
+  border: 0;
+  border-radius: var(--radius);
+  background: none;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #94a3b8;
+  cursor: pointer;
+}
+
+/* long headings (e.g. Reliability, O&M & economics) wrap left-aligned, chevron stays on the first line */
+.nav-section > span {
+  text-align: left;
+  line-height: 1.35;
+}
+
+.nav-section .section-chevron {
+  flex-shrink: 0;
+  align-self: flex-start;
+  margin: 2px 0 0 8px;
+}
+
+.nav-section:hover {
+  background: rgba(0, 0, 0, 0.04);
+  color: var(--color-sidenav-text);
+}
+
+.nav-section.has-active {
+  color: #0e8f66;
+}
+
+.section-chevron {
+  transform: rotate(-90deg);
+  transition: transform 0.15s ease;
+}
+
+.nav-section.open .section-chevron {
+  transform: none;
+}
+
+.nav-subitems {
+  list-style: none;
+  margin: 0;
+  padding: 0 0 0 8px;
+}
+
+.nav-subitems.hidden {
+  display: none;
+}
+
+/* a planned page without a route yet */
+.nav-link.disabled {
+  color: #a3acb9;
+  cursor: default;
+}
+
+.nav-link.disabled:hover {
+  background: none;
+  color: #a3acb9;
+}
+
+.content-area {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 18px 32px;
+  background: var(--color-surface);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.user-menu {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.user-avatar {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: #63f8ba;
+  color: #1e2126;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.user-meta {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.2;
+}
+
+.user-name {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.user-role {
+  font-size: 11px;
+  color: var(--color-text-muted);
+}
+
+.user-logout {
+  padding: 5px 12px;
+  font-size: 12px;
+}
+
+.auth-banner {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 12px 32px 0;
+  padding: 8px 14px;
+  border-radius: 8px;
+  font-size: 13px;
+
+  &.warn {
+    border: 1px solid #f2c94c;
+    background: #fff8e1;
+    color: #6b4e00;
+  }
+
+  &.deny {
+    border: 1px solid #f3b5b5;
+    background: #fdecec;
+    color: #9b1c1c;
+  }
+
+  .auth-ref {
+    margin-left: 10px;
+    font-size: 12px;
+    opacity: 0.85;
+
+    code {
+      user-select: all;
+    }
+  }
+
+  .link-btn {
+    border: none;
+    background: none;
+    padding: 0;
+    font: inherit;
+    font-weight: 600;
+    color: inherit;
+    text-decoration: underline;
+    cursor: pointer;
+  }
+}
+
+@media (max-width: 760px) {
+  .user-meta {
+    display: none;
+  }
+}
+
+.topbar h1 {
+  font-size: 18px;
+}
+
+.page {
+  flex: 1;
+  padding: 28px 32px;
+}

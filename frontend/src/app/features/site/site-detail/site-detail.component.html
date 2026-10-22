@@ -1,0 +1,118 @@
+<div class="page-header">
+  <div>
+    <a class="back-link" routerLink="/sites">← Back to sites</a>
+    @if (site) {
+      <h2>{{ site.site_name }}</h2>
+    }
+  </div>
+  @if (site) {
+    <a class="btn btn-primary" [routerLink]="['/sites', site.site_id, 'edit']" *hasPermission="'master.asset:write'">Edit Site</a>
+  }
+</div>
+
+<div class="card">
+  @if (loading) {
+    <div class="empty-state">Loading…</div>
+  } @else if (error) {
+    <div class="empty-state error">{{ error }}</div>
+  } @else if (site) {
+    <dl class="detail-grid">
+      <div class="detail-item">
+        <dt>Site Code</dt>
+        <dd class="mono">{{ site.site_code }}</dd>
+      </div>
+      <div class="detail-item">
+        <dt>Site Name</dt>
+        <dd>{{ site.site_name }}</dd>
+      </div>
+      <div class="detail-item">
+        <dt>Latitude</dt>
+        <dd>{{ site.latitude ?? '—' }}</dd>
+      </div>
+      <div class="detail-item">
+        <dt>Longitude</dt>
+        <dd>{{ site.longitude ?? '—' }}</dd>
+      </div>
+      <div class="detail-item span-2">
+        <dt>Address</dt>
+        <dd>{{ site.address || '—' }}</dd>
+      </div>
+      <div class="detail-item">
+        <dt>State</dt>
+        <dd>{{ site.state || '—' }}</dd>
+      </div>
+      <div class="detail-item">
+        <dt>Grid Operator</dt>
+        <dd>{{ site.grid_operator || '—' }}</dd>
+      </div>
+      <div class="detail-item">
+        <dt>Timezone</dt>
+        <dd>{{ site.timezone }}</dd>
+      </div>
+      <div class="detail-item">
+        <dt>Rated Power (MW)</dt>
+        <dd>{{ site.rated_power_mw ?? '—' }}</dd>
+      </div>
+      <div class="detail-item">
+        <dt>Rated Energy (MWh)</dt>
+        <dd>{{ site.rated_energy_mwh ?? '—' }}</dd>
+      </div>
+      <div class="detail-item">
+        <dt>Commission Date</dt>
+        <dd>{{ site.commission_date ?? '—' }}</dd>
+      </div>
+      <div class="detail-item">
+        <dt>Created At</dt>
+        <dd>{{ site.created_at ?? '—' }}</dd>
+      </div>
+      <div class="detail-item">
+        <dt>Grid Voltage</dt>
+        <dd>@if (site.grid_voltage_kv !== null && site.grid_voltage_kv !== undefined) { {{ site.grid_voltage_kv }} kV } @else { — }</dd>
+      </div>
+      @if (site.source_uuid) {
+        <div class="detail-item">
+          <dt>Source UUID</dt>
+          <dd class="mono small">{{ site.source_uuid }}</dd>
+        </div>
+      }
+    </dl>
+  }
+</div>
+
+@if (site) {
+  <div class="card detail-card site-owners-card">
+    <div class="telemetry-section-header">
+      <h3>Owners ({{ site.owners.length }})</h3>
+    </div>
+    @if (site.owners.length === 0) {
+      <div class="empty-state">No owners recorded. Add them from Edit Site.</div>
+    } @else {
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>Tenant</th>
+            <th>Ownership</th>
+            <th>Role</th>
+            <th>Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          @for (o of site.owners; track o.tenant_id) {
+            <tr [routerLink]="['/tenants', o.tenant_id]">
+              <td>{{ o.tenant_name }}</td>
+              <td>{{ o.ownership_pct !== null ? (o.ownership_pct | number: '1.0-2') + '%' : '—' }}</td>
+              <td>
+                @if (o.is_primary_owner) {
+                  <span class="status-badge">Primary owner</span>
+                } @else {
+                  Co-owner
+                }
+              </td>
+              <td><span class="status-badge tenant-status" [attr.data-status]="o.tenant_status">{{ o.tenant_status | titlecase }}</span></td>
+            </tr>
+          }
+        </tbody>
+      </table>
+    }
+  </div>
+}

@@ -1,0 +1,58 @@
+<div class="page-header">
+  <div>
+    <a class="back-link" routerLink="/battery-packs">← Back to battery packs</a>
+    @if (item) {
+      <h2>{{ item.pack_number || 'Battery Pack' }}</h2>
+    }
+  </div>
+  @if (item) {
+    <a class="btn btn-primary" [routerLink]="['/battery-packs', item.pack_id, 'edit']">Edit Pack</a>
+  }
+</div>
+
+<div class="card">
+  @if (loading) {
+    <div class="empty-state">Loading…</div>
+  } @else if (error) {
+    <div class="empty-state error">{{ error }}</div>
+  } @else if (item) {
+    <dl class="detail-grid">
+      <div class="detail-item">
+        <dt>Pack Number</dt>
+        <dd>{{ item.pack_number || '—' }}</dd>
+      </div>
+      <div class="detail-item">
+        <dt>Battery Container</dt>
+        <dd>{{ containerNumber ?? '—' }}</dd>
+      </div>
+      <div class="detail-item">
+        <dt>Nominal Voltage</dt>
+        <dd>{{ item.nominal_voltage ?? '—' }}</dd>
+      </div>
+      <div class="detail-item">
+        <dt>Nominal Capacity (Ah)</dt>
+        <dd>{{ item.nominal_capacity_ah ?? '—' }}</dd>
+      </div>
+      <div class="detail-item">
+        <dt>Status</dt>
+        <dd>
+          @if (item.status) {
+            <span class="status-badge">{{ item.status }}</span>
+          } @else {
+            —
+          }
+        </dd>
+      </div>
+      <div class="detail-item">
+        <dt>Module Count</dt>
+        <dd>{{ item.module_count ?? '—' }}</dd>
+      </div>
+      @if (item.source_uuid) {
+        <div class="detail-item">
+          <dt>Source UUID</dt>
+          <dd class="mono small">{{ item.source_uuid }}</dd>
+        </div>
+      }
+    </dl>
+  }
+</div>

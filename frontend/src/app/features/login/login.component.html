@@ -1,0 +1,45 @@
+<main class="login-page">
+  <section class="login-card" aria-labelledby="login-title">
+    <div class="login-brand">
+      <svg class="login-logo" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <rect x="3" y="6" width="16" height="12" rx="2" stroke="currentColor" stroke-width="1.8" />
+        <rect x="19" y="10" width="2.5" height="4" rx="1" fill="currentColor" />
+        <path d="M11.5 8.5l-2.5 4h3l-1.5 3.5 4-5h-3l1.5-2.5z" fill="currentColor" />
+      </svg>
+      <div>
+        <h1 id="login-title">BESS Platform</h1>
+        
+      </div>
+    </div>
+
+    @if (info) {
+      <div class="login-info" role="status">{{ info }}</div>
+    }
+
+    <form (ngSubmit)="submit()" novalidate>
+      <div class="field">
+        <label for="email">E-mail</label>
+        <input id="email" name="email" type="email" autocomplete="username" [(ngModel)]="email" required autofocus
+               placeholder="name@bess.local" [disabled]="busy" />
+      </div>
+      <div class="field">
+        <label for="password">Password</label>
+        <div class="login-pw">
+          <input id="password" name="password" [type]="showPassword ? 'text' : 'password'" autocomplete="current-password"
+                 [(ngModel)]="password" required [disabled]="busy" />
+          <button type="button" class="login-eye" (click)="showPassword = !showPassword"
+                  [attr.aria-label]="showPassword ? 'Hide password' : 'Show password'">{{ showPassword ? 'Hide' : 'Show' }}</button>
+        </div>
+      </div>
+      @if (error) {
+        <div class="login-error" role="alert">{{ error }}</div>
+      }
+      <button type="submit" class="btn btn-primary login-submit" [disabled]="busy || !email.trim() || !password">
+        {{ busy ? 'Signing in…' : 'Sign in' }}
+      </button>
+    </form>
+    <p class="login-signup">New here? <a routerLink="/signup">Request access</a></p>
+    
+    
+  </section>
+</main>

@@ -1,0 +1,23 @@
+fastapi==0.115.0
+uvicorn[standard]==0.30.6
+sqlalchemy==2.0.35
+psycopg2-binary==2.9.9
+pydantic==2.9.2
+python-dotenv==1.0.1
+python-multipart==0.0.9
+openpyxl==3.1.5
+python-dateutil==2.9.0.post0
+PyYAML==6.0.3
+# login / RBAC (battery_users): fastapi-users 13 keeps python-multipart at 0.0.9
+fastapi-users[sqlalchemy]==13.0.0
+fastapi-users-db-sqlalchemy==7.0.0
+asyncpg==0.32.0
+PyJWT[crypto]==2.8.0
+pwdlib[argon2]==0.2.0
+# tests
+pytest
+httpx
+
+# shared JWT / RBAC code (bess_common.auth)
+-e ../bess_common
+python-json-logger==3.2.1

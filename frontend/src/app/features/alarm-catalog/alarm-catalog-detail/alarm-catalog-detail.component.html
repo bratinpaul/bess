@@ -1,0 +1,96 @@
+<div class="page-header">
+  <div>
+    <a class="back-link" routerLink="/alarm-catalog">← Back to alarm catalog</a>
+    @if (item) {
+      <h2 class="alarm-title">
+        <span class="source-chip" [attr.data-source]="item.source">{{ item.source }}</span>
+        {{ item.alarm_code }}
+      </h2>
+    }
+  </div>
+  @if (item) {
+    <div class="header-actions">
+      <button type="button" class="btn btn-danger" (click)="deleteError = null; confirmDelete = true">Delete</button>
+      <a class="btn btn-primary" [routerLink]="['/alarm-catalog', item.alarm_catalog_id, 'edit']">Edit Alarm</a>
+    </div>
+  }
+</div>
+
+<div class="card">
+  @if (loading) {
+    <div class="empty-state">Loading…</div>
+  } @else if (error) {
+    <div class="empty-state error">{{ error }}</div>
+  } @else if (item) {
+    <p class="alarm-description">{{ item.description }}</p>
+
+    <dl class="detail-grid">
+      <div class="detail-item">
+        <dt>Source</dt>
+        <dd><span class="source-chip" [attr.data-source]="item.source">{{ item.source }}</span></dd>
+      </div>
+      <div class="detail-item">
+        <dt>Alarm Code</dt>
+        <dd class="mono">{{ item.alarm_code }}</dd>
+      </div>
+      <div class="detail-item">
+        <dt>Alarm Type</dt>
+        <dd>{{ item.alarm_type }}</dd>
+      </div>
+      <div class="detail-item">
+        <dt>Severity</dt>
+        <dd>
+          <span class="severity-badge" [attr.data-level]="item.severity_level">{{ item.severity_name }}</span>
+          <span class="muted">level {{ item.severity_level }}</span>
+        </dd>
+      </div>
+      <div class="detail-item">
+        <dt>Asset Type</dt>
+        <dd>{{ item.asset_type || '—' }}</dd>
+      </div>
+      <div class="detail-item">
+        <dt>Threshold</dt>
+        <dd>
+          @if (item.threshold !== null) {
+            {{ item.threshold }} {{ item.unit }}
+          } @else {
+            — <span class="muted">(event alarm, no threshold)</span>
+          }
+        </dd>
+      </div>
+      <div class="detail-item span-2">
+        <dt>Probable Cause</dt>
+        <dd>{{ item.probable_cause || '—' }}</dd>
+      </div>
+      <div class="detail-item">
+        <dt>Created</dt>
+        <dd>{{ item.created_at | date: 'yyyy-MM-dd HH:mm' }}</dd>
+      </div>
+      <div class="detail-item">
+        <dt>Last Updated</dt>
+        <dd>{{ item.updated_at | date: 'yyyy-MM-dd HH:mm' }}</dd>
+      </div>
+    </dl>
+  }
+</div>
+
+@if (confirmDelete && item) {
+  <div class="modal-backdrop" (click)="confirmDelete = false">
+    <div class="modal" (click)="$event.stopPropagation()">
+      <h3>Delete alarm?</h3>
+      <p>
+        This will permanently delete <strong>{{ item.source }} · {{ item.alarm_code }}</strong> from the catalog.
+        This action cannot be undone.
+      </p>
+      @if (deleteError) {
+        <div class="form-error">{{ deleteError }}</div>
+      }
+      <div class="modal-actions">
+        <button class="btn btn-secondary" (click)="confirmDelete = false" [disabled]="deleting">Cancel</button>
+        <button class="btn btn-danger-solid" (click)="deleteConfirmed()" [disabled]="deleting">
+          {{ deleting ? 'Deleting…' : 'Delete' }}
+        </button>
+      </div>
+    </div>
+  </div>
+}

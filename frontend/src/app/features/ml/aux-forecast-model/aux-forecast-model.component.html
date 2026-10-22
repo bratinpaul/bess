@@ -1,0 +1,397 @@
+<div class="page-header">
+  <div>
+    <h2>Aux / HVAC Forecast Model</h2>
+    <p class="subtitle">
+      Forecast the plant's parasitic draw (HVAC + controls) at 5-min steps up to 24 h ahead (P10 / P50 / P90): a grey-box heat-load / COP
+      model per site plus LightGBM quantile models on its residual. View forecasts on <a routerLink="/ml/aux-forecast">Aux / HVAC Energy Forecast</a>.
+    </p>
+  </div>
+</div>
+
+@if (optionsError) {
+  <div class="card empty-state error">{{ optionsError }}</div>
+}
+
+@if (options) {
+  <div class="train-grid">
+    <section class="card panel">
+      <h3 class="panel-title">Data</h3>
+      <h4 class="group-head">Sites <span class="muted small">(EMS aux load with its HVAC, BMS and PCS · from v_aux_features)</span></h4>
+      <div class="unit-list">
+        @for (s of options.sites; track s.ems_id) {
+          <label class="feature-group" [class.on]="emsIds.has(s.ems_id)" [class.dim]="!s.readings">
+            <input type="checkbox" [checked]="emsIds.has(s.ems_id)" [disabled]="!s.readings" (change)="toggleSite(s)" />
+            <span class="fg-text">
+              <span class="fg-title">{{ siteLabel(s) }}</span>
+              <span class="fg-meta">
+                @if (s.readings) {
+                  {{ s.readings | number }} readings · {{ s.date_from }} → {{ s.date_to }} ·
+                  {{ s.wx_forecast_rows ? 'weather forecast ✓' : 'no weather forecast' }}
+                } @else {
+                  no aux readings
+                }
+              </span>
+            </span>
+          </label>
+        }
+      </div>
+      <div class="form-grid three">
+        <div class="field">
+          <label for="from">From</label>
+          <input id="from" type="date" [(ngModel)]="dateFrom" />
+        </div>
+        <div class="field">
+          <label for="to">To</label>
+          <input id="to" type="date" [(ngModel)]="dateTo" />
+        </div>
+        <div class="field">
+          <label for="hz">Horizon</label>
+          <select id="hz" [(ngModel)]="horizonHours">
+            @for (h of horizonChoices; track h) {
+              <option [ngValue]="h">{{ h }} h ({{ h * 12 }} steps)</option>
+            }
+          </select>
+        </div>
+        <div class="field">
+          <label for="plan">Planned dispatch (heat source)</label>
+          <select id="plan" [(ngModel)]="planSource">
+            <option value="scheduled">Dispatch schedule</option>
+            <option value="typical">Typical day</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="amb">Ambient ahead</label>
+          <select id="amb" [(ngModel)]="ambientSource">
+            <option value="forecast">Weather forecast (else daily profile)</option>
+            <option value="profile">Daily profile only</option>
+            <option value="actual">Measured (oracle bound)</option>
+          </select>
+        </div>
+      </div>
+      <p class="param-help">Ambient is the dominant driver. "Weather forecast" uses the newest weather_forecast run of the site's station
+        issued before each forecast origin (offset to the HVAC sensor); where none covers a time it falls back to ambient now + the typical
+        daily swing. "Measured" uses the readings themselves — an upper bound of what a perfect weather feed would give.</p>
+    </section>
+
+    <section class="card panel">
+      <div class="panel-subhead" style="margin-top: 0">
+        <h3 class="panel-title" style="margin: 0">Methods &amp; backtest</h3>
+      </div>
+      <div class="model-list">
+        @for (m of methods; track m) {
+          <div class="model-row on">
+            <span class="model-check">
+              <span class="swatch line" [style.background]="colors[m]"></span>
+              <span><strong>{{ labels[m] }}</strong>
+                <span class="fam">
+                  @switch (m) {
+                    @case ('persistence') { baseline: aux stays where it is }
+                    @case ('seasonal') { baseline to beat: aux at the same time yesterday }
+                    @case ('greybox') { controls + (battery heat + envelope + solar gain) / COP(ambient), on the planned dispatch and ambient ahead }
+                    @case ('hybrid') { grey-box + LightGBM quantile models of its residual (P10 / P50 / P90) }
+                  }
+                </span>
+              </span>
+            </span>
+          </div>
+        }
+      </div>
+      <button type="button" class="link-btn" (click)="showGbm = !showGbm">{{ showGbm ? 'Hide' : 'LightGBM parameters' }}</button>
+      @if (showGbm) {
+        <div class="param-grid">
+          @for (p of options.gbm_params; track p.name) {
+            <div class="field">
+              <label [for]="'g' + p.name">{{ p.label }}</label>
+              <input [id]="'g' + p.name" type="number" [(ngModel)]="gbm[p.name]" [min]="p.min" [max]="p.max" [step]="p.step" />
+            </div>
+          }
+        </div>
+      }
+      <div class="param-grid">
+        <div class="field">
+          <label for="tp">Test share of each site (%)</label>
+          <input id="tp" type="number" min="10" max="50" step="5" [(ngModel)]="testPct" />
+        </div>
+        <div class="field" title="Every n-th 5-min reading is a training origin (6 = every 30 min)">
+          <label for="ts">Training origin every (× 5 min)</label>
+          <input id="ts" type="number" min="1" max="48" step="1" [(ngModel)]="trainStep" />
+        </div>
+        <div class="field" title="Random horizon steps sampled per training origin (the horizon is a model input)">
+          <label for="sp">Horizon steps per origin</label>
+          <input id="sp" type="number" min="4" max="288" step="4" [(ngModel)]="stepsPerOrigin" />
+        </div>
+        <div class="field">
+          <label for="name">Run name</label>
+          <input id="name" type="text" [(ngModel)]="runName" placeholder="optional" maxlength="120" />
+        </div>
+        <div class="field check-field">
+          <label><input data-perm="ml.model:approve" type="checkbox" [(ngModel)]="makeDefault" /> Make it the viewer's default</label>
+        </div>
+      </div>
+      <p class="param-help">Time split per site on its real readings (training before, test after — no leakage). The test forecasts come from
+        origins every 30 min with every 5-min step; those issued at 23:55 give the next day's aux energy (kWh). Guards: aux / HVAC never
+        negative, implausible readings dropped, gaps ≤ 15 min interpolated, compressor 0 and COP from the site's COP(ambient) curve when not cooling.</p>
+
+      @if (trainError) {
+        <div class="form-error">{{ trainError }}</div>
+      }
+      <div class="form-actions">
+        @if (problem) {
+          <span class="problem">{{ problem }}</span>
+        }
+        <button type="button" class="btn btn-primary train-btn" [disabled]="!!problem || training" (click)="train()">
+          @if (training) {
+            <span class="spinner" aria-hidden="true"></span> Building… {{ elapsed }} s
+          } @else {
+            Build &amp; backtest
+          }
+        </button>
+      </div>
+    </section>
+  </div>
+}
+
+@if (run; as r) {
+  <section class="card run-card" [class.refreshing]="runLoading">
+    <div class="run-head">
+      <div>
+        <h3>
+          Run #{{ r.run_id }}{{ r.run_name ? ' · ' + r.run_name : '' }}
+          <span class="status-chip" [attr.data-status]="r.status">{{ r.status }}</span>
+          @if (r.is_default) {
+            <span class="status-chip" data-status="ACTIVE">Viewer default</span>
+          }
+        </h3>
+        <p class="muted small">
+          {{ r.ems_ids.length }} sites ({{ r.ems_ids.map(shortSite, this).join(', ') }}) · {{ window(r) }} · {{ r.horizon_hours }} h ahead ·
+          dispatch: {{ r.params['plan_source'] }} · ambient: {{ r.params['ambient_source'] }} ·
+          {{ r.n_train_rows | number }} training rows · {{ r.n_test_rows | number }} test rows · {{ duration(r.duration_ms) }}
+        </p>
+      </div>
+      <div class="run-actions">
+        @if (r.status === 'COMPLETED' && !r.is_default) {
+          <button data-perm="ml.model:approve" type="button" class="btn btn-primary" (click)="makeDefaultRun(r)">Make viewer default</button>
+        }
+        @if (r.status === 'COMPLETED') {
+          <a class="btn btn-secondary" routerLink="/ml/aux-forecast" [queryParams]="{ model: r.run_id }">Open in Aux / HVAC Energy Forecast</a>
+        }
+        <button type="button" class="btn btn-secondary" (click)="reuse(r)">Train a variant</button>
+      </div>
+    </div>
+    @if (r.error_message) {
+      <div class="form-error">{{ r.error_message }}</div>
+    }
+    @for (w of r.warnings; track w) {
+      <div class="warn-line">{{ w }}</div>
+    }
+
+    @if (r.status === 'COMPLETED' && r.metrics && r.results; as res) {
+      <div class="target-tabs">
+        @for (k of scopes; track k) {
+          <button type="button" class="target-tab" [class.on]="scope === k" (click)="setScope(k)">
+            {{ scopeLabel(k) }}
+            <small>hybrid {{ num(r.metrics[k]?.['all']?.hybrid?.mae) }} vs yesterday {{ num(r.metrics[k]?.['all']?.seasonal?.mae) }} kW</small>
+          </button>
+        }
+      </div>
+
+      <div class="metric-grid">
+        <div class="metric-tile">
+          <span class="metric-label">Hybrid MAE</span>
+          <span class="metric-value">{{ num(s('all', 'hybrid')?.mae) }} kW</span>
+          <span class="metric-note">all steps · same time yesterday {{ num(s('all', 'seasonal')?.mae) }} kW</span>
+        </div>
+        <div class="metric-tile">
+          <span class="metric-label">Skill vs yesterday</span>
+          <span class="metric-value">{{ signed(skill('hybrid'), 0) }} %</span>
+          <span class="metric-note">MAE reduction · grey-box {{ signed(skill('greybox'), 0) }} %</span>
+        </div>
+        <div class="metric-tile">
+          <span class="metric-label">Daily aux energy error</span>
+          <span class="metric-value">{{ num(daily('hybrid')?.mae_kwh, 1) }} kWh</span>
+          <span class="metric-note">{{ num(daily('hybrid')?.mape_pct, 1) }} % of {{ num(daily('hybrid')?.actual_kwh_avg, 0) }} kWh/day · yesterday {{ num(daily('seasonal')?.mae_kwh, 1) }} kWh</span>
+        </div>
+        <div class="metric-tile">
+          <span class="metric-label">P10–P90 coverage</span>
+          <span class="metric-value">{{ num(s('all', 'hybrid')?.coverage_pct, 0) }} %</span>
+          <span class="metric-note">80 % is right · pinball {{ num(s('all', 'hybrid')?.pinball, 3) }}</span>
+        </div>
+      </div>
+
+      <h4 class="section-title">Accuracy by horizon · {{ scopeLabel(scope) }} · test period</h4>
+      <div class="table-scroll">
+        <table class="data-table compare-table score-table">
+          <thead>
+            <tr>
+              <th>Horizon</th>
+              @for (m of methods; track m) {
+                <th class="num">{{ labels[m] }}<br /><small>MAE · RMSE · bias</small></th>
+              }
+              @for (m of methods; track m) {
+                <th class="num">{{ labels[m] }}<br /><small>pinball · cover</small></th>
+              }
+            </tr>
+          </thead>
+          <tbody>
+            @for (b of buckets; track b) {
+              <tr [class.total-row]="b === 'all'">
+                <td>{{ b === 'all' ? 'All steps' : b }}</td>
+                @for (m of methods; track m) {
+                  <td class="num" [class.best]="best(b, m, 'mae')">{{ num(s(b, m)?.mae) }} · {{ num(s(b, m)?.rmse) }} · {{ signed(s(b, m)?.bias, 2) }}</td>
+                }
+                @for (m of methods; track m) {
+                  <td class="num" [class.best]="best(b, m, 'pinball')">{{ num(s(b, m)?.pinball, 3) }} · {{ num(s(b, m)?.coverage_pct, 0) }} %</td>
+                }
+              </tr>
+            }
+          </tbody>
+        </table>
+      </div>
+      <p class="muted small">kW of aux load. Green = best in its column for that horizon bucket. Bias = forecast − actual. Coverage = share
+        inside P10–P90 (80 % is right). Stored in battery_ml.aux_forecast_score.</p>
+
+      <h4 class="section-title">Daily aux energy · {{ scopeLabel(scope) }} · forecast issued 23:55 the evening before</h4>
+      @if (dailyNote) {
+        <p class="muted small">Daily energy is scored only with a 24 h horizon ({{ dailyNote }}).</p>
+      } @else {
+        <div class="table-scroll">
+          <table class="data-table compare-table score-table">
+            <thead>
+              <tr><th>Method</th><th class="num">Days</th><th class="num">MAE kWh</th><th class="num">MAPE</th><th class="num">Bias kWh</th><th class="num">Inside P10–P90 sum</th></tr>
+            </thead>
+            <tbody>
+              @for (m of methods; track m) {
+                @if (daily(m); as d) {
+                  <tr>
+                    <td><span class="swatch line" [style.background]="colors[m]"></span> {{ labels[m] }}</td>
+                    <td class="num">{{ d.days }}</td>
+                    <td class="num" [class.best]="bestDaily(m)">{{ num(d.mae_kwh, 1) }}</td>
+                    <td class="num">{{ num(d.mape_pct, 1) }} %</td>
+                    <td class="num">{{ signed(d.bias_kwh, 1) }}</td>
+                    <td class="num">{{ num(d.coverage_pct, 0) }} %</td>
+                  </tr>
+                }
+              }
+            </tbody>
+          </table>
+        </div>
+        <p class="muted small">What hits the dispatch economics: net energy delivered = gross − aux. The daily band sums the 5-min P10 / P90
+          (errors assumed fully correlated), so it is wide by design. Per day in battery_ml.aux_forecast_daily.</p>
+      }
+
+      <div class="chart-grid">
+        <div class="chart-box">
+          <h4>MAE by horizon</h4>
+          @if (maeChart) {
+            <app-chart-canvas [config]="maeChart" [height]="260" />
+          }
+        </div>
+        <div class="chart-box">
+          <h4>Residual model inputs</h4>
+          <p class="muted small">Share of the P50 residual model's split gain (pooled over the sites).</p>
+          @if (importanceChart) {
+            <app-chart-canvas [config]="importanceChart" [height]="importanceHeight" />
+          }
+        </div>
+        <div class="chart-box wide">
+          <h4>Grey-box per site</h4>
+          <div class="table-scroll">
+            <table class="data-table compare-table">
+              <thead>
+                <tr>
+                  <th>Site</th>
+                  <th class="num">Controls kW</th>
+                  <th class="num">Battery heat kW<br /><small>h0 + h1·|P|</small></th>
+                  <th class="num">COP<br /><small>c0 + c1·T_amb</small></th>
+                  <th class="num">Balance T_b</th>
+                  <th class="num">HVAC p0 · k_q · k_e · k_s</th>
+                  <th class="num">Fit R² · MAE</th>
+                </tr>
+              </thead>
+              <tbody>
+                @for (x of greyboxRows; track x.site) {
+                  <tr>
+                    <td>{{ shortSite(x.site) }}</td>
+                    <td class="num">{{ x.gb.decomposed ? num(x.gb.controls_base_kw, 2) : 'in p0' }}</td>
+                    <td class="num">{{ num(x.gb.heat_h0_kw, 2) }} + {{ num(x.gb.heat_h1_kw_per_kw, 4) }}·|P|</td>
+                    <td class="num">{{ num(x.gb.cop_c0, 2) }} {{ x.gb.cop_c1_per_c < 0 ? '−' : '+' }} {{ num(Math.abs(x.gb.cop_c1_per_c), 3) }}·T</td>
+                    <td class="num">{{ num(x.gb.t_balance_c, 1) }} °C</td>
+                    <td class="num mono small">{{ num(x.gb.p0, 2) }} · {{ num(x.gb.k_q, 2) }} · {{ num(x.gb.k_e, 2) }} · {{ num(x.gb.k_s, 2) }}</td>
+                    <td class="num">{{ num(x.gb.r2, 2) }} · {{ num(x.gb.mae_kw, 2) }} kW</td>
+                  </tr>
+                }
+              </tbody>
+            </table>
+          </div>
+          <p class="muted small">aux = controls + p0 + (k_q·Q_batt + k_e·max(T_amb − T_b, 0) + k_s·solar) / COP(T_amb): battery losses, heat
+            through the envelope above the balance temperature and solar gain, removed at a COP that falls as it gets hotter. Fit on the
+            training period with the measured drivers.</p>
+        </div>
+      </div>
+    }
+  </section>
+}
+
+<div class="card history-card">
+  <div class="history-head">
+    <div>
+      <h3>Runs</h3>
+      <p class="muted small">battery_ml.aux_forecast_run · click a run to open it · MAE over all steps and sites</p>
+    </div>
+  </div>
+  @if (runsLoading && !runs.length) {
+    <div class="empty-state">Loading…</div>
+  } @else if (!runs.length) {
+    <div class="empty-state">No runs yet — build the model above.</div>
+  } @else {
+    <div class="table-scroll">
+      <table class="data-table runs-table">
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>Name</th>
+            <th>Sites</th>
+            <th>Horizon</th>
+            <th>Ambient</th>
+            <th class="num">Hybrid MAE</th>
+            <th class="num">Yesterday MAE</th>
+            <th>Status</th>
+            <th class="num">Time</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          @for (x of runs; track x.run_id) {
+            <tr (click)="openRun(x.run_id)" [class.selected]="run?.run_id === x.run_id">
+              <td class="mono">{{ x.run_id }}</td>
+              <td>
+                {{ x.run_name || '—' }}
+                @if (x.is_default) {
+                  <span class="status-chip" data-status="ACTIVE">default</span>
+                }
+              </td>
+              <td class="small">{{ x.ems_ids.map(shortSite, this).join(', ') }}</td>
+              <td class="small">{{ x.horizon_hours }} h</td>
+              <td class="small">{{ x.params['ambient_source'] }}</td>
+              <td class="num">{{ runMae(x, 'hybrid') }}</td>
+              <td class="num">{{ runMae(x, 'seasonal') }}</td>
+              <td>
+                <span class="status-chip" [attr.data-status]="x.status">{{ x.status }}</span>
+                @if (x.error_message) {
+                  <div class="problem small">{{ x.error_message }}</div>
+                }
+              </td>
+              <td class="num">{{ duration(x.duration_ms) }}</td>
+              <td class="nowrap">
+                @if (x.status === 'COMPLETED' && !x.is_default) {
+                  <button data-perm="ml.model:approve" type="button" class="link-btn" (click)="makeDefaultRun(x, $event)">Default</button> ·
+                }
+                <button type="button" class="link-btn" (click)="deleteRun(x, $event)">Delete</button>
+              </td>
+            </tr>
+          }
+        </tbody>
+      </table>
+    </div>
+  }
+</div>

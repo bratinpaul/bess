@@ -1,0 +1,331 @@
+<div class="page-header">
+  <div>
+    <h2>Realtime Snapshot Load</h2>
+    <p class="subtitle">
+      Loads plant snapshot files (YYYY-MM-DD-HH-MM-SS.json) from the realtime inbox through the seven bulk-load APIs,
+      archives them and records each load in battery_raw.batchlog
+    </p>
+  </div>
+  <button data-perm="batch:execute" type="button" class="btn btn-primary run-btn" [disabled]="running" (click)="runNow()">
+    @if (running) {
+      <span class="spinner" aria-hidden="true"></span>
+      Running…
+    } @else {
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <path d="M7 5.5v13l11-6.5-11-6.5Z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" />
+      </svg>
+      Run batch now
+    }
+  </button>
+</div>
+
+@if (statusError) {
+  <div class="card empty-state error">{{ statusError }}</div>
+}
+
+<!-- status -->
+@if (status) {
+  <div class="status-grid">
+    <section class="card status-card">
+      <span class="status-label">Inbox</span>
+      <span class="status-value">
+        {{ waiting.length }} file{{ waiting.length === 1 ? '' : 's' }} waiting
+      </span>
+      <span class="status-note">
+        @if (waiting.length && readyCount < waiting.length) {
+          {{ readyCount }} ready · {{ waiting.length - readyCount }} still being written ·
+        }
+        <span class="mono path" [title]="status.inbox">{{ status.inbox }}</span>
+      </span>
+    </section>
+
+    <section class="card status-card">
+      <span class="status-label">Schedule</span>
+      @if (status.schedule.installed) {
+        <span class="status-value">
+          <span class="dot" [class.on]="status.schedule.status === 'Ready' || status.schedule.status === 'Running'"></span>
+          Every minute · {{ status.schedule.status }}
+        </span>
+        <span class="status-note">
+          Next {{ status.schedule.next_run || '—' }} · last {{ status.schedule.last_run || '—' }}
+          ({{ status.schedule.last_result || '—' }})
+        </span>
+      } @else {
+        <span class="status-value warn">Not scheduled</span>
+        <span class="status-note">Run snapshot_loader\install_schedule.bat to load every minute</span>
+      }
+    </section>
+
+    <section class="card status-card">
+      <span class="status-label">Last load</span>
+      @if (status.last_run; as last) {
+        <span class="status-value">
+          <span class="batch-status" [attr.data-status]="last.status">{{ last.status }}</span>
+          <span class="mono small">{{ last.file_name }}</span>
+        </span>
+        <span class="status-note">
+          {{ plantTime(last.finished_at) }} · {{ last.rows_inserted }} inserted, {{ last.rows_updated }} updated,
+          {{ last.rows_skipped }} skipped
+        </span>
+      } @else {
+        <span class="status-value muted">No loads yet</span>
+      }
+    </section>
+
+    <section class="card status-card">
+      <span class="status-label">Now</span>
+      @if (status.running || running) {
+        <span class="status-value"><span class="spinner dark" aria-hidden="true"></span> A run is in progress</span>
+        <span class="status-note">{{ running ? 'Started from this page' : status.running_since }}</span>
+      } @else {
+        <span class="status-value">Idle</span>
+        <span class="status-note">Status refreshes every 15 s</span>
+      }
+    </section>
+  </div>
+
+  @if (waiting.length || ignored.length) {
+    <div class="card inbox-card">
+      <div class="card-head">
+        <h3>Files in the inbox</h3>
+      </div>
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>File</th>
+            <th class="num">Size</th>
+            <th>Modified</th>
+            <th>State</th>
+          </tr>
+        </thead>
+        <tbody>
+          @for (file of status.files; track file.name) {
+            <tr>
+              <td class="mono">{{ file.name }}</td>
+              <td class="num">{{ size(file.size_bytes) }}</td>
+              <td>{{ plantTime(file.modified_at) }}</td>
+              <td>
+                @if (!file.valid_name) {
+                  <span class="muted">Ignored — not named YYYY-MM-DD-HH-MM-SS.json</span>
+                } @else if (file.ready) {
+                  Ready for the next run
+                } @else {
+                  <span class="muted">Still being written; waits a few seconds</span>
+                }
+              </td>
+            </tr>
+          }
+        </tbody>
+      </table>
+    </div>
+  }
+}
+
+<!-- result of a manual run -->
+@if (runError) {
+  <div class="card run-card failed">
+    <strong>The batch didn't run.</strong> {{ runError }}
+  </div>
+}
+@if (runResult; as result) {
+  <div class="card run-card" [class.failed]="result.exit_code === 1">
+    <div class="card-head">
+      <h3>Run finished</h3>
+      <span class="muted small">{{ plantTime(result.started_at) }} → {{ plantTime(result.finished_at) }}</span>
+    </div>
+    @if (result.busy) {
+      <p>A scheduled run was already loading, so this run did nothing. Its files show up in the history below.</p>
+    } @else if (result.runs.length === 0) {
+      <p>Nothing to load — no ready snapshot files in the inbox.</p>
+    } @else {
+      <p>
+        Loaded {{ result.runs.length }} file{{ result.runs.length === 1 ? '' : 's' }}:
+        <strong>{{ runSummary.inserted }}</strong> rows inserted, <strong>{{ runSummary.updated }}</strong> updated,
+        <strong [class.bad]="runSummary.skipped > 0">{{ runSummary.skipped }}</strong> skipped.
+      </p>
+      <ul class="run-files">
+        @for (run of result.runs; track run.batch_id) {
+          <li>
+            <span class="batch-status" [attr.data-status]="run.status">{{ run.status }}</span>
+            <span class="mono">{{ run.file_name }}</span>
+            <span class="muted">
+              #{{ run.batch_id }} · {{ run.rows_inserted }} inserted, {{ run.rows_updated }} updated, {{ run.rows_skipped }} skipped
+              @if (run.error_message) {
+                · {{ run.error_message }}
+              }
+            </span>
+          </li>
+        }
+      </ul>
+    }
+    @if (result.output.length) {
+      <button type="button" class="link-btn" (click)="showOutput = !showOutput">
+        {{ showOutput ? 'Hide' : 'Show' }} batch output ({{ result.output.length }} lines)
+      </button>
+      @if (showOutput) {
+        <pre class="run-output">{{ outputLines.join('\n') }}</pre>
+      }
+    }
+  </div>
+}
+
+<!-- history -->
+<div class="card history-card">
+  <div class="card-head">
+    <h3>Load history</h3>
+    <span class="muted small">battery_raw.batchlog · one row per file</span>
+  </div>
+
+  <div class="history-bar">
+    <div class="status-tabs" role="tablist" aria-label="Filter by status">
+      <button type="button" class="status-tab" [class.active]="!statusFilter" (click)="setStatusFilter('')">
+        All <span class="count">{{ allCount }}</span>
+      </button>
+      @for (s of statuses; track s) {
+        <button type="button" class="status-tab" [class.active]="statusFilter === s" (click)="setStatusFilter(s)">
+          <span class="swatch" [attr.data-status]="s"></span>{{ s | titlecase }}
+          <span class="count">{{ logs?.counts?.[s] ?? 0 }}</span>
+        </button>
+      }
+    </div>
+    <div class="search-box">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+        <circle cx="11" cy="11" r="7" stroke="currentColor" stroke-width="1.6" />
+        <path d="m20 20-3.5-3.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
+      </svg>
+      <input type="text" placeholder="File name…" [(ngModel)]="search" (ngModelChange)="onSearchChange()" />
+    </div>
+  </div>
+
+  @if (logsLoading && !logs) {
+    <div class="empty-state">Loading…</div>
+  } @else if (logsError) {
+    <div class="empty-state error">{{ logsError }}</div>
+  } @else if (!logs || logs.items.length === 0) {
+    <div class="empty-state">{{ statusFilter || search ? 'No loads match.' : 'No loads yet.' }}</div>
+  } @else {
+    <div class="table-scroll">
+      <table class="data-table history-table" [class.refreshing]="logsLoading">
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>File</th>
+            <th>Snapshot</th>
+            <th>Status</th>
+            <th class="num">Feeds</th>
+            <th class="num">Inserted</th>
+            <th class="num">Updated</th>
+            <th class="num">Skipped</th>
+            <th class="num">Duration</th>
+            <th>Loaded at</th>
+          </tr>
+        </thead>
+        <tbody>
+          @for (log of logs.items; track log.batch_id) {
+            <tr class="log-row" [class.open]="expanded === log.batch_id" (click)="toggle(log)">
+              <td class="mono">{{ log.batch_id }}</td>
+              <td class="mono">{{ log.file_name }}</td>
+              <td>{{ plantTime(log.snapshot_time) }}</td>
+              <td><span class="batch-status" [attr.data-status]="log.status">{{ log.status }}</span></td>
+              <td class="num">{{ log.feeds_loaded }} / {{ log.feeds_total }}</td>
+              <td class="num">{{ log.rows_inserted }}</td>
+              <td class="num">{{ log.rows_updated }}</td>
+              <td class="num" [class.bad]="log.rows_skipped > 0">{{ log.rows_skipped }}</td>
+              <td class="num">{{ duration(log.duration_ms) }}</td>
+              <td>{{ plantTime(log.started_at) }}</td>
+            </tr>
+            @if (expanded === log.batch_id) {
+              <tr class="detail-row">
+                <td colspan="10">
+                  <div class="log-detail">
+                    @if (log.error_message) {
+                      <div class="form-error">{{ log.error_message }}</div>
+                    }
+                    @if (log.feed_results.length) {
+                      <table class="data-table feed-table">
+                        <thead>
+                          <tr>
+                            <th>Feed</th>
+                            <th>CSV</th>
+                            <th class="num">Rows</th>
+                            <th class="num">Inserted</th>
+                            <th class="num">Updated</th>
+                            <th class="num">Skipped</th>
+                            <th>Notes</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          @for (feed of log.feed_results; track feed.feed) {
+                            <tr>
+                              <td>{{ feed.feed }}</td>
+                              <td class="mono small">{{ feed.csv || '—' }}</td>
+                              <td class="num">{{ feed.rows }}</td>
+                              <td class="num">{{ feed.inserted ?? '—' }}</td>
+                              <td class="num">{{ feed.updated ?? '—' }}</td>
+                              <td class="num" [class.bad]="(feed.skipped ?? 0) > 0">{{ feed.skipped ?? '—' }}</td>
+                              <td class="notes">
+                                @if (feed.error) {
+                                  <span class="bad">HTTP {{ feed.http }}: {{ feed.error }}</span>
+                                }
+                                @for (e of feed.errors ?? []; track e) {
+                                  <div class="bad">{{ e }}</div>
+                                }
+                                @for (c of feed.closed_dispatches ?? []; track c) {
+                                  <div>Ended running dispatch {{ c }}</div>
+                                }
+                                @if (feed.result) {
+                                  {{ feed.result }}
+                                }
+                              </td>
+                            </tr>
+                          }
+                        </tbody>
+                      </table>
+                    }
+                    <dl class="detail-list">
+                      @if (log.warnings.length) {
+                        <dt>Warnings</dt>
+                        <dd>
+                          @for (w of log.warnings; track w) {
+                            <div>{{ w }}</div>
+                          }
+                        </dd>
+                      }
+                      @if (log.id_changes.length) {
+                        <dt>Reassigned IDs</dt>
+                        <dd>
+                          @for (c of log.id_changes; track c) {
+                            <div>{{ c }}</div>
+                          }
+                        </dd>
+                      }
+                      <dt>Archived to</dt>
+                      <dd class="mono small">{{ log.archive_path || '—' }}</dd>
+                      <dt>File time · run</dt>
+                      <dd>{{ plantTime(log.file_time) }} · <span class="mono small">{{ log.run_id }}</span></dd>
+                    </dl>
+                  </div>
+                </td>
+              </tr>
+            }
+          }
+        </tbody>
+      </table>
+    </div>
+    <div class="pagination">
+      <div class="page-range">{{ rangeLabel }}</div>
+      <div class="page-controls">
+        <button class="btn btn-secondary btn-icon" [disabled]="offset === 0" (click)="page(-1)" title="Newer">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+            <path d="M15 6l-6 6 6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+          </svg>
+        </button>
+        <button class="btn btn-secondary btn-icon" [disabled]="offset + pageSize >= logs.total" (click)="page(1)" title="Older">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+            <path d="M9 6l6 6-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+          </svg>
+        </button>
+      </div>
+    </div>
+  }
+</div>

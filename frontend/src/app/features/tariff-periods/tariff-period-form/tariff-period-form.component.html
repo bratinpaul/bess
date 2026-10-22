@@ -1,0 +1,176 @@
+<div class="page-header">
+  <div>
+    <a class="back-link" routerLink="/tariff-bands">← Back to tariff bands</a>
+    <h2>{{ isEditMode ? 'Edit Tariff Band' : 'Add Tariff Band' }}</h2>
+  </div>
+</div>
+
+<div class="card">
+  @if (loading) {
+    <div class="empty-state">Loading…</div>
+  } @else {
+    <form [formGroup]="form" (ngSubmit)="submit()">
+      @if (error) {
+        <div class="form-error">{{ error }}</div>
+      }
+
+      <h3 class="form-section-title">Band</h3>
+      <div class="form-grid">
+        <div class="field">
+          <label for="ems_id">Applies to</label>
+          <select id="ems_id" formControlName="ems_id">
+            <option [ngValue]="null">Shared — every EMS without its own bands</option>
+            @for (e of ems; track e.ems_id) {
+              <option [ngValue]="e.ems_id">{{ emsLabel(e) }}</option>
+            }
+          </select>
+          <span class="field-hint">An EMS with bands of its own uses only those.</span>
+        </div>
+
+        <div class="field">
+          <label for="price_level">Price level *</label>
+          <select id="price_level" formControlName="price_level">
+            <option [ngValue]="null" disabled>Select a level</option>
+            @for (lv of priceLevels; track lv) {
+              <option [ngValue]="lv">{{ levelLabels[lv] }}</option>
+            }
+          </select>
+          @if (invalid('price_level')) {
+            <span class="field-error">Price level is required.</span>
+          }
+        </div>
+
+        <div class="field">
+          <label for="band_code">Band code *</label>
+          <input id="band_code" type="text" formControlName="band_code" placeholder="e.g. PEAK" />
+          @if (invalid('band_code')) {
+            <span class="field-error">Letters, digits and underscores (max 30).</span>
+          } @else {
+            <span class="field-hint">Stored in capitals; spaces become underscores.</span>
+          }
+        </div>
+
+        <div class="field">
+          <label for="band_name">Band name *</label>
+          <input id="band_name" type="text" formControlName="band_name" placeholder="e.g. Evening peak" />
+          @if (invalid('band_name')) {
+            <span class="field-error">Band name is required (max 100 characters).</span>
+          }
+        </div>
+      </div>
+
+      <h3 class="form-section-title">When</h3>
+      <div class="form-grid">
+        <div class="field">
+          <label for="start_hour">From *</label>
+          <select id="start_hour" formControlName="start_hour">
+            @for (h of startHours; track h) {
+              <option [ngValue]="h">{{ hourLabel(h) }}</option>
+            }
+          </select>
+        </div>
+        <div class="field">
+          <label for="end_hour">Until *</label>
+          <select id="end_hour" formControlName="end_hour">
+            @for (h of endHours; track h) {
+              <option [ngValue]="h">{{ h === 24 ? '24:00 (midnight)' : hourLabel(h) }}</option>
+            }
+          </select>
+          @if (form.hasError('hourOrder')) {
+            <span class="field-error">Must be after the start (a band can't cross midnight — split it in two).</span>
+          } @else {
+            <span class="field-hint">The band covers the hours up to, not including, this one.</span>
+          }
+        </div>
+        <div class="field">
+          <label for="day_type">Days *</label>
+          <select id="day_type" formControlName="day_type">
+            @for (d of dayTypes; track d) {
+              <option [ngValue]="d">{{ dayLabels[d] }}</option>
+            }
+          </select>
+        </div>
+        <div class="field">
+          <label for="season">Season *</label>
+          <input id="season" type="text" formControlName="season" list="seasonOptions" />
+          <datalist id="seasonOptions">
+            @for (s of seasons; track s) {
+              <option [value]="s"></option>
+            }
+          </datalist>
+          <span class="field-hint">ALL, or a season name (e.g. SUMMER). The price forecast uses ALL / weekday bands.</span>
+        </div>
+      </div>
+
+      <!-- preview -->
+      <div class="preview">
+        <div class="preview-bar">
+          @for (b of others; track b.tariff_period_id) {
+            <span class="ghost" [style.left.%]="(b.start_hour / 24) * 100" [style.width.%]="((b.end_hour - b.start_hour) / 24) * 100"
+              [title]="b.band_code + ' ' + hourLabel(b.start_hour) + '–' + hourLabel(b.end_hour)">{{ b.band_code }}</span>
+          }
+          @if (preview.end > preview.start) {
+            <span class="mine" [class.clash]="clashes.length"
+              [style.left.%]="(preview.start / 24) * 100" [style.width.%]="((preview.end - preview.start) / 24) * 100"
+              [style.background]="levelColors[previewLevel].bg" [style.color]="levelColors[previewLevel].ink">{{ preview.code }}</span>
+          }
+        </div>
+        <div class="preview-axis">
+          @for (h of [0, 6, 12, 18, 24]; track h) {
+            <span [style.left.%]="(h / 24) * 100">{{ h }}</span>
+          }
+        </div>
+        @if (clashes.length) {
+          <div class="clash-note">
+            Overlaps {{ clashes.length === 1 ? 'band' : 'bands' }}
+            @for (c of clashes; track c.tariff_period_id; let last = $last) {
+              <strong>{{ c.band_code }}</strong> ({{ hourLabel(c.start_hour) }}–{{ hourLabel(c.end_hour) }}){{ last ? '' : ', ' }}
+            }
+            — saving is refused unless their validity dates don't overlap.
+          </div>
+        } @else {
+          <p class="field-hint">Grey: the other bands of this scope on the same days and season. Coloured: this band.</p>
+        }
+      </div>
+
+      <h3 class="form-section-title">Price &amp; validity</h3>
+      <div class="form-grid">
+        <div class="field">
+          <label for="reference_price_mwh">Reference price ($/MWh)</label>
+          <input id="reference_price_mwh" type="number" min="0" step="0.1" formControlName="reference_price_mwh" placeholder="optional" />
+          @if (invalid('reference_price_mwh')) {
+            <span class="field-error">Must be 0 or more.</span>
+          } @else {
+            <span class="field-hint">Typical price of the band; the price forecast uses it as an input.</span>
+          }
+        </div>
+        <div class="field"></div>
+        <div class="field">
+          <label for="valid_from">Valid from</label>
+          <input id="valid_from" type="date" formControlName="valid_from" />
+          <span class="field-hint">Empty = no start date.</span>
+        </div>
+        <div class="field">
+          <label for="valid_to">Valid to</label>
+          <input id="valid_to" type="date" formControlName="valid_to" />
+          @if (form.hasError('dateOrder')) {
+            <span class="field-error">Must be on or after valid from.</span>
+          } @else {
+            <span class="field-hint">Empty = no end date.</span>
+          }
+        </div>
+        <div class="field full">
+          <label for="note">Note</label>
+          <textarea id="note" rows="2" formControlName="note" placeholder="optional, e.g. source of the tariff"></textarea>
+        </div>
+      </div>
+
+      <div class="form-actions">
+        <a class="btn btn-secondary" routerLink="/tariff-bands">Cancel</a>
+        <button type="submit" class="btn btn-primary" [disabled]="saving">
+          {{ saving ? 'Saving…' : isEditMode ? 'Save changes' : 'Add band' }}
+        </button>
+      </div>
+    </form>
+  }
+</div>

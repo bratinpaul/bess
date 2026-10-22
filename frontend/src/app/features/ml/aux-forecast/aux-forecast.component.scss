@@ -1,0 +1,66 @@
+.asof-input {
+  padding: 4px 6px;
+  font: inherit;
+  font-size: 13px;
+}
+
+.stale-box {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  margin: 8px 0 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--color-border);
+  border-left: 4px solid #8a8f98;
+  border-radius: var(--radius);
+  background: var(--color-bg);
+}
+
+.kpi-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px;
+  margin: 10px 0 14px;
+}
+
+.kpi {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+
+  strong {
+    font-size: 18px;
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+.kpi.accent {
+  border-left: 4px solid #eb6834;
+}
+
+.driver-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  margin-top: 8px;
+}
+
+@media (max-width: 900px) {
+  .driver-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.step-table {
+  max-height: 360px;
+  overflow-y: auto;
+  margin: 8px 0;
+}
+
+.energy-line {
+  margin: 8px 0 0;
+}

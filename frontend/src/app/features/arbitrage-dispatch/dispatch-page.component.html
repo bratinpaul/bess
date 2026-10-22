@@ -1,0 +1,265 @@
+<div class="page-header">
+  <div>
+    <h2>{{ cfg.title }}</h2>
+    <p class="subtitle">{{ cfg.subtitle }}</p>
+  </div>
+  <div class="header-actions">
+    <label class="toggle-switch" title="Show the upload section">
+      <input data-perm="write" type="checkbox" [(ngModel)]="showUpload" [ngModelOptions]="{ standalone: true }" />
+      <span class="track" aria-hidden="true"><span class="thumb"></span></span>
+      Upload file
+    </label>
+    <button type="button" class="btn btn-primary" (click)="openAdd()" [disabled]="!lookups">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+        <path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+      </svg>
+      Add {{ cfg.noun }}
+    </button>
+  </div>
+</div>
+
+@if (showUpload) {
+  <div class="card telemetry-upload-card">
+    <div class="telemetry-section-header">
+      <h3>Upload {{ cfg.title }} File</h3>
+      <p class="subtitle">CSV or Excel ({{ cfg.fileName }}) · columns {{ cfg.uploadColumns }}</p>
+    </div>
+
+    <div class="upload-row">
+      <input type="file" accept=".csv,.xlsx,.xlsm" (change)="onFileSelected($event)" #fileInput />
+      <button type="button" class="btn btn-primary" [disabled]="!selectedFile || uploading" (click)="upload()">
+        {{ uploading ? 'Uploading…' : 'Upload' }}
+      </button>
+    </div>
+    <p class="upload-note">{{ cfg.uploadNote }} Times without a zone are plant time (no UTC conversion).</p>
+
+    @if (uploadError) {
+      <div class="form-error">{{ uploadError }}</div>
+    }
+
+    @if (uploadResult) {
+      <div class="upload-summary">
+        <div class="upload-stat">
+          <span class="upload-stat-value">{{ uploadResult.total_rows }}</span>
+          <span class="upload-stat-label">Rows in file</span>
+        </div>
+        <div class="upload-stat">
+          <span class="upload-stat-value">{{ uploadResult.inserted }}</span>
+          <span class="upload-stat-label">Inserted</span>
+        </div>
+        <div class="upload-stat">
+          <span class="upload-stat-value">{{ uploadResult.updated }}</span>
+          <span class="upload-stat-label">Updated</span>
+        </div>
+        <div class="upload-stat" [class.upload-stat-error]="uploadResult.error_count > 0">
+          <span class="upload-stat-value">{{ uploadResult.error_count }}</span>
+          <span class="upload-stat-label">Rows skipped</span>
+        </div>
+      </div>
+      @if (uploadResult.first_ts) {
+        <p class="upload-note">Loaded {{ label(uploadResult.first_ts) }} → {{ label(uploadResult.last_ts) }}</p>
+      }
+      @for (w of uploadResult.warnings; track $index) {
+        <div class="upload-warning">⚠ {{ w }}</div>
+      }
+      @if (uploadResult.errors.length > 0) {
+        <div class="upload-errors">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Row</th>
+                <th>Errors</th>
+              </tr>
+            </thead>
+            <tbody>
+              @for (rowError of visibleUploadErrors; track $index) {
+                <tr>
+                  <td class="mono">{{ rowError.row }}</td>
+                  <td>{{ rowError.errors.join('; ') }}</td>
+                </tr>
+              }
+            </tbody>
+          </table>
+          @if (uploadResult.errors.length > 10) {
+            <button type="button" class="btn btn-secondary" (click)="showAllUploadErrors = !showAllUploadErrors">
+              {{ showAllUploadErrors ? 'Show fewer' : 'Show all ' + uploadResult.errors.length + ' messages' }}
+            </button>
+          }
+        </div>
+      }
+    }
+  </div>
+}
+
+<div class="card">
+  <div class="toolbar telemetry-filters">
+    @for (f of cfg.filters; track f.param) {
+      <div class="field" [class.narrow]="f.kind === 'number'">
+        <label [for]="'f_' + f.param">{{ f.label }}</label>
+        @if (f.kind === 'select') {
+          <select [id]="'f_' + f.param" [(ngModel)]="filters[f.param]">
+            <option [ngValue]="null">All</option>
+            @for (c of choices(f); track c.value) {
+              <option [ngValue]="c.value">{{ c.label }}</option>
+            }
+          </select>
+        } @else {
+          <input [id]="'f_' + f.param" type="number" min="1" step="1" [(ngModel)]="filters[f.param]" />
+        }
+      </div>
+    }
+    <div class="field">
+      <label for="filterStart">{{ cfg.dateLabel }} from</label>
+      <input id="filterStart" type="date" [(ngModel)]="filterStart" />
+    </div>
+    <div class="field">
+      <label for="filterEnd">{{ cfg.dateLabel }} to</label>
+      <input id="filterEnd" type="date" [(ngModel)]="filterEnd" />
+    </div>
+    <div class="telemetry-filter-actions">
+      <button type="button" class="btn btn-primary" (click)="applyFilters()">Apply</button>
+      <button type="button" class="btn btn-secondary" (click)="clearFilters()">Clear</button>
+    </div>
+  </div>
+
+  @if (page && page.total > 0) {
+    <div class="dp-summary">
+      @for (s of page.stats; track s.label) {
+        @if (s.value !== null) {
+          <div class="dp-stat" [class.dp-stat-warn]="s.warn">
+            <span class="dp-stat-value">{{ s.value }}</span>
+            <span class="dp-stat-label">{{ s.label }}</span>
+          </div>
+        }
+      }
+    </div>
+  }
+
+  <div class="table-bar">
+    <span class="table-bar-info">
+      @if (!loading && !error) {
+        {{ total }} rows ·
+        <button type="button" class="link-btn" (click)="toggleOrder()">{{ order === 'asc' ? 'oldest first ↑' : 'newest first ↓' }}</button>
+        · {{ visibleColumns.length }} of {{ cfg.columns.length }} columns · times in plant time (Asia/Kolkata)
+      }
+    </span>
+    <app-column-picker
+      [columns]="cfg.columns"
+      [defaultKeys]="cfg.defaultColumns"
+      [storageKey]="storageKey"
+      (visibleChange)="visibleColumns = $event" />
+  </div>
+
+  @if (loading) {
+    <div class="empty-state">Loading…</div>
+  } @else if (error) {
+    <div class="empty-state error">{{ error }}</div>
+  } @else if (tableRows.length === 0) {
+    <div class="empty-state">No rows match the current filters. Turn on <strong>Upload file</strong> to load {{ cfg.fileName }}.</div>
+  } @else {
+    <app-telemetry-table [columns]="visibleColumns" [rows]="tableRows" [actions]="true"
+      (editRow)="openEdit($event)" (deleteRow)="confirmDelete($event)" />
+
+    <div class="pagination">
+      <div class="page-size">
+        <label for="pageSize">Rows per page</label>
+        <select id="pageSize" [ngModel]="pageSize" (ngModelChange)="setPageSize($event)">
+          @for (size of cfg.pageSizes; track size) {
+            <option [ngValue]="size">{{ size }}</option>
+          }
+        </select>
+      </div>
+      <div class="page-range">{{ rangeStart }}–{{ rangeEnd }} of {{ total }}</div>
+      <div class="page-controls">
+        <button class="btn btn-secondary btn-icon" [disabled]="currentPage === 1" (click)="goToPage(currentPage - 1)" title="Previous page">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+            <path d="M15 6l-6 6 6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+          </svg>
+        </button>
+        <span class="page-indicator">Page {{ currentPage }} of {{ totalPages }}</span>
+        <button class="btn btn-secondary btn-icon" [disabled]="currentPage === totalPages" (click)="goToPage(currentPage + 1)" title="Next page">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+            <path d="M9 6l6 6-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+          </svg>
+        </button>
+      </div>
+    </div>
+  }
+</div>
+
+<!-- add / edit -->
+@if (edit; as e) {
+  <div class="modal-backdrop" (click)="edit = null">
+    <div class="modal edit-modal" (click)="$event.stopPropagation()">
+      <h3>{{ e.title }}</h3>
+      <div class="form-grid">
+        @for (f of editFields; track f.key) {
+          <div class="field">
+            <label [for]="'e_' + f.key">{{ f.label }}{{ f.required ? ' *' : '' }}</label>
+            @switch (f.kind) {
+              @case ('select') {
+                <select [id]="'e_' + f.key" [(ngModel)]="e.values[f.key]" [disabled]="fieldLocked(f)">
+                  @if (!f.required) {
+                    <option [ngValue]="null">—</option>
+                  }
+                  @for (c of choices(f); track c.value) {
+                    <option [ngValue]="c.value">{{ c.label }}</option>
+                  }
+                </select>
+              }
+              @case ('datetime') {
+                <input [id]="'e_' + f.key" type="datetime-local" [(ngModel)]="e.values[f.key]" [disabled]="fieldLocked(f)" />
+              }
+              @case ('text') {
+                <input [id]="'e_' + f.key" type="text" [(ngModel)]="e.values[f.key]" [disabled]="fieldLocked(f)" />
+              }
+              @default {
+                <input [id]="'e_' + f.key" type="number" [step]="f.step ?? (f.kind === 'int' ? '1' : 'any')"
+                  [(ngModel)]="e.values[f.key]" [disabled]="fieldLocked(f)" />
+              }
+            }
+            @if (f.hint) {
+              <span class="field-hint">{{ f.hint }}</span>
+            }
+          </div>
+        }
+      </div>
+      @if (e.mode === 'edit') {
+        <p class="derived-note">Fields that identify the row are read-only — delete it and add a new one to change them.</p>
+      }
+      @if (editError) {
+        <div class="form-error">{{ editError }}</div>
+      }
+      <div class="modal-actions">
+        @if (editProblem) {
+          <span class="problem-note">{{ editProblem }}</span>
+        }
+        <button class="btn btn-secondary" (click)="edit = null" [disabled]="saving">Cancel</button>
+        <button class="btn btn-primary" (click)="save()" [disabled]="saving || !!editProblem">
+          {{ saving ? 'Saving…' : e.mode === 'add' ? 'Add ' + cfg.noun : 'Save changes' }}
+        </button>
+      </div>
+    </div>
+  </div>
+}
+
+<!-- delete -->
+@if (toDelete; as d) {
+  <div class="modal-backdrop" (click)="toDelete = null">
+    <div class="modal" (click)="$event.stopPropagation()">
+      <h3>Delete {{ cfg.noun }}?</h3>
+      <p>
+        This permanently deletes {{ cfg.describe(d, label) }}. {{ cfg.deleteNote ?? '' }} This cannot be undone.
+      </p>
+      @if (deleteError) {
+        <div class="form-error">{{ deleteError }}</div>
+      }
+      <div class="modal-actions">
+        <button class="btn btn-secondary" (click)="toDelete = null" [disabled]="deleting">{{ deleteError ? 'Close' : 'Cancel' }}</button>
+        @if (!deleteError) {
+          <button class="btn btn-danger-solid" (click)="deleteConfirmed()" [disabled]="deleting">{{ deleting ? 'Deleting…' : 'Delete' }}</button>
+        }
+      </div>
+    </div>
+  </div>
+}

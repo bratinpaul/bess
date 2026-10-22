@@ -1,0 +1,209 @@
+<div class="page-header">
+  <div>
+    <h2>Aging Snapshots</h2>
+    <p class="subtitle">Monthly aging features and remaining-useful-life labels (RUL days / cycles) per fleet system — reference data
+      for SOH and RUL models</p>
+  </div>
+</div>
+
+<div class="card">
+  @if (systems.length) {
+    <div class="cal-summary">
+      <div class="cal-stat">
+        <span class="cal-stat-value">{{ fleet.systems }}</span>
+        <span class="cal-stat-label">Systems</span>
+      </div>
+      <div class="cal-stat">
+        <span class="cal-stat-value">{{ fleet.snapshots }}</span>
+        <span class="cal-stat-label">Snapshots · {{ fleet.first }} → {{ fleet.last }}</span>
+      </div>
+      <div class="cal-stat">
+        <span class="cal-dot eol"></span>
+        <span class="cal-stat-value">{{ fleet.eol }}</span>
+        <span class="cal-stat-label">Reached end of life</span>
+      </div>
+      <div class="cal-stat">
+        <span class="cal-dot live"></span>
+        <span class="cal-stat-value">{{ fleet.systems - fleet.eol }}</span>
+        <span class="cal-stat-label">Still in service</span>
+      </div>
+    </div>
+    <div class="system-strip">
+      @for (s of systems; track s.system_id) {
+        <button type="button" class="sys-pill" [class.on]="filterSystem === s.system_id" [class.eol]="s.eol_reached"
+          (click)="selectSystem(s.system_id)"
+          [title]="s.snapshots + ' snapshots · ' + s.first_date + ' → ' + s.last_date + ' · latest RUL ' + (s.latest_rul_days ?? '—') + ' days'">
+          <strong>{{ s.system_code }}</strong>
+          <span>SOH {{ num(s.latest_soh_pct, 1) }} %</span>
+          <span class="sys-meta">{{ s.snapshots }} · {{ s.eol_reached ? 'EOL' : 'in service' }}</span>
+        </button>
+      }
+    </div>
+  }
+
+  <div class="toolbar telemetry-filters">
+    <div class="field">
+      <label for="fSys">System</label>
+      <select id="fSys" [(ngModel)]="filterSystem">
+        <option [ngValue]="null">All systems</option>
+        @for (s of systems; track s.system_id) {
+          <option [ngValue]="s.system_id">{{ s.system_code }}</option>
+        }
+      </select>
+    </div>
+    <div class="field">
+      <label for="fStart">From</label>
+      <input id="fStart" type="date" [(ngModel)]="filterStart" />
+    </div>
+    <div class="field">
+      <label for="fEnd">To</label>
+      <input id="fEnd" type="date" [(ngModel)]="filterEnd" />
+    </div>
+    <div class="field">
+      <label for="fEol">End of life</label>
+      <select id="fEol" [(ngModel)]="filterEol">
+        <option value="">Any</option>
+        <option value="true">Reached</option>
+        <option value="false">Not reached</option>
+      </select>
+    </div>
+    <div class="field">
+      <label for="fCens">Censored</label>
+      <select id="fCens" [(ngModel)]="filterCensored">
+        <option value="">Any</option>
+        <option value="true">Yes</option>
+        <option value="false">No</option>
+      </select>
+    </div>
+    <div class="field">
+      <label for="fSort">Sort by</label>
+      <select id="fSort" [(ngModel)]="sort">
+        @for (s of sorts; track s.key) {
+          <option [value]="s.key">{{ s.label }}</option>
+        }
+      </select>
+    </div>
+    <div class="telemetry-filter-actions">
+      <button type="button" class="btn btn-primary" (click)="applyFilters()">Apply</button>
+      <button type="button" class="btn btn-secondary" (click)="clearFilters()">Clear</button>
+    </div>
+  </div>
+
+  <div class="table-bar">
+    <span class="table-bar-info">
+      @if (!loading && !error) {
+        {{ total }} snapshots ·
+        <button type="button" class="link-btn" (click)="toggleOrder()">{{ order === 'asc' ? 'ascending ↑' : 'descending ↓' }}</button>
+        · {{ visibleColumns.length }} of {{ allColumns.length }} columns
+      }
+    </span>
+    <app-column-picker
+      [columns]="allColumns"
+      [defaultKeys]="defaultColumnKeys"
+      storageKey="bess.agingSnapshotTable.columns"
+      (visibleChange)="visibleColumns = $event" />
+  </div>
+
+  @if (loading) {
+    <div class="empty-state">Loading aging snapshots…</div>
+  } @else if (error) {
+    <div class="empty-state error">{{ error }}</div>
+  } @else if (tableRows.length === 0) {
+    <div class="empty-state">No aging snapshots match the current filters.</div>
+  } @else {
+    <app-telemetry-table [columns]="visibleColumns" [rows]="tableRows" [actions]="true"
+      (editRow)="openEdit($event)" (deleteRow)="confirmDelete($event)" />
+
+    <div class="pagination">
+      <div class="page-size">
+        <label for="pageSize">Rows per page</label>
+        <select id="pageSize" [ngModel]="pageSize" (ngModelChange)="setPageSize($event)">
+          @for (size of pageSizeOptions; track size) {
+            <option [ngValue]="size">{{ size }}</option>
+          }
+        </select>
+      </div>
+      <div class="page-range">{{ rangeStart }}–{{ rangeEnd }} of {{ total }}</div>
+      <div class="page-controls">
+        <button class="btn btn-secondary btn-icon" [disabled]="currentPage === 1" (click)="goToPage(currentPage - 1)" title="Previous page">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+            <path d="M15 6l-6 6 6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+          </svg>
+        </button>
+        <span class="page-indicator">Page {{ currentPage }} of {{ totalPages }}</span>
+        <button class="btn btn-secondary btn-icon" [disabled]="currentPage === totalPages" (click)="goToPage(currentPage + 1)" title="Next page">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+            <path d="M9 6l6 6-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+          </svg>
+        </button>
+      </div>
+    </div>
+  }
+</div>
+
+<!-- edit -->
+@if (edit; as e) {
+  <div class="modal-backdrop" (click)="edit = null">
+    <div class="modal edit-modal aging-modal" (click)="$event.stopPropagation()">
+      <h3>Edit {{ e.row.system_code }} · {{ e.row.snapshot_date }}</h3>
+      <p class="derived-note">The system and snapshot date identify the record and can't be changed. Leave a value empty to clear it.</p>
+      <div class="form-grid aging-grid">
+        @for (f of numFields; track f.key) {
+          <div class="field">
+            <label [for]="'e' + f.key">{{ f.label }}</label>
+            <input [id]="'e' + f.key" type="number" [step]="f.step" [attr.min]="f.min ?? null" [attr.max]="f.max ?? null"
+              [(ngModel)]="$any(e.values)[f.key]" />
+          </div>
+        }
+        <div class="field">
+          <label for="eCens">Censored</label>
+          <select id="eCens" [(ngModel)]="e.values.is_censored">
+            <option [ngValue]="null">—</option>
+            <option [ngValue]="true">Yes</option>
+            <option [ngValue]="false">No</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="eEol">EOL reached</label>
+          <select id="eEol" [(ngModel)]="e.values.eol_reached">
+            <option [ngValue]="null">—</option>
+            <option [ngValue]="true">Yes</option>
+            <option [ngValue]="false">No</option>
+          </select>
+        </div>
+      </div>
+      @if (editError) {
+        <div class="form-error">{{ editError }}</div>
+      }
+      <div class="modal-actions">
+        @if (editProblem) {
+          <span class="problem-note">{{ editProblem }}</span>
+        }
+        <button class="btn btn-secondary" (click)="edit = null" [disabled]="saving">Cancel</button>
+        <button class="btn btn-primary" (click)="save()" [disabled]="saving || !!editProblem">{{ saving ? 'Saving…' : 'Save changes' }}</button>
+      </div>
+    </div>
+  </div>
+}
+
+<!-- delete -->
+@if (toDelete; as d) {
+  <div class="modal-backdrop" (click)="toDelete = null">
+    <div class="modal" (click)="$event.stopPropagation()">
+      <h3>Delete aging snapshot?</h3>
+      <p>
+        This permanently deletes the <strong>{{ d.system_code }}</strong> snapshot of <strong>{{ d.snapshot_date }}</strong>
+        (SOH {{ num(d.soh_pct, 2) }} %, RUL {{ d.rul_days ?? '—' }} days). RUL models trained afterwards won't see it. This cannot be undone.
+      </p>
+      @if (deleteError) {
+        <div class="form-error">{{ deleteError }}</div>
+      }
+      <div class="modal-actions">
+        <button class="btn btn-secondary" (click)="toDelete = null" [disabled]="deleting">{{ deleteError ? 'Close' : 'Cancel' }}</button>
+        @if (!deleteError) {
+          <button class="btn btn-danger-solid" (click)="deleteConfirmed()" [disabled]="deleting">{{ deleting ? 'Deleting…' : 'Delete' }}</button>
+        }
+      </div>
+    </div>
+  </div>
+}

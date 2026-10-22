@@ -1,0 +1,146 @@
+.picker-row .picker-field {
+  flex: 1 1 320px;
+}
+
+.model-note {
+  margin: 10px 0 0;
+}
+
+.tab-row {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 12px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.tab {
+  padding: 9px 16px;
+  border: none;
+  border-bottom: 3px solid transparent;
+  background: none;
+  color: var(--color-text-muted);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.tab.on {
+  border-bottom-color: #63f8ba;
+  color: var(--color-text);
+}
+
+.seg {
+  display: inline-flex;
+  overflow: hidden;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+}
+
+.seg button {
+  padding: 7px 16px;
+  border: none;
+  background: var(--color-surface, #fff);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text-muted);
+  cursor: pointer;
+}
+
+.seg button.on {
+  background: #63f8ba;
+  color: #0b3d2c;
+}
+
+.feature-group h4 .optional-tag {
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.field select {
+  width: 100%;
+}
+
+.eta-tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 12px;
+  margin-top: 18px;
+}
+
+.eta-tile {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 14px 16px;
+  border: 1px solid var(--color-border);
+  border-left: 4px solid var(--c, #475569);
+  border-radius: var(--radius);
+  background: var(--color-surface, #fff);
+}
+
+.eta-tile.main {
+  background: rgba(99, 248, 186, 0.16);
+}
+
+.eta-tile.measured {
+  border-left-color: #64748b;
+  background: var(--color-bg);
+}
+
+.eta-value {
+  font-size: 26px;
+  font-weight: 700;
+  color: var(--color-text);
+  font-variant-numeric: tabular-nums;
+}
+
+.flow-note {
+  margin: 10px 0 0;
+}
+
+.result-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+  gap: 16px;
+  margin-top: 16px;
+}
+
+.result-box {
+  min-width: 0;
+  padding: 14px 16px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+
+  h4 {
+    margin: 0 0 4px;
+    font-size: 14px;
+  }
+
+  p {
+    margin: 0 0 10px;
+  }
+}
+
+.result-box.wide {
+  grid-column: 1 / -1;
+}
+
+.flow-table td {
+  padding: 6px 8px;
+  font-size: 13px;
+}
+
+.flow-table tr.sep td {
+  border-top: 2px solid var(--color-border);
+}
+
+.flow-table .num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.cycle-intro {
+  margin: 0 0 4px;
+}

@@ -1,0 +1,105 @@
+<div class="card">
+  <div class="toolbar telemetry-filters">
+    <div class="field">
+      <label for="graphEntity">{{ entityLabel }}</label>
+      <select id="graphEntity" [(ngModel)]="entityId">
+        <option value="" disabled>Select a {{ entityLabel }}</option>
+        @for (entity of entities; track entity.id) {
+          <option [value]="entity.id">{{ entity.name }}</option>
+        }
+      </select>
+    </div>
+    <div class="field">
+      <label for="graphStart">From</label>
+      <input id="graphStart" type="datetime-local" [(ngModel)]="start" />
+    </div>
+    <div class="field">
+      <label for="graphEnd">To</label>
+      <input id="graphEnd" type="datetime-local" [(ngModel)]="end" />
+    </div>
+    <div class="telemetry-filter-actions">
+      <button type="button" class="btn btn-primary" [disabled]="loading" (click)="load()">Apply</button>
+      <button type="button" class="btn btn-secondary" [disabled]="loading" (click)="resetRange()" title="Show the last 7 days of data">
+        Last 7 days
+      </button>
+    </div>
+  </div>
+
+  @if (series && !loading) {
+    <div class="graph-status" role="status">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="1.8" />
+        <path d="M12 11v6M12 7.5v.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
+      </svg>
+      <strong>{{ series.entityName }}</strong>
+      <span class="sep">·</span> {{ rangeLabel }}
+      <span class="sep">·</span> {{ series.points.length }} points
+      <span class="sep">·</span> {{ resolutionLabel }}
+    </div>
+  }
+
+  <section class="chart-selector" aria-labelledby="chartSelectorTitle">
+    <div class="chart-selector-head">
+      <div>
+        <h3 id="chartSelectorTitle">Chart selector</h3>
+        <span class="chart-selector-count">{{ shownCount }} of {{ totalCharts }} charts shown</span>
+      </div>
+      <div class="chart-selector-actions">
+        <button type="button" class="btn btn-secondary btn-sm" [disabled]="hidden.size === 0" (click)="showAllCharts()">Select all</button>
+        <button type="button" class="btn btn-secondary btn-sm" [disabled]="shownCount === 0" (click)="hideAllCharts()">Clear all</button>
+      </div>
+    </div>
+    <div class="chart-selector-grid">
+      @for (chart of charts; track chart.id) {
+        <label class="chart-option" [class.on]="isShown(chart.id)">
+          <input type="checkbox" class="box" [checked]="isShown(chart.id)" (change)="toggleChart(chart.id)" />
+          <span class="chart-option-text">
+            <span class="chart-option-title" [title]="chart.title">{{ chart.title }}</span>
+            <span class="chart-option-meta" [title]="summaries[chart.id]">{{ summaries[chart.id] }}</span>
+          </span>
+        </label>
+      }
+      @for (timeline of timelines; track timeline.id) {
+        <label class="chart-option" [class.on]="isShown(timeline.id)">
+          <input type="checkbox" class="box" [checked]="isShown(timeline.id)" (change)="toggleChart(timeline.id)" />
+          <span class="chart-option-text">
+            <span class="chart-option-title" [title]="timeline.title">{{ timeline.title }}</span>
+            <span class="chart-option-meta">State timeline</span>
+          </span>
+        </label>
+      }
+    </div>
+  </section>
+
+</div>
+
+@if (loading) {
+  <div class="card empty-state">Loading telemetry series…</div>
+} @else if (error) {
+  <div class="card empty-state error">{{ error }}</div>
+} @else if (series && series.points.length === 0) {
+  <div class="card empty-state">No telemetry for this {{ entityLabel }} in the selected range.</div>
+} @else if (series) {
+  <div class="graph-grid">
+    @for (chart of visibleCharts; track chart.id) {
+      <app-telemetry-chart-card
+        [spec]="chart"
+        [points]="series.points"
+        [refs]="series.refs"
+        [xMin]="xMin"
+        [xMax]="xMax"
+        [selected]="selected[chart.id]"
+        (selectedChange)="setSelected(chart.id, $event)" />
+    }
+    @for (timeline of visibleTimelines; track timeline.id) {
+      <app-state-timeline-card
+        [spec]="timeline"
+        [segments]="series.timelines[timeline.id].segments"
+        [states]="series.timelines[timeline.id].states"
+        [xMin]="xMin"
+        [xMax]="xMax"
+        [selected]="selected[timeline.id]"
+        (selectedChange)="setSelected(timeline.id, $event)" />
+    }
+  </div>
+}

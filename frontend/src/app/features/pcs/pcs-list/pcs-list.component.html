@@ -1,0 +1,164 @@
+<div class="page-header">
+  <div>
+    <h2>PCS</h2>
+    <p class="subtitle">Power conversion systems</p>
+  </div>
+  <a class="btn btn-primary" routerLink="/pcs/new">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+      <path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+    </svg>
+    Add PCS
+  </a>
+</div>
+
+<div class="card">
+  @if (loading) {
+    <div class="empty-state">Loading PCS units…</div>
+  } @else if (error) {
+    <div class="empty-state error">{{ error }}</div>
+  } @else if (items.length === 0) {
+    <div class="empty-state">No PCS units yet. Click "Add PCS" to create one.</div>
+  } @else {
+    <div class="toolbar">
+      <div class="search-box">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+          <circle cx="11" cy="11" r="7" stroke="currentColor" stroke-width="1.6" />
+          <path d="m20 20-3.5-3.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
+        </svg>
+        <input
+          type="text"
+          placeholder="Filter by PCS code, manufacturer, model, serial number or system…"
+          [(ngModel)]="searchTerm"
+          (ngModelChange)="onSearchChange()" />
+      </div>
+      <div class="result-count">{{ totalItems }} PCS{{ totalItems === 1 ? '' : ' units' }}</div>
+    </div>
+
+    @if (totalItems === 0) {
+      <div class="empty-state">No PCS units match "{{ searchTerm }}".</div>
+    } @else {
+      <div class="table-scroll">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th class="sortable" (click)="setSort('pcs_code')">
+              PCS Code
+              <span class="sort-icon" [class.active]="sortColumn === 'pcs_code'">
+                {{ sortColumn === 'pcs_code' && sortDirection === 'desc' ? '▼' : '▲' }}
+              </span>
+            </th>
+            <th class="sortable" (click)="setSort('manufacturer')">
+              Manufacturer
+              <span class="sort-icon" [class.active]="sortColumn === 'manufacturer'">
+                {{ sortColumn === 'manufacturer' && sortDirection === 'desc' ? '▼' : '▲' }}
+              </span>
+            </th>
+            <th class="sortable" (click)="setSort('model')">
+              Model
+              <span class="sort-icon" [class.active]="sortColumn === 'model'">
+                {{ sortColumn === 'model' && sortDirection === 'desc' ? '▼' : '▲' }}
+              </span>
+            </th>
+            <th>Battery System</th>
+            <th class="sortable" (click)="setSort('rated_power_kw')">
+              Rated Power (kW)
+              <span class="sort-icon" [class.active]="sortColumn === 'rated_power_kw'">
+                {{ sortColumn === 'rated_power_kw' && sortDirection === 'desc' ? '▼' : '▲' }}
+              </span>
+            </th>
+            <th class="sortable" (click)="setSort('rated_ac_voltage_v')">
+              Rated AC Voltage (V)
+              <span class="sort-icon" [class.active]="sortColumn === 'rated_ac_voltage_v'">
+                {{ sortColumn === 'rated_ac_voltage_v' && sortDirection === 'desc' ? '▼' : '▲' }}
+              </span>
+            </th>
+            <th class="sortable" (click)="setSort('phases')">
+              Phases
+              <span class="sort-icon" [class.active]="sortColumn === 'phases'">
+                {{ sortColumn === 'phases' && sortDirection === 'desc' ? '▼' : '▲' }}
+              </span>
+            </th>
+            <th class="links-col">Open</th>
+            <th class="actions-col"></th>
+          </tr>
+        </thead>
+        <tbody>
+          @for (item of pagedItems; track item.pcs_id) {
+            <tr (click)="view(item)">
+              <td class="mono">{{ item.pcs_code }}</td>
+              <td>{{ item.manufacturer || '—' }}</td>
+              <td>{{ item.model || '—' }}</td>
+              <td>{{ systemName(item.system_id) }}</td>
+              <td>{{ item.rated_power_kw ?? '—' }}</td>
+              <td>{{ item.rated_ac_voltage_v ?? '—' }}</td>
+              <td>{{ item.phases }}</td>
+              <td class="links-col">
+                <app-asset-links variant="icons" assetType="pcs" [assetId]="item.pcs_id" [name]="item.pcs_code" />
+              </td>
+              <td class="actions-col">
+                <button class="btn btn-secondary btn-icon" title="Edit" (click)="edit(item, $event)">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+                    <path
+                      d="M4 20h4l10.5-10.5a2.1 2.1 0 0 0-3-3L5 17v3Z"
+                      stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" />
+                  </svg>
+                </button>
+                <button class="btn btn-danger btn-icon" title="Delete" (click)="confirmDelete(item, $event)">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+                    <path
+                      d="M5 7h14M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2m2 0-1 13a1 1 0 0 1-1 1H8a1 1 0 0 1-1-1L6 7"
+                      stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
+                  </svg>
+                </button>
+              </td>
+            </tr>
+          }
+        </tbody>
+      </table>
+      </div>
+
+      <div class="pagination">
+        <div class="page-size">
+          <label for="pageSize">Rows per page</label>
+          <select id="pageSize" [ngModel]="pageSize" (ngModelChange)="setPageSize($event)">
+            @for (size of pageSizeOptions; track size) {
+              <option [ngValue]="size">{{ size }}</option>
+            }
+          </select>
+        </div>
+        <div class="page-range">{{ rangeStart }}–{{ rangeEnd }} of {{ totalItems }}</div>
+        <div class="page-controls">
+          <button class="btn btn-secondary btn-icon" [disabled]="currentPage === 1" (click)="goToPage(currentPage - 1)" title="Previous page">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+              <path d="M15 6l-6 6 6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+            </svg>
+          </button>
+          <span class="page-indicator">Page {{ currentPage }} of {{ totalPages }}</span>
+          <button class="btn btn-secondary btn-icon" [disabled]="currentPage === totalPages" (click)="goToPage(currentPage + 1)" title="Next page">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+              <path d="M9 6l6 6-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+            </svg>
+          </button>
+        </div>
+      </div>
+    }
+  }
+</div>
+
+@if (itemToDelete) {
+  <div class="modal-backdrop" (click)="cancelDelete()">
+    <div class="modal" (click)="$event.stopPropagation()">
+      <h3>Delete PCS?</h3>
+      <p>
+        This will permanently delete <strong>{{ itemToDelete.pcs_code }}</strong>.
+        This action cannot be undone.
+      </p>
+      <div class="modal-actions">
+        <button class="btn btn-secondary" (click)="cancelDelete()" [disabled]="deleting">Cancel</button>
+        <button class="btn btn-danger-solid" (click)="deleteConfirmed()" [disabled]="deleting">
+          {{ deleting ? 'Deleting…' : 'Delete' }}
+        </button>
+      </div>
+    </div>
+  </div>
+}

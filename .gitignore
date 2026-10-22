@@ -1,0 +1,64 @@
+# ---------------------------------------------------------------- secrets (never commit)
+keys/
+*.pem
+*.key
+.env
+.env.*
+!.env.example
+**/service_account.json
+**/.service_token*.json
+
+# ---------------------------------------------------------------- python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# ---------------------------------------------------------------- node / angular
+node_modules/
+frontend/dist/
+frontend/.angular/
+frontend/coverage/
+frontend/out-tsc/
+
+# ---------------------------------------------------------------- runtime output
+logs/
+*.log
+*.log.*
+*.lock
+**/progress*.json
+
+# ---------------------------------------------------------------- ML model artifacts (1.4 GB, rebuilt by training)
+ML model/artifacts/
+*.joblib
+*.pkl
+
+# ---------------------------------------------------------------- data (generated / loaded files, ~400 MB)
+input/historical/
+input/realtime/
+input/static/archieve/
+**/archieve/
+
+# ---------------------------------------------------------------- editors / OS
+.idea/
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+*.swp
+.DS_Store
+Thumbs.db
+desktop.ini
+~$*
+
+# ---------------------------------------------------------------- design documents / sample data packs (kept local)
+BESS DESIGN/
+
+# ---------------------------------------------------------------- project notes / instructions (kept local)
+claude.md
+CLAUDE.md

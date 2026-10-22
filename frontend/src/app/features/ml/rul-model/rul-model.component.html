@@ -1,0 +1,422 @@
+<div class="page-header">
+  <div>
+    <h2>RUL Model</h2>
+    <p class="subtitle">
+      Remaining useful life (days and equivalent full cycles to end of life, P10 / P50 / P90) from the fleet's aging history — a physics fade
+      curve, LightGBM and survival models, one shared model per chemistry, validated leave-one-unit-out. View forecasts on
+      <a routerLink="/ml/rul">RUL Forecast</a>.
+    </p>
+  </div>
+</div>
+
+@if (optionsError) {
+  <div class="card empty-state error">{{ optionsError }}</div>
+}
+
+@if (options) {
+  <div class="train-grid">
+    <section class="card panel">
+      <h3 class="panel-title">Data</h3>
+      <div class="eol-strip-b">
+        <span class="muted small">End of life:</span>
+        @for (e of eolList; track e.chemistry) {
+          <span class="eol-chip-b"><strong>{{ e.chemistry }}</strong> {{ e.text }}</span>
+        }
+      </div>
+      <h4 class="group-head">Units <span class="muted small">(battery_master.v_rul_training · {{ selectionStats.units }} selected ·
+        {{ selectionStats.retired }} retired · {{ selectionStats.units - selectionStats.retired }} in service / censored)</span></h4>
+      <div class="unit-list unit-grid">
+        @for (s of options.systems; track s.system_id) {
+          <label class="feature-group" [class.on]="systemIds.has(s.system_id)" [class.dim]="!s.snapshots">
+            <input type="checkbox" [checked]="systemIds.has(s.system_id)" [disabled]="!s.snapshots" (change)="toggleSystem(s)" />
+            <span class="fg-text">
+              <span class="fg-title">{{ s.system_code }}
+                <span class="unit-tag" [attr.data-kind]="(s.end_events ?? '').includes('FAILURE') ? 'failed' : s.retired ? 'retired' : 'live'">
+                  {{ (s.end_events ?? '').includes('FAILURE') ? 'failed' : s.retired ? 'retired' : 'in service' }}</span>
+              </span>
+              <span class="fg-meta">{{ s.chemistry }} · {{ s.batch_lot }} · {{ s.snapshots }} snapshots · {{ s.rpt_tests }} RPT ·
+                {{ s.usage_cycles_per_day ?? '—' }} cyc/d · {{ s.climate_avg_temp_c ?? '—' }} °C</span>
+            </span>
+          </label>
+        }
+      </div>
+      <div class="form-grid three">
+        <div class="field">
+          <label for="fail">Unplanned failures</label>
+          <select id="fail" [(ngModel)]="failuresAs">
+            <option value="event">End of life (an event)</option>
+            <option value="censored">Censored at the failure</option>
+          </select>
+        </div>
+      </div>
+      <p class="param-help">"End of life" counts any end of service (capacity EOL or failure) as the event. "Censored" treats a failure
+        as removing the unit before its capacity EOL — a pure aging view. Retired-unit RUL labels always count to the end.</p>
+
+      <h4 class="group-head">Features <span class="muted small">(LightGBM, hybrid and RSF; Cox uses {{ options.cox_features.join(', ') }})</span></h4>
+      <div class="model-list">
+        @for (g of options.feature_groups | keyvalue; track g.key) {
+          <label class="model-row" [class.on]="groups.has(g.key)">
+            <span class="model-check">
+              <input type="checkbox" [checked]="groups.has(g.key)" (change)="groups = toggle(groups, g.key)" />
+              <span><strong>{{ g.value.label }}</strong><span class="fam">{{ g.value.columns.join(', ') }}</span></span>
+            </span>
+          </label>
+        }
+      </div>
+    </section>
+
+    <section class="card panel">
+      <div class="panel-subhead" style="margin-top: 0">
+        <h3 class="panel-title" style="margin: 0">Methods</h3>
+      </div>
+      <div class="model-list">
+        @for (m of order; track m) {
+          <label class="model-row" [class.on]="methods.has(m)">
+            <span class="model-check">
+              <input type="checkbox" [checked]="methods.has(m)" (change)="methods = toggle(methods, m)" />
+              <span class="swatch line" [style.background]="colors[m]"></span>
+              <span><strong>{{ labels[m] }}</strong>
+                <span class="fam">
+                  @switch (m) {
+                    @case ('physics') { capacity loss = c₀ + f(T)·(a√t + b·EFCᶻ), resistance alike; Arrhenius f(T), batch and shrunk unit factors, SOH-band knee — projected to the EOL criteria }
+                    @case ('gbm') { quantile regression of RUL on the aging features (retired units — the only true labels) }
+                    @case ('hybrid') { physics + LightGBM quantile models of its error (log scale) }
+                    @case ('cox') { proportional hazards on landmark rows — censored units handled as "alive at least until …" }
+                    @case ('rsf') { bootstrap survival trees (log-rank splits, Nelson–Aalen leaves) — censoring handled, non-linear }
+                  }
+                </span>
+              </span>
+            </span>
+          </label>
+        }
+      </div>
+
+      <h4 class="group-head">Physics</h4>
+      <div class="check-row">
+        <label><input type="checkbox" [(ngModel)]="arrhenius" /> Arrhenius temperature</label>
+        <label><input type="checkbox" [(ngModel)]="knee" /> Knee (SOH-band acceleration)</label>
+        <label><input type="checkbox" [(ngModel)]="calibrate" /> Calibrate P10–P90 to training errors</label>
+      </div>
+      <div class="param-grid">
+        @for (p of options.physics_params; track p.name) {
+          <div class="field">
+            <label [for]="'p' + p.name">{{ p.label }}</label>
+            <input [id]="'p' + p.name" type="number" [(ngModel)]="physics[p.name]" [min]="p.min" [max]="p.max" [step]="p.step" />
+          </div>
+        }
+      </div>
+      <p class="param-help">Prior strength: how many snapshots of a unit's own history it takes before its fade follows itself rather than its
+        batch. RPT weight: how much more an RPT checkpoint (calibrated ground truth) counts than a monthly snapshot.</p>
+      <button type="button" class="link-btn" (click)="showSurvival = !showSurvival">{{ showSurvival ? 'Hide' : 'Survival parameters' }}</button>
+      @if (showSurvival) {
+        <div class="param-grid">
+          @for (p of options.survival_params; track p.name) {
+            <div class="field">
+              <label [for]="'s' + p.name">{{ p.label }}</label>
+              <input [id]="'s' + p.name" type="number" [(ngModel)]="survival[p.name]" [min]="p.min" [max]="p.max" [step]="p.step" />
+            </div>
+          }
+        </div>
+      }
+      ·
+      <button type="button" class="link-btn" (click)="showGbm = !showGbm">{{ showGbm ? 'Hide' : 'LightGBM parameters' }}</button>
+      @if (showGbm) {
+        <div class="param-grid">
+          @for (p of options.gbm_params; track p.name) {
+            <div class="field">
+              <label [for]="'g' + p.name">{{ p.label }}</label>
+              <input [id]="'g' + p.name" type="number" [(ngModel)]="gbm[p.name]" [min]="p.min" [max]="p.max" [step]="p.step" />
+            </div>
+          }
+        </div>
+      }
+      <div class="param-grid">
+        <div class="field">
+          <label for="name">Run name</label>
+          <input id="name" type="text" [(ngModel)]="runName" placeholder="optional" maxlength="120" />
+        </div>
+        <div class="field check-field">
+          <label><input data-perm="ml.model:approve" type="checkbox" [(ngModel)]="makeDefault" /> Make it the viewer's default</label>
+        </div>
+      </div>
+      <p class="param-help">Each unit is predicted at every snapshot by models fitted without it (leave-one-unit-out, ~2 min). The synthetic
+        RUL labels of censored units are never trained on — they only feed the separate "oracle" check.</p>
+
+      @if (trainError) {
+        <div class="form-error">{{ trainError }}</div>
+      }
+      <div class="form-actions">
+        @if (problem) {
+          <span class="problem">{{ problem }}</span>
+        }
+        <button type="button" class="btn btn-primary train-btn" [disabled]="!!problem || training" (click)="train()">
+          @if (training) {
+            <span class="spinner" aria-hidden="true"></span> Building… {{ elapsed }} s
+          } @else {
+            Build &amp; backtest
+          }
+        </button>
+      </div>
+    </section>
+  </div>
+}
+
+@if (run; as r) {
+  <section class="card run-card" [class.refreshing]="runLoading">
+    <div class="run-head">
+      <div>
+        <h3>
+          Run #{{ r.run_id }}{{ r.run_name ? ' · ' + r.run_name : '' }}
+          <span class="status-chip" [attr.data-status]="r.status">{{ r.status }}</span>
+          @if (r.is_default) {
+            <span class="status-chip" data-status="ACTIVE">Viewer default</span>
+          }
+        </h3>
+        <p class="muted small">
+          {{ r.n_units ?? '—' }} units · {{ r.n_rows ?? '—' }} snapshots · failures: {{ r.params['failures_as'] === 'censored' ? 'censored' : 'end of life' }} ·
+          {{ r.methods.length }} methods · {{ duration(r.duration_ms) }}
+        </p>
+      </div>
+      <div class="run-actions">
+        @if (r.status === 'COMPLETED' && !r.is_default) {
+          <button data-perm="ml.model:approve" type="button" class="btn btn-primary" (click)="makeDefaultRun(r)">Make viewer default</button>
+        }
+        @if (r.status === 'COMPLETED') {
+          <a class="btn btn-secondary" routerLink="/ml/rul" [queryParams]="{ model: r.run_id }">Open in RUL Forecast</a>
+        }
+        <button type="button" class="btn btn-secondary" (click)="reuse(r)">Train a variant</button>
+      </div>
+    </div>
+    @if (r.error_message) {
+      <div class="form-error">{{ r.error_message }}</div>
+    }
+    @for (w of r.warnings; track w) {
+      <div class="warn-line">{{ w }}</div>
+    }
+
+    @if (r.status === 'COMPLETED' && r.metrics && r.results) {
+      <h4 class="section-title">Leave-one-unit-out accuracy</h4>
+      <div class="table-scroll">
+        <table class="data-table compare-table score-table">
+          <thead>
+            <tr>
+              <th>Method</th>
+              <th class="num">MAE<br /><small>days · retired</small></th>
+              <th class="num">MAE<br /><small>cycles</small></th>
+              <th class="num">Bias<br /><small>days</small></th>
+              <th class="num">P10–P90<br /><small>coverage</small></th>
+              <th class="num">C-index<br /><small>all units</small></th>
+              <th class="num">Censored<br /><small>violations</small></th>
+              <th class="num">Oracle MAE<br /><small>days · censored</small></th>
+            </tr>
+          </thead>
+          <tbody>
+            @for (m of runMethods; track m) {
+              <tr>
+                <td><span class="swatch line" [style.background]="colors[m]"></span> {{ labels[m] }}</td>
+                <td class="num" [class.best]="best('mae_days') === m">{{ num(s(m)?.mae_days) }}</td>
+                <td class="num" [class.best]="best('mae_cycles') === m">{{ num(s(m)?.mae_cycles) }}</td>
+                <td class="num" [class.best]="best('bias_days') === m">{{ signed(s(m)?.bias_days) }}</td>
+                <td class="num" [class.best]="best('coverage_pct') === m">{{ num(s(m)?.coverage_pct) }} %</td>
+                <td class="num" [class.best]="best('c_index') === m">{{ num(s(m)?.c_index, 2) }}</td>
+                <td class="num" [class.best]="best('censored_violation_pct') === m">{{ num(s(m)?.censored_violation_pct, 1) }} %</td>
+                <td class="num" [class.best]="best('oracle_mae_days') === m">{{ num(s(m)?.oracle_mae_days) }}</td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      </div>
+      <p class="muted small">MAE / bias / coverage on the retired units (true RUL known) at every snapshot; bias = predicted − actual (positive =
+        optimistic). C-index: how well the P50 ranks which unit ends first, censoring respected (1 = perfect, 0.5 = chance). Censored
+        violations: share of in-service snapshots where the P50 says the unit ends before the time it is known to have survived. Oracle: the
+        synthetic forward labels of the censored units (a check the field would not offer). Green = best.</p>
+
+      <div class="chart-grid">
+        <div class="chart-box">
+          <h4>Error through life</h4>
+          <p class="muted small">MAE by how far into its life the unit was — early predictions are the hard ones.</p>
+          @if (lifeChart) {
+            <app-chart-canvas [config]="lifeChart" [height]="260" />
+          }
+        </div>
+        <div class="chart-box">
+          <h4>Per unit</h4>
+          <div class="table-scroll unit-scroll">
+            <table class="data-table compare-table">
+              <thead>
+                <tr><th>Unit</th>
+                  @for (m of runMethods; track m) {
+                    <th class="num"><span class="swatch line" [style.background]="colors[m]"></span></th>
+                  }
+                </tr>
+              </thead>
+              <tbody>
+                @for (u of units; track u.system_id) {
+                  <tr>
+                    <td class="nowrap">{{ u.system_code }}
+                      <span class="unit-tag" [attr.data-kind]="u.failed ? 'failed' : u.retired ? 'retired' : 'live'">{{ u.failed ? 'failed' : u.retired ? 'retired' : 'in service' }}</span>
+                    </td>
+                    @for (m of runMethods; track m) {
+                      <td class="num">
+                        @if (u.retired) {
+                          {{ num(unitScore(m, u.system_code)?.mae_days) }}
+                        } @else {
+                          <span class="muted" title="oracle MAE · censored violations">{{ num(unitScore(m, u.system_code)?.oracle_mae_days) }}
+                            @if ((unitScore(m, u.system_code)?.censored_violation_pct ?? 0) > 0) {
+                              <span class="viol">·{{ num(unitScore(m, u.system_code)?.censored_violation_pct) }}%</span>
+                            }
+                          </span>
+                        }
+                      </td>
+                    }
+                  </tr>
+                }
+              </tbody>
+            </table>
+          </div>
+          <p class="muted small">MAE in days (retired: true RUL; in service: grey = oracle MAE, red = censored violations). Failed units end
+            before their capacity EOL — no fade curve can foresee that; the survival models carry that risk.</p>
+        </div>
+      </div>
+
+      @if (chemistries.length > 1) {
+        <div class="target-tabs">
+          @for (c of chemistries; track c) {
+            <button type="button" class="target-tab" [class.on]="chemistry === c" (click)="setChemistry(c)">{{ c }}</button>
+          }
+        </div>
+      }
+      @if (chemParams; as p) {
+        <h4 class="section-title">{{ chemistry }} model · {{ p.units }} units, {{ p.retired_units }} retired</h4>
+        <div class="chart-grid">
+          @if (p.physics; as ph) {
+            <div class="chart-box">
+              <h4>Physics fade curve</h4>
+              <table class="data-table compare-table">
+                <thead><tr><th></th><th class="num">Offset</th><th class="num">a (√day)</th><th class="num">b · EFCᶻ</th><th class="num">z</th><th class="num">Eₐ kJ/mol</th><th class="num">R²</th></tr></thead>
+                <tbody>
+                  <tr><td>Capacity loss (%-pts)</td><td class="num">{{ num(ph.capacity.offset, 2) }}</td><td class="num">{{ ph.capacity.a | number: '1.3-3' }}</td>
+                    <td class="num">{{ ph.capacity.b | number: '1.2-6' }}</td><td class="num">{{ num(ph.capacity.z, 2) }}</td><td class="num">{{ num(ph.capacity.ea_kj_mol, 1) }}</td><td class="num">{{ num(ph.capacity.r2, 3) }}</td></tr>
+                  @if (ph.resistance; as rs) {
+                    <tr><td>Resistance rise (× BOL)</td><td class="num">{{ num(rs.offset, 3) }}</td><td class="num">{{ rs.a | number: '1.4-4' }}</td>
+                      <td class="num">{{ rs.b | number: '1.2-7' }}</td><td class="num">{{ num(rs.z, 2) }}</td><td class="num">{{ num(rs.ea_kj_mol, 1) }}</td><td class="num">{{ num(rs.r2, 3) }}</td></tr>
+                  }
+                </tbody>
+              </table>
+              <table class="data-table compare-table batch-table">
+                <thead><tr><th>Batch</th><th class="num">Capacity fade ×</th><th class="num">Resistance rise ×</th></tr></thead>
+                <tbody>
+                  @for (b of batchRows(p); track b.batch) {
+                    <tr><td>{{ b.batch }}</td><td class="num">{{ num(b.cap, 3) }}</td><td class="num">{{ num(b.res, 3) }}</td></tr>
+                  }
+                </tbody>
+              </table>
+              <p class="muted small">EOL: SOH &lt; {{ ph.soh_eol_pct }} % or R ≥ {{ ph.resistance_eol_ratio ?? '—' }}× BOL. Unit-to-unit spread
+                (log sd) capacity {{ num(ph.unit_spread_capacity, 3) }}, resistance {{ num(ph.unit_spread_resistance, 3) }}; prior strength
+                {{ ph.kappa }}, RPT weight {{ ph.rpt_weight }}. Band calibration (log error P10 / P90):
+                {{ num(p.band_log_q10_q90[0], 2) }} / {{ num(p.band_log_q10_q90[1], 2) }}.</p>
+            </div>
+            <div class="chart-box">
+              <h4>Knee — fade acceleration by SOH band</h4>
+              <p class="muted small">Observed ÷ smooth-curve fade per band, pooled over the fleet: &gt; 1 = fading faster than √t / power law alone.</p>
+              @if (kneeChart) {
+                <app-chart-canvas [config]="kneeChart" [height]="240" />
+              }
+            </div>
+          }
+          @if (coxRows.length) {
+            <div class="chart-box">
+              <h4>Cox hazard ratios</h4>
+              <table class="data-table compare-table">
+                <thead><tr><th>Covariate</th><th class="num">Coefficient</th><th class="num">Hazard ratio / +1 sd</th></tr></thead>
+                <tbody>
+                  @for (c of coxRows; track c.feature) {
+                    <tr><td class="mono small">{{ c.feature }}</td><td class="num">{{ num(c.coef, 2) }}</td>
+                      <td class="num" [class.hr-up]="c.hazard_ratio_per_sd > 1.2" [class.hr-down]="c.hazard_ratio_per_sd < 0.83">×{{ num(c.hazard_ratio_per_sd, 2) }}</td></tr>
+                  }
+                </tbody>
+              </table>
+              <p class="muted small">&gt; 1: a higher value brings end of life sooner. Ridge-penalised; landmark rows of a unit are correlated, so
+                read these as directions, not significance.</p>
+            </div>
+          }
+          <div class="chart-box">
+            <h4>Feature importance</h4>
+            <div class="seg imp-seg">
+              @if (p.rsf_importance) { <button type="button" [class.on]="importanceKey === 'rsf_importance'" (click)="setImportance('rsf_importance')">RSF</button> }
+              @if (p.hybrid_importance) { <button type="button" [class.on]="importanceKey === 'hybrid_importance'" (click)="setImportance('hybrid_importance')">Hybrid residual</button> }
+              @if (p.gbm_importance) { <button type="button" [class.on]="importanceKey === 'gbm_importance'" (click)="setImportance('gbm_importance')">LightGBM</button> }
+            </div>
+            @if (importanceChart) {
+              <app-chart-canvas [config]="importanceChart" [height]="importanceHeight" />
+            }
+          </div>
+        </div>
+      }
+    }
+  </section>
+}
+
+<div class="card history-card">
+  <div class="history-head">
+    <div>
+      <h3>Runs</h3>
+      <p class="muted small">battery_ml.rul_run · click a run to open it · leave-one-unit-out MAE (days)</p>
+    </div>
+  </div>
+  @if (runsLoading && !runs.length) {
+    <div class="empty-state">Loading…</div>
+  } @else if (!runs.length) {
+    <div class="empty-state">No runs yet — build the model above.</div>
+  } @else {
+    <div class="table-scroll">
+      <table class="data-table runs-table">
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>Name</th>
+            <th>Units</th>
+            <th>Methods</th>
+            <th class="num">Physics</th>
+            <th class="num">Hybrid</th>
+            <th class="num">RSF</th>
+            <th>Status</th>
+            <th class="num">Time</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          @for (x of runs; track x.run_id) {
+            <tr (click)="openRun(x.run_id)" [class.selected]="run?.run_id === x.run_id">
+              <td class="mono">{{ x.run_id }}</td>
+              <td>
+                {{ x.run_name || '—' }}
+                @if (x.is_default) {
+                  <span class="status-chip" data-status="ACTIVE">default</span>
+                }
+              </td>
+              <td class="small">{{ shortSystems(x) }}</td>
+              <td class="small">{{ x.methods.length }}</td>
+              <td class="num">{{ num(x.metrics?.['physics']?.['all']?.mae_days) }}</td>
+              <td class="num">{{ num(x.metrics?.['hybrid']?.['all']?.mae_days) }}</td>
+              <td class="num">{{ num(x.metrics?.['rsf']?.['all']?.mae_days) }}</td>
+              <td>
+                <span class="status-chip" [attr.data-status]="x.status">{{ x.status }}</span>
+                @if (x.error_message) {
+                  <div class="problem small">{{ x.error_message }}</div>
+                }
+              </td>
+              <td class="num">{{ duration(x.duration_ms) }}</td>
+              <td class="nowrap">
+                @if (x.status === 'COMPLETED' && !x.is_default) {
+                  <button data-perm="ml.model:approve" type="button" class="link-btn" (click)="makeDefaultRun(x, $event)">Default</button> ·
+                }
+                <button type="button" class="link-btn" (click)="deleteRun(x, $event)">Delete</button>
+              </td>
+            </tr>
+          }
+        </tbody>
+      </table>
+    </div>
+  }
+</div>

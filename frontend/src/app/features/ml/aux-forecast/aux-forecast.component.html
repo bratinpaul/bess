@@ -1,0 +1,327 @@
+<div class="page-header">
+  <div>
+    <h2>Aux / HVAC Energy Forecast</h2>
+    <p class="subtitle">The plant's parasitic draw — HVAC / cooling plus controls — over the coming hours (P10–P90), and the aux energy to net
+      out of dispatch economics (net energy delivered = gross − aux) and to pre-schedule cooling.</p>
+  </div>
+  <a class="link training-link" routerLink="/ml/aux-forecast-model">Open Aux / HVAC Forecast Model →</a>
+</div>
+
+<div class="card picker-card">
+  <div class="picker-row">
+    <div class="field picker-field">
+      <label for="model">Model run</label>
+      <select id="model" [ngModel]="modelKey" (ngModelChange)="selectModel($event)" [disabled]="!models.length">
+        <option value="active">Default run</option>
+        @for (m of models; track m.run_id) {
+          <option [value]="'' + m.run_id">{{ optionLabel(m) }}</option>
+        }
+      </select>
+      @if (modelsError) {
+        <span class="field-error">{{ modelsError }}</span>
+      }
+    </div>
+    @if (run; as r) {
+      <div class="field picker-field">
+        <label for="site">Site</label>
+        <select id="site" [ngModel]="emsId" (ngModelChange)="selectSite($event)">
+          @for (e of r.ems_ids; track e) {
+            <option [ngValue]="e">{{ siteLabel(e) }}</option>
+          }
+        </select>
+      </div>
+    }
+  </div>
+</div>
+
+@if (modelsLoaded && !models.length && !modelsError) {
+  <div class="card">
+    <div class="empty-state">No aux / HVAC forecast model yet. <a routerLink="/ml/aux-forecast-model">Build one on the Aux / HVAC Forecast Model page</a>.</div>
+  </div>
+}
+
+@if (run; as r) {
+  <div class="tab-row">
+    <button type="button" class="tab" [class.on]="tab === 'live'" (click)="setTab('live')">Forecast</button>
+    <button type="button" class="tab" [class.on]="tab === 'backtest'" (click)="setTab('backtest')">Backtest</button>
+  </div>
+
+  @if (tab === 'live') {
+    <div class="card view-card">
+      <div class="view-controls">
+        <div class="control-group">
+          <span class="control-label">Horizon</span>
+          <select class="filter-select" [(ngModel)]="horizonHours" (ngModelChange)="loadPrediction()">
+            @for (h of liveHorizons; track h) {
+              <option [ngValue]="h">{{ h }} h</option>
+            }
+          </select>
+          <span class="control-label">Dispatch</span>
+          <div class="seg">
+            <button type="button" [class.on]="planSource === 'scheduled'" (click)="planSource = 'scheduled'; loadPrediction()">Schedule</button>
+            <button type="button" [class.on]="planSource === 'typical'" (click)="planSource = 'typical'; loadPrediction()">Typical day</button>
+          </div>
+          <span class="control-label">Ambient</span>
+          <div class="seg">
+            <button type="button" [class.on]="ambientSource === 'forecast'" (click)="ambientSource = 'forecast'; loadPrediction()">Forecast</button>
+            <button type="button" [class.on]="ambientSource === 'profile'" (click)="ambientSource = 'profile'; loadPrediction()">Profile</button>
+            <button type="button" [class.on]="ambientSource === 'actual'" (click)="ambientSource = 'actual'; loadPrediction()" title="Measured ambient (oracle)">Measured</button>
+          </div>
+        </div>
+        <div class="toggles">
+          <label title="Forecast from the newest reading at or before this plant time (empty = the newest reading)">
+            As of <input type="datetime-local" class="asof-input" [(ngModel)]="asOf" (change)="loadPrediction()" />
+          </label>
+          @if (asOf) {
+            <button type="button" class="link-btn" (click)="forecastFrom(null)">Newest</button>
+          }
+          <label title="Return NULL forecasts with a staleness flag when the newest reading is older than 60 min (the serving guard)">
+            <input type="checkbox" [(ngModel)]="enforceAge" (ngModelChange)="loadPrediction()" /> Require data &lt; 60 min old
+          </label>
+          <button type="button" class="link-btn" (click)="loadPrediction()" [disabled]="loading">{{ loading ? 'Forecasting…' : 'Refresh' }}</button>
+        </div>
+      </div>
+
+      @if (error) {
+        <div class="empty-state error">{{ error }}</div>
+      } @else if (prediction) {
+        @if (prediction; as p) {
+        <p class="muted small">
+          Forecast from {{ time(p.origin_ts) }} (plant time){{ asOf ? '' : ' — the newest reading, ' + dataAge + ' old' }}.
+          @if (!asOf && (p.data_age_min ?? 0) > 60 && !enforceAge) {
+            <span class="note-warn">Forecasting as of that reading; tick "Require data &lt; 60 min old" to apply the staleness guard.</span>
+          }
+          @if (hasActuals) {
+            The measured aux load that followed is drawn for comparison.
+          }
+        </p>
+        @if (stale) {
+          <div class="stale-box">
+            <span class="status-pill" data-status="STALE">✕ {{ p.flags.missing_inputs.length ? 'Missing inputs' : 'Stale inputs' }} — no forecast</span>
+            <span class="small">
+              @if (p.flags.too_old) { newest reading is {{ dataAge }} old (limit 60 min). }
+              @if (p.flags.stale_min > 15) { last real aux reading {{ num(p.flags.stale_min, 0) }} min before the origin. }
+              @if (p.flags.missing_inputs.length) { missing: {{ p.flags.missing_inputs.join(', ') }}. }
+            </span>
+          </div>
+        }
+        @if (kpis; as k) {
+          <div class="kpi-row">
+            <div class="kpi"><span class="tile-label">Aux now</span><strong>{{ num(k.now) }} kW</strong>
+              <span class="muted small">@if (k.controls !== null) { controls {{ num(k.controls) }} kW + HVAC }</span></div>
+            <div class="kpi"><span class="tile-label">Next hour (P50)</span><strong>{{ num(k.avg1h) }} kW</strong><span class="muted small">average</span></div>
+            <div class="kpi"><span class="tile-label">Peak (P50)</span><strong>{{ num(k.peak?.aux_kw_p50) }} kW</strong>
+              <span class="muted small">at {{ time(k.peak?.ts_target) }}</span></div>
+            <div class="kpi accent"><span class="tile-label">Aux energy next {{ p.horizon_hours }} h</span><strong>{{ num(k.e50, 0) }} kWh</strong>
+              <span class="muted small">P10–P90 {{ num(k.e10, 0) }} – {{ num(k.e90, 0) }}</span></div>
+            @if (k.actualKwh !== null) {
+              <div class="kpi"><span class="tile-label">Measured</span><strong>{{ num(k.actualKwh, 0) }} kWh</strong>
+                <span class="muted small">error {{ signed(k.e50 - k.actualKwh, 1) }} kWh</span></div>
+            }
+            @if (k.hvacAvg !== null) {
+              <div class="kpi"><span class="tile-label">HVAC share</span><strong>{{ num(k.hvacAvg) }} kW</strong>
+                <span class="muted small">average of the P50 · ambient from forecast {{ num(k.fromFcPct, 0) }} %</span></div>
+            }
+          </div>
+        }
+        @if (mainChart) {
+          <app-chart-canvas [config]="mainChart" [height]="320" />
+        }
+        @if (!stale) {
+          <div class="driver-grid">
+            <div>
+              <h4 class="sub-title">Ambient — the dominant driver (°C)</h4>
+              @if (ambientChart) {
+                <app-chart-canvas [config]="ambientChart" [height]="170" />
+              }
+            </div>
+            <div>
+              <h4 class="sub-title">Planned dispatch — battery heat source (kW)</h4>
+              @if (planChart) {
+                <app-chart-canvas [config]="planChart" [height]="170" />
+              }
+            </div>
+          </div>
+
+          <h4 class="sub-title">Aux energy per day of the horizon</h4>
+          <table class="data-table bt-table">
+            <thead><tr><th>Day</th><th class="num">Hours</th><th class="num">P50 kWh</th><th class="num">P10 – P90 kWh</th><th class="num">Measured kWh</th><th class="num">Error</th></tr></thead>
+            <tbody>
+              @for (d of p.daily; track d.day) {
+                <tr>
+                  <td>{{ d.day }}</td>
+                  <td class="num">{{ num(d.hours, 1) }}</td>
+                  <td class="num"><strong>{{ num(d.aux_energy_kwh_p50, 1) }}</strong></td>
+                  <td class="num">{{ num(d.aux_energy_kwh_p10, 0) }} – {{ num(d.aux_energy_kwh_p90, 0) }}</td>
+                  <td class="num">{{ d.actual_intervals === d.intervals ? num(d.actual_kwh, 1) : '—' }}</td>
+                  <td class="num">{{ d.actual_intervals === d.intervals && d.actual_kwh !== null ? signed(d.aux_energy_kwh_p50 - d.actual_kwh, 1) : '—' }}</td>
+                </tr>
+              }
+            </tbody>
+          </table>
+          <p class="muted small">Only the part of each day inside the horizon. The P10–P90 sum assumes the 5-min errors are fully correlated — a
+            cautious band.</p>
+
+          <button type="button" class="link-btn" (click)="showTable = !showTable">{{ showTable ? 'Hide' : 'Show' }} the 5-min forecast ({{ p.forecasts.length }} steps)</button>
+          @if (showTable) {
+            <div class="table-scroll step-table">
+              <table class="data-table">
+                <thead>
+                  <tr><th>Time</th><th class="num">+min</th><th class="num">P10</th><th class="num">P50</th><th class="num">P90</th><th class="num">HVAC P50</th>
+                    <th class="num">kWh</th><th class="num">Ambient °C</th><th class="num">Plan kW</th><th class="num">Measured</th></tr>
+                </thead>
+                <tbody>
+                  @for (f of p.forecasts; track f.ts_target) {
+                    <tr>
+                      <td class="nowrap">{{ time(f.ts_target) }}</td>
+                      <td class="num">{{ f.horizon_min }}</td>
+                      <td class="num">{{ num(f.aux_kw_p10, 2) }}</td>
+                      <td class="num"><strong>{{ num(f.aux_kw_p50, 2) }}</strong></td>
+                      <td class="num">{{ num(f.aux_kw_p90, 2) }}</td>
+                      <td class="num">{{ num(f.hvac_kw_p50, 2) }}</td>
+                      <td class="num">{{ num(f.aux_energy_kwh, 3) }}</td>
+                      <td class="num">{{ num(f.ambient_fc_c, 1) }}{{ f.ambient_from_forecast ? '' : '*' }}</td>
+                      <td class="num">{{ num(f.plan_kw, 0) }}</td>
+                      <td class="num">{{ num(f.actual_kw, 2) }}</td>
+                    </tr>
+                  }
+                </tbody>
+              </table>
+            </div>
+            <p class="muted small">* ambient from the daily profile (no weather-forecast run covers that time). Also available stateless at
+              POST /aux-forecast/predict/vector.</p>
+          }
+          <p class="muted small">Forecast = grey-box (controls {{ num(p.greybox.controls_base_kw, 1) }} kW + battery heat, envelope and solar gain
+            over a COP that falls with ambient) + LightGBM quantile correction. Aux is always a positive consumption — the sign the efficiency and
+            net-load models subtract.</p>
+        }
+        }
+      } @else if (loading) {
+        <div class="empty-state">Forecasting…</div>
+      }
+    </div>
+  }
+
+  @if (tab === 'backtest') {
+    <div class="card view-card">
+      <div class="view-controls">
+        <div class="control-group">
+          <div class="seg">
+            <button type="button" [class.on]="btMode === 'trajectory'" (click)="setBtMode('trajectory')">Trajectory</button>
+            <button type="button" [class.on]="btMode === 'horizon'" (click)="setBtMode('horizon')">Fixed horizon</button>
+            <button type="button" [class.on]="btMode === 'daily'" (click)="setBtMode('daily')">Daily energy</button>
+          </div>
+          @if (btMode === 'horizon') {
+            <span class="control-label">Horizon</span>
+            <select class="filter-select" [(ngModel)]="btHorizon" (ngModelChange)="loadBacktest()">
+              @for (h of horizonChoices; track h) {
+                <option [ngValue]="h">{{ h / 60 }} h</option>
+              }
+            </select>
+          }
+        </div>
+        <div class="toggles">
+          @for (m of methods; track m) {
+            <label><input type="checkbox" [checked]="btShow.has(m) || m === 'hybrid'" [disabled]="m === 'hybrid'" (change)="toggleMethod(m)" />
+              <span class="swatch line" [style.background]="methodColors[m]"></span> {{ methodLabels[m] }}</label>
+          }
+        </div>
+      </div>
+
+      @if (btMode === 'trajectory') {
+        <div class="origin-row">
+          <button type="button" class="btn btn-secondary" [disabled]="originIdx === 0" (click)="stepOrigin(-1)">◀</button>
+          <span class="small">Issued {{ time(currentOrigin) }} · {{ r.horizon_hours }} h ahead · {{ originIdx + 1 }} / {{ origins.length }}</span>
+          <button type="button" class="btn btn-secondary" [disabled]="originIdx >= origins.length - 1" (click)="stepOrigin(1)">▶</button>
+          @if (currentOrigin) {
+            <button type="button" class="link-btn" (click)="forecastFrom(currentOrigin)">Open in Forecast tab</button>
+          }
+          <span class="muted small">test-period forecasts issued every 6 h — each line is one forecast run, not stitched</span>
+        </div>
+      }
+      @if (btMode === 'horizon') {
+        <div class="origin-row">
+          <button type="button" class="btn btn-secondary" [disabled]="btOffset === 0" (click)="shiftWindow(-btDays)">◀</button>
+          <span class="small">{{ windowLabel() }}</span>
+          <button type="button" class="btn btn-secondary" [disabled]="btOffset + btDays >= btSpanDays" (click)="shiftWindow(btDays)">▶</button>
+          <select class="filter-select narrow" [(ngModel)]="btDays" (ngModelChange)="buildHorizon()">
+            @for (d of [1, 2, 4, 7]; track d) {
+              <option [ngValue]="d">{{ d }} day{{ d > 1 ? 's' : '' }}</option>
+            }
+          </select>
+          <span class="muted small">each point is the forecast made {{ btHorizon / 60 }} h earlier (origins every 30 min)</span>
+        </div>
+      }
+      @if (btMode === 'daily') {
+        <p class="muted small">Each test day's aux energy vs the forecast issued at 23:55 the evening before (24 h ahead).</p>
+      }
+
+      @if (btLoading && !btCfg) {
+        <div class="empty-state">Loading…</div>
+      }
+      @if (btCfg) {
+        <app-chart-canvas [config]="btCfg" [height]="320" />
+      } @else if (!btLoading) {
+        <div class="empty-state">Nothing stored for this view{{ btMode === 'daily' ? ' (needs a 24 h horizon run)' : '' }}.</div>
+      }
+
+      @if (btMode === 'trajectory' && trajectoryEnergy.length) {
+        <p class="small energy-line">
+          Aux energy over this run · measured <strong>{{ num(trajectoryEnergy[0].actual, 0) }} kWh</strong>
+          @for (e of trajectoryEnergy; track e.method) {
+            · <span class="swatch line" [style.background]="methodColors[e.method]"></span> {{ methodLabels[e.method] }}
+            {{ num(e.kwh, 0) }} ({{ signed(e.kwh - e.actual, 1) }})
+          }
+        </p>
+      }
+
+      @if (btMode === 'daily' && dailyTable.length) {
+        <div class="table-scroll">
+          <table class="data-table bt-table">
+            <thead>
+              <tr><th>Day</th><th class="num">Measured kWh</th>
+                @for (m of methods; track m) {
+                  @if (btShow.has(m) || m === 'hybrid') {
+                    <th class="num">{{ methodLabels[m] }}<br /><small>P50 · error</small></th>
+                  }
+                }
+              </tr>
+            </thead>
+            <tbody>
+              @for (d of dailyTable; track d.day) {
+                <tr>
+                  <td>{{ d.day }}</td>
+                  <td class="num">{{ num(d.actual, 1) }}</td>
+                  @for (m of methods; track m) {
+                    @if (btShow.has(m) || m === 'hybrid') {
+                      <td class="num">{{ num(d.byMethod[m]?.p50, 1) }} · {{ d.actual !== null && d.byMethod[m]?.p50 !== null ? signed(d.byMethod[m].p50! - d.actual, 1) : '—' }}</td>
+                    }
+                  }
+                </tr>
+              }
+            </tbody>
+          </table>
+        </div>
+      }
+
+      <h4 class="sub-title">Scores · {{ siteLabel(emsId!) }} · test period{{ btMode === 'horizon' ? ' · ' + bucketOf(btHorizon) : ' · all steps' }}</h4>
+      <table class="data-table bt-table">
+        <thead><tr><th>Method</th><th class="num">MAE kW</th><th class="num">RMSE</th><th class="num">Bias</th><th class="num">Pinball</th><th class="num">Cover</th></tr></thead>
+        <tbody>
+          @for (m of methods; track m) {
+            @if (metric(m, btMode === 'horizon' ? bucketOf(btHorizon) : 'all'); as s) {
+              <tr [class.best]="m === 'hybrid'">
+                <td><span class="swatch line" [style.background]="methodColors[m]"></span> {{ methodLabels[m] }}</td>
+                <td class="num">{{ num(s.mae, 2) }}</td>
+                <td class="num">{{ num(s.rmse, 2) }}</td>
+                <td class="num">{{ signed(s.bias, 2) }}</td>
+                <td class="num">{{ num(s.pinball, 3) }}</td>
+                <td class="num">{{ num(s.coverage_pct, 0) }} %</td>
+              </tr>
+            }
+          }
+        </tbody>
+      </table>
+    </div>
+  }
+}

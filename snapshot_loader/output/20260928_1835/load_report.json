@@ -1,0 +1,130 @@
+{
+  "snapshot": "BESS DESIGN\\bess_snapshot.json",
+  "interval": "2026-09-28T18:35:00",
+  "api": "http://localhost:8000",
+  "warnings": [],
+  "id_changes": [
+    "dispatch DSP-00022 -> DSP-00358 (loaded before)",
+    "alarm ALM-00003 -> ALM-00073 (loaded before); ALM-00003 is already the alarm from 2026-08-02 18:35"
+  ],
+  "feeds": [
+    {
+      "feed": "BMS",
+      "csv": "bms_telemetry.csv",
+      "endpoint": "/api/system-telemetry/bulk",
+      "rows": 1,
+      "http": 200,
+      "not_in_snapshot": [
+        "avail_charge_kw",
+        "avail_discharge_kw"
+      ],
+      "inserted": 0,
+      "updated": 1,
+      "skipped": 0,
+      "errors": []
+    },
+    {
+      "feed": "Module",
+      "csv": "module_telemetry.csv",
+      "endpoint": "/api/module-telemetry/bulk",
+      "rows": 16,
+      "http": 200,
+      "not_in_snapshot": [],
+      "inserted": 0,
+      "updated": 16,
+      "skipped": 0,
+      "errors": []
+    },
+    {
+      "feed": "PCS",
+      "csv": "pcs_telemetry.csv",
+      "endpoint": "/api/pcs-telemetry/bulk",
+      "rows": 1,
+      "http": 200,
+      "not_in_snapshot": [
+        "ambient_temp_c",
+        "avail_charge_kw",
+        "avail_discharge_kw",
+        "ac_energy_import_kwh",
+        "ac_energy_export_kwh"
+      ],
+      "inserted": 0,
+      "updated": 1,
+      "skipped": 0,
+      "errors": []
+    },
+    {
+      "feed": "EMS",
+      "csv": "ems_telemetry.csv",
+      "endpoint": "/api/ems-telemetry/bulk",
+      "rows": 1,
+      "http": 200,
+      "not_in_snapshot": [
+        "avail_charge_energy_kwh",
+        "avail_discharge_energy_kwh",
+        "aux_load_pct",
+        "cum_import_kwh",
+        "cum_export_kwh",
+        "revenue_cum_usd",
+        "units_online"
+      ],
+      "inserted": 0,
+      "updated": 1,
+      "skipped": 0,
+      "errors": []
+    },
+    {
+      "feed": "HVAC",
+      "csv": "hvac_telemetry.csv",
+      "endpoint": "/api/hvac-telemetry/bulk",
+      "rows": 1,
+      "http": 200,
+      "not_in_snapshot": [
+        "ambient_temp_c",
+        "filter_dp_pa",
+        "cum_energy_kwh",
+        "compressor_runtime_h",
+        "units_running"
+      ],
+      "inserted": 0,
+      "updated": 1,
+      "skipped": 0,
+      "errors": []
+    },
+    {
+      "feed": "Dispatch events",
+      "csv": "dispatch_events.csv",
+      "endpoint": "/api/dispatch-events/bulk",
+      "rows": 1,
+      "http": 200,
+      "not_in_snapshot": [
+        "soc_start_pct",
+        "soc_end_pct",
+        "import_kwh",
+        "export_kwh",
+        "avg_price_mwh",
+        "revenue_usd",
+        "accepted"
+      ],
+      "inserted": 0,
+      "updated": 1,
+      "skipped": 0,
+      "errors": []
+    },
+    {
+      "feed": "Alarms",
+      "csv": "alarm_events.csv",
+      "endpoint": "/api/alarm-events/bulk",
+      "rows": 1,
+      "http": 200,
+      "not_in_snapshot": [
+        "acknowledged_by",
+        "acknowledged_at"
+      ],
+      "inserted": 0,
+      "updated": 1,
+      "skipped": 0,
+      "errors": []
+    }
+  ]
+}

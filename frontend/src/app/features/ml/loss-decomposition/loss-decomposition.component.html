@@ -1,0 +1,456 @@
+<div class="page-header ld-header">
+  <div>
+    <h2>Loss Decomposition</h2>
+    <p class="subtitle">
+      Every kWh that enters the plant but doesn't come back out, attributed to battery → DC bus → PCS → transformer → POI minus
+      auxiliaries and standby, and benchmarked against what each stage should lose at the same operating conditions.
+      Compute runs on <a routerLink="/ml/loss-model">Loss Model</a>.
+    </p>
+  </div>
+  <div class="ld-controls">
+    <div class="field">
+      <label for="run">Run</label>
+      <select id="run" [ngModel]="runId" (ngModelChange)="selectRun($event)">
+        @for (r of runs; track r.run_id) {
+          <option [ngValue]="r.run_id">{{ runLabel(r) }}</option>
+        }
+      </select>
+    </div>
+    <div class="field">
+      <label for="sys">Battery system</label>
+      <select id="sys" [(ngModel)]="systemId" (ngModelChange)="loadDays()">
+        @for (s of systems; track s.id) {
+          <option [ngValue]="s.id">{{ s.name }}</option>
+        }
+      </select>
+    </div>
+    <div class="field">
+      <label for="df">From</label>
+      <select id="df" [(ngModel)]="dayFrom" (ngModelChange)="rebuild()">
+        @for (d of allDays; track d.day) {
+          <option [ngValue]="d.day" [disabled]="d.day > dayTo">{{ d.day }}</option>
+        }
+      </select>
+    </div>
+    <div class="field">
+      <label for="dt">To</label>
+      <select id="dt" [(ngModel)]="dayTo" (ngModelChange)="rebuild()">
+        @for (d of allDays; track d.day) {
+          <option [ngValue]="d.day" [disabled]="d.day < dayFrom">{{ d.day }}</option>
+        }
+      </select>
+    </div>
+  </div>
+</div>
+
+@if (error) {
+  <div class="card empty-state error">{{ error }}</div>
+}
+@if (!error && !runs.length && !loading) {
+  <div class="card empty-state">No completed loss run yet - compute one on <a routerLink="/ml/loss-model">Loss Model</a>.</div>
+}
+
+@if (summary && win; as w) {
+  @if (warnings.length) {
+    <div class="ld-warnings">
+      <button type="button" class="link-btn" (click)="showWarnings = !showWarnings">
+        ⚠ {{ warnings.length }} data note(s) for {{ summary.system_name }} {{ showWarnings ? '▴' : '▾' }}
+      </button>
+      @if (showWarnings) {
+        <ul>
+          @for (x of warnings; track $index) {
+            <li>{{ x.slice(summary.system_name.length + 2) }}</li>
+          }
+        </ul>
+      }
+    </div>
+  }
+
+  <div class="view-tabs" role="tablist" aria-label="Loss view">
+    <button type="button" role="tab" class="view-tab" [class.active]="tab === 'overview'" [attr.aria-selected]="tab === 'overview'" (click)="setTab('overview')">Overview</button>
+    <button type="button" role="tab" class="view-tab" [class.active]="tab === 'decomposition'" [attr.aria-selected]="tab === 'decomposition'" (click)="setTab('decomposition')">Decomposition</button>
+    <button type="button" role="tab" class="view-tab" [class.active]="tab === 'benchmarking'" [attr.aria-selected]="tab === 'benchmarking'" (click)="setTab('benchmarking')">
+      Benchmarking
+      @if (alarmDays) {
+        <span class="ld-badge" title="Days with an EWMA / CUSUM alarm on a stage">{{ alarmDays }}</span>
+      }
+    </button>
+    <button type="button" role="tab" class="view-tab" [class.active]="tab === 'ledger'" [attr.aria-selected]="tab === 'ledger'" (click)="setTab('ledger')">Ledger</button>
+  </div>
+
+  <!-- ================================================================ OVERVIEW -->
+  @if (tab === 'overview') {
+    <div class="metric-grid ld-tiles">
+      <div class="metric-card"><div class="metric-body"><span class="metric-label">Plant round trip</span><span class="metric-value">{{ pct(w.rte.poi, 1) }}<span class="metric-unit">%</span></span><span class="metric-sub">POI incl. auxiliaries · benchmark {{ pct(w.rteExp, 1) }} %</span></div></div>
+      <div class="metric-card"><div class="metric-body"><span class="metric-label">POI excl. auxiliaries</span><span class="metric-value">{{ pct(w.rte.poi_x, 1) }}<span class="metric-unit">%</span></span><span class="metric-sub">PCS AC {{ pct(w.rte.ac, 2) }} % · battery {{ pct(w.rte.term, 2) }} %</span></div></div>
+      <div class="metric-card"><div class="metric-body"><span class="metric-label">Performance ratio</span><span class="metric-value">{{ pct(w.pr, 1) }}<span class="metric-unit">%</span></span><span class="metric-sub">actual ÷ expected round trip at the same conditions</span></div></div>
+      <div class="metric-card" [class.ld-warn]="(w.gapPts ?? -1) > 0"><div class="metric-body"><span class="metric-label">vs guarantee ({{ basisLabel() }})</span><span class="metric-value">{{ w.gapPts === null ? '—' : signed(-w.gapPts, 2) }}<span class="metric-unit">pts</span></span><span class="metric-sub">{{ pct(w.basisRte, 2) }} % vs {{ pct(summary.guarantee_rte, 1) }} % guaranteed · {{ summary.guarantee_source }}</span></div></div>
+      <div class="metric-card"><div class="metric-body"><span class="metric-label">Total losses</span><span class="metric-value">{{ num((w.loss['batt'] + w.loss['dc'] + w.loss['pcs'] + w.loss['xfmr'] + w.loss['aux'] + w.loss['standby']) / 1000, 2) }}<span class="metric-unit">MWh</span></span><span class="metric-sub">worth {{ num(w.lossUsd, 0) }} USD at the interval prices</span></div></div>
+      <div class="metric-card"><div class="metric-body"><span class="metric-label">Excess over benchmark</span><span class="metric-value">{{ num(w.excessKwh, 0) }}<span class="metric-unit">kWh</span></span><span class="metric-sub">{{ num(w.excessUsd, 0) }} USD of loss beyond the expected</span></div></div>
+      <div class="metric-card"><div class="metric-body"><span class="metric-label">Auxiliaries</span><span class="metric-value">{{ num(w.throughput ? 100 * w.loss['aux'] / w.throughput : null, 2) }}<span class="metric-unit">% of throughput</span></span><span class="metric-sub">HVAC {{ num(w.loss['hvac'] / 1000, 2) }} · controls {{ num(w.loss['controls'] / 1000, 2) }} MWh</span></div></div>
+      <div class="metric-card" [class.ld-warn]="Math.abs(w.closure) > 0.005 * w.throughput"><div class="metric-body"><span class="metric-label">Closure error</span><span class="metric-value">{{ num(w.closure, 1) }}<span class="metric-unit">kWh</span></span><span class="metric-sub">{{ num(w.throughput ? 100 * w.closure / w.throughput : null, 3) }} % of throughput · in − out − stored − losses</span></div></div>
+    </div>
+
+    @if (statement) {
+      <p class="card ld-statement">{{ statement }}</p>
+    } @else {
+      <p class="card ld-statement">The selected days don't hold a full charge-discharge (each way ≥ {{ num((run?.params?.min_cycle_frac ?? 0.05) * 100, 0) }} % of the usable energy) - losses are shown, round-trip figures are not.</p>
+    }
+
+    <div class="ld-two">
+      <div class="card chart-card">
+        <h3>Energy waterfall at the POI · {{ w.days }} day(s)</h3>
+        @if (waterfallChart) {
+          <app-chart-canvas [config]="waterfallChart" [height]="330" />
+        }
+        <p class="ld-note">Energy in at the POI, less every stage's loss and the energy left in (or taken from) the cells, equals the
+          energy out. {{ summary.audit['xfmr_residual_abs_mean_kw'] !== undefined && (run?.params?.transformer_mode === 'model') ? 'The transformer step is the nameplate model.' : '' }}</p>
+      </div>
+      <div class="card chart-card">
+        <h3>Where the round trip goes</h3>
+        @if (sharesChart) {
+          <app-chart-canvas [config]="sharesChart" [height]="250" />
+        } @else {
+          <div class="empty-state">No round trip in the selected days.</div>
+        }
+        <table class="data-table ld-chain">
+          <thead><tr><th>Factor</th><th class="num">Actual</th><th class="num">Expected</th><th class="num">Pts lost</th></tr></thead>
+          <tbody>
+            @for (c of chain; track c.key) {
+              <tr>
+                <td>{{ c.label }}</td>
+                <td class="num mono">{{ pct(c.act, 2) }} %</td>
+                <td class="num mono">{{ pct(c.exp, 2) }} %</td>
+                <td class="num mono">{{ c.pts === null ? '—' : num(100 * c.pts, 2) }}</td>
+              </tr>
+            }
+            <tr class="ld-total">
+              <td>RTE plant = product of the factors</td>
+              <td class="num mono">{{ pct(w.rte.poi, 2) }} %</td>
+              <td class="num mono">{{ pct(w.rteExp, 2) }} %</td>
+              <td class="num mono">{{ w.rte.poi ? (100 * (1 - w.rte.poi)).toFixed(2) : '—' }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="card chart-card">
+      <h3>Fleet benchmark · run #{{ run?.run_id }}</h3>
+      <div class="table-scroll">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>System</th>
+              <th class="num">Battery</th>
+              <th class="num">PCS AC</th>
+              <th class="num">POI excl. aux</th>
+              <th class="num">Plant</th>
+              <th class="num">PR</th>
+              <th class="num">vs guarantee</th>
+              <th class="num">Aux pts</th>
+              <th class="num">PCS pts</th>
+              <th class="num">Battery pts</th>
+              <th class="num">Utilization</th>
+              <th class="num">Loss value</th>
+              <th class="num">Excess</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            @for (f of fleet; track f.system_id) {
+              <tr [class.ld-selected]="f.system_id === systemId">
+                <td>{{ f.system_name }}<span class="ld-sub">{{ f.site_name }}</span></td>
+                <td class="num mono">{{ pct(f.rte_term, 2) }} %</td>
+                <td class="num mono">{{ pct(f.rte_ac, 2) }} %</td>
+                <td class="num mono">{{ pct(f.rte_poi_excl_aux, 2) }} %</td>
+                <td class="num mono"><strong>{{ pct(f.rte_plant, 2) }} %</strong></td>
+                <td class="num mono">{{ pct(f.performance_ratio, 1) }} %</td>
+                <td class="num mono" [class.ld-bad]="(f.guarantee_gap_pts ?? -1) > 0">{{ f.guarantee_gap_pts === null ? '—' : signed(-f.guarantee_gap_pts, 2) + ' pts' }}</td>
+                <td class="num mono">{{ pct(f.shares.aux, 2) }}</td>
+                <td class="num mono">{{ pct(f.shares.pcs, 2) }}</td>
+                <td class="num mono">{{ pct((f.shares.batt ?? 0) + (f.shares.standby ?? 0), 2) }}</td>
+                <td class="num mono">{{ num(f.utilization_pct, 1) }} %</td>
+                <td class="num mono">{{ num(f.loss_usd, 0) }} USD</td>
+                <td class="num mono">{{ num(f.excess_usd, 0) }} USD</td>
+                <td>
+                  @if (f.system_id !== systemId) {
+                    <button type="button" class="btn btn-secondary btn-sm" (click)="pickSystem(f.system_id)">Open</button>
+                  }
+                </td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      </div>
+      <p class="ld-note">Run-window figures per system (all its days). Points = share of the plant round-trip gap each stage causes; the stages add up to 100 − plant RTE.</p>
+    </div>
+  }
+
+  <!-- ================================================================ DECOMPOSITION -->
+  @if (tab === 'decomposition') {
+    <div class="card chart-card">
+      <h3>Daily loss by stage</h3>
+      @if (dailyLossChart) {
+        <app-chart-canvas [config]="dailyLossChart" [height]="300" />
+      }
+    </div>
+    <div class="ld-two">
+      <div class="card chart-card">
+        <h3>Daily round trip at each boundary</h3>
+        @if (dailyRteChart) {
+          <app-chart-canvas [config]="dailyRteChart" [height]="270" />
+        }
+        <p class="ld-note">Storage-corrected (energy left in the cells is valued at the day's discharge-path efficiency). Days without a full cycle are gaps.</p>
+      </div>
+      <div class="card chart-card">
+        <h3>Fixed vs variable loss</h3>
+        @if (fixedVarChart) {
+          <app-chart-canvas [config]="fixedVarChart" [height]="270" />
+        }
+        <p class="ld-note">Fixed: PCS no-load, transformer core, controls, the non-load part of HVAC, standby. Variable: I²R / overpotential,
+          PCS conduction and switching, transformer copper, load-driven HVAC. Window: {{ num(w.fixed / 1000, 2) }} MWh fixed · {{ num(w.variable / 1000, 2) }} MWh variable.</p>
+      </div>
+    </div>
+    <div class="ld-two">
+      <div class="card chart-card">
+        <h3>Light duty is lossy: loss share vs utilization</h3>
+        @if (utilChart) {
+          <app-chart-canvas [config]="utilChart" [height]="270" />
+        }
+        <p class="ld-note">One dot per day. Fixed losses make low-utilization days inefficient - shallow cycling costs proportionally more.</p>
+      </div>
+      <div class="card chart-card">
+        <div class="ld-card-head">
+          <h3>Stage loss vs loading</h3>
+          <select [(ngModel)]="loadingStage" (ngModelChange)="buildLoadingChart()">
+            <option value="pcs">PCS conversion</option>
+            <option value="batt">Battery internal</option>
+            <option value="aux">Auxiliaries</option>
+            <option value="xfmr">Transformer</option>
+          </select>
+        </div>
+        @if (loadingChart) {
+          <app-chart-canvas [config]="loadingChart" [height]="250" />
+        }
+        <p class="ld-note">Run window, active intervals. Dashed: the benchmark at the same loading.</p>
+      </div>
+    </div>
+    <div class="card chart-card">
+      <h3>Charge / discharge asymmetry · run window</h3>
+      <div class="table-scroll">
+        <table class="data-table">
+          <thead>
+            <tr><th>Stage</th><th class="num">Charge (kWh)</th><th class="num">% of charge throughput</th><th class="num">Discharge (kWh)</th><th class="num">% of discharge throughput</th><th class="num">Idle (kWh)</th></tr>
+          </thead>
+          <tbody>
+            @for (r of directionRows; track r.key) {
+              <tr>
+                <td><span class="ld-swatch" [style.background]="color[r.key === 'aux' ? 'hvac' : r.key]"></span>{{ r.label }}</td>
+                <td class="num mono">{{ num(r.charge, 0) }}</td>
+                <td class="num mono">{{ num(r.chargePct, 3) }} %</td>
+                <td class="num mono">{{ num(r.dis, 0) }}</td>
+                <td class="num mono">{{ num(r.disPct, 3) }} %</td>
+                <td class="num mono">{{ num(r.idle, 0) }}</td>
+              </tr>
+            }
+            <tr class="ld-total">
+              <td>Mean one-way η (PCS · cells)</td>
+              <td class="num mono" colspan="2">{{ num($any(summary.direction['CHARGE'])?.eta_pcs_pct, 2) }} % · {{ num($any(summary.direction['CHARGE'])?.eta_batt_pct, 2) }} %</td>
+              <td class="num mono" colspan="2">{{ num($any(summary.direction['DISCHARGE'])?.eta_pcs_pct, 2) }} % · {{ num($any(summary.direction['DISCHARGE'])?.eta_batt_pct, 2) }} %</td>
+              <td></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  }
+
+  <!-- ================================================================ BENCHMARKING -->
+  @if (tab === 'benchmarking') {
+    <div class="ld-stage-pick" role="radiogroup" aria-label="Stage">
+      @for (b of bench; track b.key) {
+        <button type="button" class="ld-chip" [class.on]="benchStage === b.key" (click)="benchStage = b.key; buildBenchmark()">
+          <span class="ld-swatch" [style.background]="color[b.key === 'aux' ? 'hvac' : b.key]"></span>{{ b.label }}
+        </button>
+      }
+    </div>
+    <div class="ld-two">
+      <div class="card chart-card">
+        <h3>{{ label[benchStage] }} · actual vs expected</h3>
+        @if (benchChart) {
+          <app-chart-canvas [config]="benchChart" [height]="260" />
+        }
+        <p class="ld-note">Expected: the stage's grey-box model (fitted on the baseline days) at each interval's operating conditions.</p>
+      </div>
+      <div class="card chart-card">
+        <h3>{{ label[benchStage] }} · normalized to reference conditions</h3>
+        @if (normChart) {
+          <app-chart-canvas [config]="normChart" [height]="260" />
+          <p class="ld-note">The day's actual ÷ expected loss ratio applied at the reference point - a health trend independent of duty.</p>
+        } @else {
+          <div class="empty-state">No normalized trend for this stage.</div>
+        }
+      </div>
+    </div>
+    <div class="ld-two">
+      <div class="card chart-card">
+        <h3>EWMA control chart · daily excess %</h3>
+        @if (controlChart) {
+          <app-chart-canvas [config]="controlChart" [height]="260" />
+        }
+        <p class="ld-note">Limits from the baseline days. Alarms (▲) only on excess loss; days without a round trip are left off.
+          {{ benchStage === 'standby' ? 'Standby is advisory: the SOC drift at rest is below the measurement noise.' : '' }}</p>
+      </div>
+      <div class="card chart-card">
+        <h3>CUSUM · drift detector</h3>
+        @if (cusumChart) {
+          <app-chart-canvas [config]="cusumChart" [height]="260" />
+        }
+        <p class="ld-note">A step change shows as a sudden rise; slow degradation as a steady climb to the decision limit.</p>
+      </div>
+    </div>
+    <div class="ld-two">
+      <div class="card chart-card">
+        <h3>Performance ratio</h3>
+        @if (prChart) {
+          <app-chart-canvas [config]="prChart" [height]="240" />
+        }
+        <p class="ld-note">PR = actual ÷ expected plant RTE; normal ageing is already in the benchmark (resistance growth with SOH), so PR isolates unexpected underperformance.</p>
+      </div>
+      <div class="card chart-card">
+        <h3>Guarantee tracking · {{ basisLabel() }}</h3>
+        @if (guaranteeChart) {
+          <app-chart-canvas [config]="guaranteeChart" [height]="240" />
+        }
+      </div>
+    </div>
+    <div class="card chart-card">
+      <h3>Daily scorecard</h3>
+      <div class="table-scroll ld-scorecard">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>Day</th>
+              <th class="num">Throughput</th>
+              <th class="num">Plant RTE</th>
+              <th class="num">Expected</th>
+              <th class="num">PR</th>
+              <th class="num">vs guarantee</th>
+              <th class="num">Battery</th>
+              <th class="num">PCS</th>
+              <th class="num">Aux</th>
+              <th class="num">Xfmr</th>
+              <th class="num">Excess USD</th>
+              <th>Stage status</th>
+            </tr>
+          </thead>
+          <tbody>
+            @for (d of days; track d.day) {
+              <tr>
+                <td class="mono">{{ d.day }}@if (d.is_baseline) {<span class="ld-tag">baseline</span>}</td>
+                <td class="num mono">{{ num(d.throughput_kwh, 0) }} kWh</td>
+                <td class="num mono">{{ pct(d.rte_plant, 2) }}</td>
+                <td class="num mono">{{ pct(d.rte_expected, 2) }}</td>
+                <td class="num mono">{{ pct(d.performance_ratio, 1) }}</td>
+                <td class="num mono" [class.ld-bad]="(d.guarantee_gap_pts ?? -1) > 0">{{ d.guarantee_gap_pts === null ? '—' : signed(-d.guarantee_gap_pts, 2) }}</td>
+                <td class="num mono">{{ num(d.loss_batt_kwh, 0) }} / {{ num(d.exp_batt_kwh, 0) }}</td>
+                <td class="num mono">{{ num(d.loss_pcs_kwh, 0) }} / {{ num(d.exp_pcs_kwh, 0) }}</td>
+                <td class="num mono">{{ num(d.aux_hvac_kwh + d.aux_ctrl_kwh, 0) }} / {{ num(d.exp_aux_kwh, 0) }}</td>
+                <td class="num mono">{{ num(d.loss_xfmr_kwh, 0) }} / {{ num(d.exp_xfmr_kwh, 0) }}</td>
+                <td class="num mono">{{ num(d.excess_usd, 2) }}</td>
+                <td class="ld-status-cell">
+                  @for (b of bench; track b.key) {
+                    @if (status(d, b.key) === 'ewma' || status(d, b.key) === 'cusum' || status(d, b.key) === 'both') {
+                      <span class="ld-alarm" [title]="b.label + ': ' + status(d, b.key)">▲ {{ b.label }} ({{ status(d, b.key) }})</span>
+                    }
+                  }
+                </td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      </div>
+      <p class="ld-note">Stage columns: actual / expected kWh. ▲ = EWMA above its upper limit and / or CUSUM above h on that stage.</p>
+    </div>
+  }
+
+  <!-- ================================================================ LEDGER -->
+  @if (tab === 'ledger') {
+    <div class="ld-ledger-bar">
+      <label for="ldd">Day</label>
+      <button type="button" class="btn btn-secondary btn-icon" title="Previous day" (click)="stepLedger(-1)">‹</button>
+      <select id="ldd" [(ngModel)]="ledgerDay" (ngModelChange)="loadLedger()">
+        @for (d of allDays; track d.day) {
+          <option [ngValue]="d.day">{{ d.day }} · {{ num(d.throughput_kwh, 0) }} kWh</option>
+        }
+      </select>
+      <button type="button" class="btn btn-secondary btn-icon" title="Next day" (click)="stepLedger(1)">›</button>
+      @if (ledgerLoading) {
+        <span class="ld-note">Loading…</span>
+      }
+    </div>
+    @if (ledger.length) {
+      <div class="card chart-card">
+        <h3>Loss by stage per interval · {{ ledgerDay }}</h3>
+        @if (ledgerLossChart) {
+          <app-chart-canvas [config]="ledgerLossChart" [height]="280" />
+        }
+      </div>
+      <div class="card chart-card">
+        <h3>Power at the nodes</h3>
+        @if (ledgerPowerChart) {
+          <app-chart-canvas [config]="ledgerPowerChart" [height]="260" />
+        }
+        <p class="ld-note">Telemetry sign: + toward the battery (charge), − toward the grid (discharge). Chemistry = OCV(SOC, T) × cells × current: the gap to the terminals is the internal loss.</p>
+      </div>
+      <div class="card chart-card">
+        <h3>Interval ledger</h3>
+        <div class="table-scroll ld-ledger">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Time</th><th>Dir.</th><th class="num">POI</th><th class="num">AC</th><th class="num">DC</th><th class="num">Term.</th><th class="num">Chem.</th>
+                <th class="num">Batt</th><th class="num">PCS</th><th class="num">Xfmr</th><th class="num">HVAC</th><th class="num">Ctrl</th><th class="num">Standby</th>
+                <th class="num">η PCS</th><th class="num">Closure</th>
+              </tr>
+            </thead>
+            <tbody>
+              @for (r of ledger; track r.ts) {
+                <tr>
+                  <td class="mono">{{ r.ts.slice(11, 16) }}</td>
+                  <td>{{ r.direction.toLowerCase() }}</td>
+                  <td class="num mono">{{ num(r.p_poi_kw, 1) }}</td>
+                  <td class="num mono">{{ num(r.p_ac_kw, 1) }}</td>
+                  <td class="num mono">{{ num(r.p_dc_kw, 1) }}</td>
+                  <td class="num mono">{{ num(r.p_term_kw, 1) }}</td>
+                  <td class="num mono">{{ num(r.p_chem_kw, 1) }}</td>
+                  <td class="num mono">{{ num(r.loss_batt_kwh, 3) }}</td>
+                  <td class="num mono">{{ num(r.loss_pcs_kwh, 3) }}</td>
+                  <td class="num mono">{{ num(r.loss_xfmr_kwh, 3) }}</td>
+                  <td class="num mono">{{ num(r.aux_hvac_kwh, 3) }}</td>
+                  <td class="num mono">{{ num(r.aux_ctrl_kwh, 3) }}</td>
+                  <td class="num mono">{{ num(r.standby_kwh, 3) }}</td>
+                  <td class="num mono">{{ pct(r.eta_pcs, 2) }}</td>
+                  <td class="num mono">{{ num(r.closure_kwh, 3) }}</td>
+                </tr>
+              }
+              <tr class="ld-total">
+                <td colspan="7">Day total (kWh)</td>
+                <td class="num mono">{{ num(ledgerTotal('loss_batt_kwh'), 1) }}</td>
+                <td class="num mono">{{ num(ledgerTotal('loss_pcs_kwh'), 1) }}</td>
+                <td class="num mono">{{ num(ledgerTotal('loss_xfmr_kwh'), 1) }}</td>
+                <td class="num mono">{{ num(ledgerTotal('aux_hvac_kwh'), 1) }}</td>
+                <td class="num mono">{{ num(ledgerTotal('aux_ctrl_kwh'), 1) }}</td>
+                <td class="num mono">{{ num(ledgerTotal('standby_kwh'), 2) }}</td>
+                <td></td>
+                <td class="num mono">{{ num(ledgerTotal('closure_kwh'), 2) }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="ld-note">Powers in kW, losses in kWh per {{ stepMin }}-min interval.</p>
+      </div>
+    }
+  }
+}

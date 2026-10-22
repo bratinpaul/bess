@@ -1,0 +1,365 @@
+<div class="page-header">
+  <div>
+    <h2>Efficiency Estimator</h2>
+    <p class="subtitle">
+      PCS conversion efficiency at an operating point, and the round-trip efficiency of a charge–discharge cycle.
+    </p>
+  </div>
+  <a class="link training-link" routerLink="/ml/efficiency-model">Open Efficiency Model →</a>
+</div>
+
+<div class="card picker-card">
+  <div class="picker-row">
+    <div class="field picker-field">
+      <label for="model">Model</label>
+      <select id="model" [ngModel]="modelKey" (ngModelChange)="selectModel($event)" [disabled]="!models.length">
+        <option value="active">Default model</option>
+        @for (m of models; track m.run_id) {
+          <option [value]="'' + m.run_id">{{ optionLabel(m) }}</option>
+        }
+      </select>
+      @if (modelsError) {
+        <span class="field-error">{{ modelsError }}</span>
+      }
+    </div>
+    @if (info) {
+      <div class="field picker-field">
+        <label for="unit">PCS unit</label>
+        <select id="unit" [ngModel]="pcsId" (ngModelChange)="selectUnit($event)">
+          @for (u of info.units; track u.pcs_id) {
+            <option [ngValue]="u.pcs_id">{{ unitName(u) }}</option>
+          }
+        </select>
+      </div>
+    }
+  </div>
+  @if (info?.run; as r) {
+    <p class="muted small model-note">
+      Run #{{ r.run_id }}{{ r.run_name ? ' · ' + r.run_name : '' }} · test RMSE grey-box {{ fmtNum(r.metrics?.greybox?.test?.rmse) }} ·
+      GAM {{ fmtNum(r.metrics?.gam?.test?.rmse) }} · hybrid {{ fmtNum(r.metrics?.hybrid?.test?.rmse) }} pp ·
+      {{ r.n_points | number }} readings, {{ r.n_cycles }} cycles
+    </p>
+  }
+</div>
+
+@if (modelsLoaded && !models.length && !modelsError) {
+  <div class="card">
+    <div class="empty-state">
+      No efficiency model yet. <a routerLink="/ml/efficiency-model">Generate one on the Efficiency Model page</a>.
+    </div>
+  </div>
+} @else if (infoError) {
+  <div class="card"><div class="empty-state error">{{ infoError }}</div></div>
+}
+
+@if (info && unit; as u) {
+  <div class="tab-row">
+    <button type="button" class="tab" [class.on]="tab === 'point'" (click)="tab = 'point'">Operating point · PCS η</button>
+    <button type="button" class="tab" [class.on]="tab === 'cycle'" (click)="tab = 'cycle'">Charge–discharge cycle · round trip</button>
+  </div>
+
+  @if (tab === 'point') {
+    <div class="card estimator-form-card">
+      <div class="form-head">
+        <div class="seg dir-seg">
+          <button type="button" [class.on]="point.direction === 'charge'" (click)="setDirection('charge')">Charge</button>
+          <button type="button" [class.on]="point.direction === 'discharge'" (click)="setDirection('discharge')">Discharge</button>
+        </div>
+        <div class="input-actions">
+          <button type="button" class="btn btn-secondary" [disabled]="loadingSample" (click)="loadLatest('charge')">Latest charge reading</button>
+          <button type="button" class="btn btn-secondary" [disabled]="loadingSample" (click)="loadLatest('discharge')">Latest discharge reading</button>
+          <button type="button" class="link-btn" (click)="typicalConditions()" title="Clear the conditions: the unit's typical values at this load are used">Typical conditions</button>
+        </div>
+      </div>
+      @if (pointSource) {
+        <p class="source-note">Inputs: {{ pointSource }}
+          @if (measuredEta !== null) { · measured η <strong>{{ measuredEta | number: '1.2-2' }} %</strong> }
+        </p>
+      }
+      @if (pointError) {
+        <div class="form-error">{{ pointError }}</div>
+      }
+
+      <form (ngSubmit)="predictPoint()">
+        <div class="feature-group">
+          <h4>Load</h4>
+          <div class="input-grid">
+            <div class="field">
+              <label for="p">|AC active power| (kW)</label>
+              <input id="p" name="p" type="number" min="1" step="10" [(ngModel)]="point.p_kw" (input)="markEdited()" />
+              <span class="field-meta">rated {{ fmtNum(u.rated_power_kw, 0) }} kW</span>
+            </div>
+            <div class="field">
+              <label for="lp">Load fraction (%)</label>
+              <input id="lp" name="lp" type="number" min="1" max="120" step="1" [ngModel]="loadPct | number: '1.0-1'" (ngModelChange)="setLoadPct($event)" />
+              <span class="field-meta">the dominant driver; efficiency falls at light load</span>
+            </div>
+            <div class="field">
+              <label for="pf">Power factor |PF|</label>
+              <input id="pf" name="pf" type="number" min="0.5" max="1" step="0.01" [(ngModel)]="point.power_factor" (input)="markEdited()" />
+              <span class="field-meta">|S| = P / PF — losses follow the current</span>
+            </div>
+            <div class="field">
+              <label for="gs">Grid service / mode</label>
+              <select id="gs" name="gs" [(ngModel)]="point.grid_service" (ngModelChange)="markEdited()">
+                @for (g of gridServices; track g) {
+                  <option [value]="g">{{ g === 'NONE' ? 'None (arbitrage / schedule)' : g }}</option>
+                }
+              </select>
+            </div>
+          </div>
+        </div>
+        <div class="feature-group">
+          <h4>DC bus &amp; temperatures <span class="optional-tag">empty = the unit's typical value at this load</span></h4>
+          <div class="input-grid">
+            <div class="field">
+              <label for="vdc">DC bus voltage (V)</label>
+              <input id="vdc" name="vdc" type="number" step="1" [(ngModel)]="point.dc_voltage_v" (input)="markEdited()" [placeholder]="typical('dc_voltage_v')" />
+              <span class="field-meta">nominal {{ fmtNum(u.v_dc_ref, 0) }} V ({{ u.dc_voltage_from }})</span>
+            </div>
+            <div class="field">
+              <label for="igbt">IGBT temperature (°C)</label>
+              <input id="igbt" name="igbt" type="number" step="0.5" [(ngModel)]="point.igbt_temp_c" (input)="markEdited()" [placeholder]="typical('igbt_temp_c')" />
+            </div>
+            <div class="field">
+              <label for="hs">Heatsink temperature (°C)</label>
+              <input id="hs" name="hs" type="number" step="0.5" [(ngModel)]="point.heatsink_temp_c" (input)="markEdited()" [placeholder]="typical('heatsink_temp_c')" />
+            </div>
+            <div class="field">
+              <label for="cool">Inlet coolant (°C)</label>
+              <input id="cool" name="cool" type="number" step="0.5" [(ngModel)]="point.inlet_coolant_temp_c" (input)="markEdited()" [placeholder]="typical('inlet_coolant_temp_c')" />
+            </div>
+            <div class="field">
+              <label for="amb">Ambient (°C)</label>
+              <input id="amb" name="amb" type="number" step="0.5" [(ngModel)]="point.ambient_temp_c" (input)="markEdited()" [placeholder]="typical('ambient_temp_c')" />
+            </div>
+          </div>
+        </div>
+        <div class="feature-group">
+          <h4>Grid &amp; asset <span class="optional-tag">minor drivers</span></h4>
+          <div class="input-grid">
+            <div class="field">
+              <label for="vac">AC voltage (V, line-line)</label>
+              <input id="vac" name="vac" type="number" step="1" [(ngModel)]="point.ac_voltage_v" (input)="markEdited()" [placeholder]="typical('ac_voltage_v')" />
+              <span class="field-meta">rated {{ fmtNum(u.rated_ac_voltage_v, 0) }} V</span>
+            </div>
+            <div class="field">
+              <label for="hz">AC frequency (Hz)</label>
+              <input id="hz" name="hz" type="number" step="0.001" [(ngModel)]="point.ac_frequency_hz" (input)="markEdited()" [placeholder]="typical('ac_frequency_hz')" />
+            </div>
+            <div class="field">
+              <label for="age">Asset age (years)</label>
+              <input id="age" name="age" type="number" step="0.1" min="0" [(ngModel)]="point.age_years" (input)="markEdited()" [placeholder]="typical('age_years')" />
+              <span class="field-meta">commissioned {{ u.commissioned_on ?? '—' }}</span>
+            </div>
+          </div>
+        </div>
+        <div class="form-actions">
+          <button type="submit" class="btn btn-primary" [disabled]="predicting">{{ predicting ? 'Estimating…' : 'Estimate efficiency' }}</button>
+        </div>
+      </form>
+
+      @if (pointResult; as r) {
+        <div class="eta-tiles">
+          @for (k of modelKeys; track k) {
+            <div class="eta-tile" [class.main]="k === 'hybrid'" [style.--c]="modelColors[k]">
+              <span class="predict-result-label">{{ modelLabels[k] }}</span>
+              <span class="eta-value">{{ r.models[k].eta_pct | number: '1.2-2' }} %</span>
+              <span class="predict-result-version">loss {{ r.models[k].loss_kw | number: '1.1-1' }} kW
+                @if (measuredEta !== null) { · {{ diff(k) }} }</span>
+            </div>
+          }
+          @if (measuredEta !== null) {
+            <div class="eta-tile measured">
+              <span class="predict-result-label">Measured</span>
+              <span class="eta-value">{{ measuredEta | number: '1.2-2' }} %</span>
+              <span class="predict-result-version">efficiency_pct of the reading</span>
+            </div>
+          }
+        </div>
+        <p class="muted small flow-note">
+          {{ r.direction === 'charge' ? 'AC in' : 'DC in' }} {{ r.models.hybrid.p_in_kw | number: '1.1-1' }} kW →
+          {{ r.direction === 'charge' ? 'DC out' : 'AC out' }} {{ r.models.hybrid.p_out_kw | number: '1.1-1' }} kW ·
+          load {{ r.load_frac * 100 | number: '1.1-1' }} % · |S| {{ r.s_frac * 100 | number: '1.1-1' }} % of rated kVA
+        </p>
+        @for (w of r.warnings; track w) {
+          <div class="warn-line">{{ w }}</div>
+        }
+
+        <div class="result-grid">
+          <div class="result-box wide">
+            <h4>Efficiency vs load at these conditions</h4>
+            <p class="muted small">The three models with the conditions above held fixed at every load; grey dots are the unit's
+              measured readings; ◆ = this point.</p>
+            @if (pointCurve) {
+              <app-chart-canvas [config]="pointCurve" [height]="300" />
+            }
+          </div>
+          <div class="result-box">
+            <h4>Where the loss goes</h4>
+            <p class="muted small">Grey-box terms at this point plus the boosting correction (hybrid − grey-box).
+              Total {{ r.models.hybrid.loss_kw | number: '1.2-2' }} kW.</p>
+            @if (breakdownChart) {
+              <app-chart-canvas [config]="breakdownChart" [height]="170" />
+            }
+          </div>
+          <div class="result-box">
+            <h4>What moves the correction (SHAP)</h4>
+            <p class="muted small">Each input's push on η from the boosting model, in percentage points
+              (blue raises η, orange lowers it; ≈ −pp × P = kW of loss).</p>
+            @if (shapChart) {
+              <app-chart-canvas [config]="shapChart" [height]="shapHeight" />
+            }
+          </div>
+        </div>
+      }
+    </div>
+  }
+
+  @if (tab === 'cycle') {
+    <div class="card estimator-form-card">
+      <p class="muted small cycle-intro">
+        Energy in at the DC side = SOC depth × kWh per SOC %. The battery returns it at the DC round-trip (cycle regression,
+        or entered); the PCS converts at the hybrid model's η for the charge and discharge power; the auxiliaries run over the
+        whole period (charge start → next charge start).
+      </p>
+      @if (cycleError) {
+        <div class="form-error">{{ cycleError }}</div>
+      }
+      <form (ngSubmit)="predictCycle()">
+        <div class="feature-group">
+          <h4>Cycle</h4>
+          <div class="input-grid">
+            <div class="field">
+              <label for="cc">Charge power (kW)</label>
+              <input id="cc" name="cc" type="number" min="1" step="10" [(ngModel)]="cycle.charge_kw" />
+              <span class="field-meta">{{ (100 * cycle.charge_kw) / (u.rated_power_kw || 1) | number: '1.0-0' }} % of rated</span>
+            </div>
+            <div class="field">
+              <label for="dc">Discharge power (kW)</label>
+              <input id="dc" name="dc" type="number" min="1" step="10" [(ngModel)]="cycle.discharge_kw" />
+              <span class="field-meta">{{ (100 * cycle.discharge_kw) / (u.rated_power_kw || 1) | number: '1.0-0' }} % of rated</span>
+            </div>
+            <div class="field">
+              <label for="smin">SOC min (%)</label>
+              <input id="smin" name="smin" type="number" min="0" max="100" step="1" [(ngModel)]="cycle.soc_min_pct" />
+            </div>
+            <div class="field">
+              <label for="smax">SOC max (%)</label>
+              <input id="smax" name="smax" type="number" min="0" max="100" step="1" [(ngModel)]="cycle.soc_max_pct" />
+            </div>
+            <div class="field">
+              <label for="per">Period (h)</label>
+              <input id="per" name="per" type="number" min="1" max="240" step="1" [(ngModel)]="cycle.period_hours" />
+              <span class="field-meta">charge start → next charge start</span>
+            </div>
+            <div class="field">
+              <label for="kwh">DC kWh per SOC %</label>
+              <input id="kwh" name="kwh" type="number" min="0.1" step="0.5" [(ngModel)]="cycle.kwh_per_pct" [placeholder]="cyclePlaceholders.kwh" />
+              <span class="field-meta">from the unit's charge phases</span>
+            </div>
+          </div>
+        </div>
+        <div class="feature-group">
+          <h4>Battery &amp; operation</h4>
+          <div class="input-grid">
+            <div class="field">
+              <label for="dcrte">DC round-trip (%)</label>
+              <input id="dcrte" name="dcrte" type="number" min="50" max="110" step="0.1" [(ngModel)]="cycle.dc_rte_pct" [placeholder]="cyclePlaceholders.dc" />
+              <span class="field-meta">empty = the cycle regression; enter a datasheet value to override</span>
+            </div>
+            <div class="field">
+              <label for="ct">Avg cell temperature (°C)</label>
+              <input id="ct" name="ct" type="number" step="0.5" [(ngModel)]="cycle.cell_temp_avg_c" [placeholder]="cyclePlaceholders.temp" />
+            </div>
+            <div class="field">
+              <label for="soh">SOH (%)</label>
+              <input id="soh" name="soh" type="number" step="0.1" [(ngModel)]="cycle.soh_pct" [placeholder]="cyclePlaceholders.soh" />
+            </div>
+            <div class="field">
+              <label for="fr">FREQ_WATT share of active time</label>
+              <input id="fr" name="fr" type="number" min="0" max="1" step="0.05" [(ngModel)]="cycle.fr_share" />
+              <span class="field-meta">fast FR cycling vs steady arbitrage</span>
+            </div>
+            <div class="field">
+              <label for="dch">Direction changes</label>
+              <input id="dch" name="dch" type="number" min="1" max="500" step="1" [(ngModel)]="cycle.direction_changes" />
+            </div>
+            <div class="field">
+              <label for="aux">Auxiliary + HVAC load (kW)</label>
+              <input id="aux" name="aux" type="number" min="0" step="0.5" [(ngModel)]="cycle.aux_kw" [placeholder]="cyclePlaceholders.aux" />
+              <span class="field-meta">only the system round-trip uses it</span>
+            </div>
+            <div class="field">
+              <label for="cpf">Power factor</label>
+              <input id="cpf" name="cpf" type="number" min="0.5" max="1" step="0.01" [(ngModel)]="cycle.power_factor" />
+            </div>
+            <div class="field">
+              <label for="cgs">Grid service</label>
+              <select id="cgs" name="cgs" [(ngModel)]="cycle.grid_service">
+                @for (g of gridServices; track g) {
+                  <option [value]="g">{{ g === 'NONE' ? 'None (arbitrage / schedule)' : g }}</option>
+                }
+              </select>
+            </div>
+          </div>
+        </div>
+        <div class="form-actions">
+          <button type="submit" class="btn btn-primary" [disabled]="cycling">{{ cycling ? 'Calculating…' : 'Estimate round trip' }}</button>
+        </div>
+      </form>
+
+      @if (cycleResult; as c) {
+        <div class="eta-tiles">
+          <div class="eta-tile" [style.--c]="'#2a78d6'">
+            <span class="predict-result-label">PCS conversion (charge × discharge)</span>
+            <span class="eta-value">{{ c.rte_pct.pcs_conversion | number: '1.2-2' }} %</span>
+            <span class="predict-result-version">charge {{ c.eta_charge_pct | number: '1.2-2' }} % · discharge {{ c.eta_discharge_pct | number: '1.2-2' }} %</span>
+          </div>
+          <div class="eta-tile" [style.--c]="'#2aa198'">
+            <span class="predict-result-label">DC round-trip · battery</span>
+            <span class="eta-value">{{ c.rte_pct.dc | number: '1.2-2' }} %</span>
+            <span class="predict-result-version">{{ c.dc_rte_source }}</span>
+          </div>
+          <div class="eta-tile" [style.--c]="'#6d5bd0'">
+            <span class="predict-result-label">AC round-trip · PCS terminals</span>
+            <span class="eta-value">{{ c.rte_pct.ac | number: '1.2-2' }} %</span>
+            <span class="predict-result-version">double conversion</span>
+          </div>
+          <div class="eta-tile main" [style.--c]="'#d9480f'">
+            <span class="predict-result-label">System round-trip · POI</span>
+            <span class="eta-value">{{ c.rte_pct.system === null ? '—' : (c.rte_pct.system | number: '1.2-2') + ' %' }}</span>
+            <span class="predict-result-version">with {{ c.aux_kw | number: '1.1-1' }} kW auxiliaries — what hits the P&amp;L</span>
+          </div>
+        </div>
+        @for (w of c.warnings; track w) {
+          <div class="warn-line">{{ w }}</div>
+        }
+        <div class="result-grid">
+          <div class="result-box">
+            <h4>Energy through the cycle</h4>
+            <table class="data-table flow-table">
+              <tbody>
+                <tr><td>Imported at the POI</td><td class="num">{{ c.energy_kwh.poi_in | number: '1.0-0' }} kWh</td></tr>
+                <tr><td>Into the PCS (AC)</td><td class="num">{{ c.energy_kwh.ac_in | number: '1.0-0' }} kWh</td></tr>
+                <tr><td>Into the battery (DC)</td><td class="num">{{ c.energy_kwh.dc_in | number: '1.0-0' }} kWh</td></tr>
+                <tr><td>Out of the battery (DC)</td><td class="num">{{ c.energy_kwh.dc_out | number: '1.0-0' }} kWh</td></tr>
+                <tr><td>Out of the PCS (AC)</td><td class="num">{{ c.energy_kwh.ac_out | number: '1.0-0' }} kWh</td></tr>
+                <tr class="sep"><td><strong>Exported at the POI</strong></td><td class="num"><strong>{{ c.energy_kwh.poi_out | number: '1.0-0' }} kWh</strong></td></tr>
+              </tbody>
+            </table>
+            <p class="muted small">Charging {{ hours(c.hours.charge) }} · discharging {{ hours(c.hours.discharge) }} · rest
+              {{ hours(c.hours.rest) }} · {{ c.kwh_per_pct | number: '1.1-1' }} kWh per SOC % · auxiliaries {{ c.energy_kwh.aux | number: '1.0-0' }} kWh
+              over {{ c.hours.period }} h ({{ c.energy_kwh.aux_during_discharge | number: '1.0-0' }} kWh of it while discharging).</p>
+          </div>
+          <div class="result-box">
+            <h4>Where the energy is lost</h4>
+            @if (lossChart) {
+              <app-chart-canvas [config]="lossChart" [height]="190" />
+            }
+          </div>
+        </div>
+      }
+    </div>
+  }
+}

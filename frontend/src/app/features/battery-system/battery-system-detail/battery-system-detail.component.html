@@ -1,0 +1,83 @@
+<div class="page-header">
+  <div>
+    <a class="back-link" routerLink="/battery-systems">← Back to battery systems</a>
+    @if (item) {
+      <h2>{{ item.system_name }}</h2>
+    }
+  </div>
+  @if (item) {
+    <div class="header-actions">
+      <app-asset-links assetType="battery_system" [assetId]="item.battery_system_id" [name]="item.system_name" />
+      <a class="btn btn-primary" [routerLink]="['/battery-systems', item.battery_system_id, 'edit']">Edit Battery System</a>
+    </div>
+  }
+</div>
+
+<div class="card">
+  @if (loading) {
+    <div class="empty-state">Loading…</div>
+  } @else if (error) {
+    <div class="empty-state error">{{ error }}</div>
+  } @else if (item) {
+    <dl class="detail-grid">
+      <div class="detail-item">
+        <dt>System Name</dt>
+        <dd>{{ item.system_name }}</dd>
+      </div>
+      <div class="detail-item">
+        <dt>Site</dt>
+        <dd>{{ siteName ?? '—' }}</dd>
+      </div>
+      <div class="detail-item">
+        <dt>Manufacturer</dt>
+        <dd>{{ item.manufacturer || '—' }}</dd>
+      </div>
+      <div class="detail-item">
+        <dt>Model</dt>
+        <dd>{{ item.model || '—' }}</dd>
+      </div>
+      <div class="detail-item">
+        <dt>Rated Power (MW)</dt>
+        <dd>{{ item.rated_power_mw ?? '—' }}</dd>
+      </div>
+      <div class="detail-item">
+        <dt>Rated Energy (MWh)</dt>
+        <dd>{{ item.rated_energy_mwh ?? '—' }}</dd>
+      </div>
+      <div class="detail-item">
+        <dt>Nominal DC Voltage</dt>
+        <dd>{{ item.nominal_dc_voltage ?? '—' }}</dd>
+      </div>
+      <div class="detail-item">
+        <dt>Chemistry</dt>
+        <dd class="mono">{{ item.chemistry_code }}</dd>
+      </div>
+      <div class="detail-item">
+        <dt>Series × Parallel Cells</dt>
+        <dd>{{ item.series_cells }} × {{ item.parallel_cells }}</dd>
+      </div>
+      <div class="detail-item">
+        <dt>Commissioned On</dt>
+        <dd>{{ item.commissioned_on ?? '—' }}</dd>
+      </div>
+      <div class="detail-item">
+        <dt>BMS Firmware</dt>
+        <dd>{{ item.bms_firmware || '—' }}</dd>
+      </div>
+      <div class="detail-item">
+        <dt>Status</dt>
+        <dd>
+          @if (item.status) {
+            <span class="status-badge">{{ item.status }}</span>
+          } @else {
+            —
+          }
+        </dd>
+      </div>
+      <div class="detail-item">
+        <dt>Created At</dt>
+        <dd>{{ item.created_at ?? '—' }}</dd>
+      </div>
+    </dl>
+  }
+</div>

@@ -1,0 +1,208 @@
+<div class="page-header">
+  <div>
+    <h2>Daily Module Summary</h2>
+    <p class="subtitle">Cell voltage, imbalance, temperature and balancing KPIs across battery modules</p>
+  </div>
+  <app-pdf-button [disabled]="!(summary && !loading && !error)" [exporting]="report.exporting" [progress]="report.progress" (download)="downloadPdf()" />
+</div>
+@if (report.error) {
+  <div class="form-error report-error">{{ report.error }}</div>
+}
+
+<!-- everything inside #reportRoot goes into the PDF -->
+<div #reportRoot class="report" [class.pdf-mode]="report.exporting">
+<app-report-header title="Daily Module Summary" subtitle="Cell voltage, imbalance, temperature and balancing KPIs across battery modules" [fields]="reportFields" [generatedAt]="report.generatedAt" />
+
+<div class="card analytics-filters-card">
+  <div class="toolbar telemetry-filters">
+    <div class="field">
+      <label for="moduleSummarySystem">Battery System</label>
+      <select id="moduleSummarySystem" [(ngModel)]="selectedSystemId" (ngModelChange)="onSystemChange()">
+        <option [ngValue]="null">All systems</option>
+        @for (s of systems; track s.battery_system_id) {
+          <option [ngValue]="s.battery_system_id">{{ s.system_name }}</option>
+        }
+      </select>
+    </div>
+    <div class="field">
+      <label for="moduleSummaryPack">Pack</label>
+      <select id="moduleSummaryPack" [(ngModel)]="selectedPackId" (ngModelChange)="onPackChange()">
+        <option [ngValue]="null">All packs</option>
+        @for (p of packs; track p.pack_id) {
+          <option [ngValue]="p.pack_id">{{ p.pack_number || 'Pack ' + p.pack_id }}</option>
+        }
+      </select>
+    </div>
+    <div class="field">
+      <label for="moduleSummaryDate">Date</label>
+      <input
+        id="moduleSummaryDate"
+        type="date"
+        [(ngModel)]="selectedDate"
+        [min]="minDate"
+        [max]="today"
+        (ngModelChange)="onDateChange()" />
+    </div>
+    <div class="telemetry-filter-actions">
+      <button type="button" class="btn btn-secondary" [disabled]="loading || !maxDate || selectedDate === maxDate"
+        (click)="latestDate()" [title]="maxDate ? 'Latest day with module data: ' + maxDate : ''">Latest data</button>
+    </div>
+  </div>
+  @if (summary && !loading) {
+    <div class="summary-period">
+      {{ scopeLabel }} · {{ periodLabel }} · {{ summary.kpis.modules }} modules · {{ summary.sample_interval_minutes }}-min samples
+    </div>
+  }
+</div>
+
+@if (error) {
+  <div class="card">
+    <div class="empty-state error">{{ error }}</div>
+  </div>
+}
+
+<div class="card analytics-metrics-card">
+  @if (loading) {
+    <div class="empty-state">Loading summary…</div>
+  } @else {
+    <div class="metric-grid">
+      @for (card of metricCards; track card.label) {
+        <div class="metric-card">
+          <span class="metric-icon">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+              @switch (card.icon) {
+                @case ('modules') {
+                  <rect x="3.5" y="6.5" width="17" height="11" rx="1.5" stroke="currentColor" stroke-width="1.6" />
+                  <path d="M9 6.5v11M15 6.5v11" stroke="currentColor" stroke-width="1.6" />
+                }
+                @case ('samples') {
+                  <path d="M4 19V9M9 19V5M14 19v-8M19 19v-5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
+                }
+                @case ('voltage') {
+                  <path d="M13 3 6 13.5h5L10 21l8-11h-5L13 3Z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" />
+                }
+                @case ('imbalance') {
+                  <path d="M12 4v16M5 8h14M5 8l-2.5 6a3 3 0 0 0 5 0L5 8Zm14 0-2.5 6a3 3 0 0 0 5 0L19 8Z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" />
+                }
+                @case ('temp') {
+                  <path d="M12 4a2 2 0 0 1 2 2v7.5a3.5 3.5 0 1 1-4 0V6a2 2 0 0 1 2-2Z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" />
+                  <circle cx="12" cy="17" r="1.4" fill="currentColor" />
+                }
+                @case ('duty') {
+                  <circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="1.6" />
+                  <path d="M12 12V3.5A8.5 8.5 0 0 1 20.5 12H12Z" fill="currentColor" />
+                }
+                @case ('clock') {
+                  <circle cx="12" cy="12" r="8.5" stroke="currentColor" stroke-width="1.6" />
+                  <path d="M12 7.5V12l3 2" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
+                }
+                @case ('warning') {
+                  <path d="M12 3.5 21 19.5H3L12 3.5Z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" />
+                  <path d="M12 10v4.5M12 17v.3" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" />
+                }
+              }
+            </svg>
+          </span>
+          <span class="metric-body">
+            <span class="metric-label">{{ card.label }}</span>
+            <span class="metric-value">
+              @if (card.value === null || card.value === undefined) {
+                —
+              } @else if (isText(card)) {
+                {{ card.value }}
+                <span class="metric-unit">{{ card.unit }}</span>
+              } @else {
+                {{ $any(card.value) | number: '1.0-' + card.decimals }}
+                <span class="metric-unit">{{ card.unit }}</span>
+              }
+            </span>
+          </span>
+        </div>
+      }
+    </div>
+  }
+</div>
+
+<div class="analytics-charts-grid">
+  <div class="card chart-card">
+    <h3>Max Cell Imbalance by Module (mV)</h3>
+    <div class="chart-container"><canvas #imbalanceChart></canvas></div>
+  </div>
+  <div class="card chart-card">
+    <h3>Balancing Hours by Module</h3>
+    <div class="chart-container"><canvas #balancingChart></canvas></div>
+  </div>
+  <div class="card chart-card chart-card-wide">
+    <h3>Daily Max Imbalance (mV) &amp; Max Module Temp (°C) · last 7 days</h3>
+    <div class="chart-container"><canvas #dailyChart></canvas></div>
+  </div>
+</div>
+
+<section class="card comparison-card" aria-labelledby="moduleComparisonTitle">
+  <div class="comparison-head">
+    <div>
+      <h3 id="moduleComparisonTitle">Module Comparison</h3>
+      <p class="subtitle">
+        Per-module figures for the selected period. Shading shows where each module sits within its column:
+        orange for imbalance, temperature and balancing (darker is worse), blue for cell voltage.
+      </p>
+    </div>
+    <div class="pdf-only compare-metric-text">Comparing: <strong>{{ compareMetric.label }}{{ compareMetric.unit ? ' (' + compareMetric.unit + ')' : '' }}</strong></div>
+    <div class="field compare-metric-field pdf-hide">
+      <label for="compareMetric">Compare</label>
+      <select id="compareMetric" [(ngModel)]="compareMetricKey" (ngModelChange)="onCompareMetricChange()">
+        @for (m of chartMetrics; track m.key) {
+          <option [ngValue]="m.key">{{ m.label }}{{ m.unit ? ' (' + m.unit + ')' : '' }}</option>
+        }
+      </select>
+    </div>
+  </div>
+
+  <div class="chart-container compare-chart"><canvas #compareChart></canvas></div>
+
+  @if (sortedModules.length === 0) {
+    <div class="empty-state">No module data for this period.</div>
+  } @else {
+    <div class="table-scroll comparison-table-scroll">
+      <table class="data-table comparison-table">
+        <thead>
+          <tr>
+            <th class="sortable" (click)="sortBy('module')">
+              Module
+              <span class="sort-icon" [class.active]="sortKey === 'module'">{{ sortKey === 'module' && sortDesc ? '▼' : '▲' }}</span>
+            </th>
+            @for (m of comparisonMetrics; track m.key) {
+              <th class="sortable num" (click)="sortBy(m.key)" [class.selected]="m.key === compareMetricKey">
+                {{ m.label }}@if (m.unit) {<span class="th-unit"> {{ m.unit }}</span>}
+                <span class="sort-icon" [class.active]="sortKey === m.key">{{ sortKey === m.key && !sortDesc ? '▲' : '▼' }}</span>
+              </th>
+            }
+          </tr>
+        </thead>
+        <tbody>
+          @for (row of sortedModules; track row.module_id) {
+            <tr [class.highlight-row]="row.module_id === highlightModuleId">
+              <td class="module-cell" [title]="row.serial_number || ''">{{ row.label }}</td>
+              @for (m of comparisonMetrics; track m.key) {
+                <td class="num" [style.background]="shade(row, m)" [class.worst]="isWorst(row, m)">
+                  {{ row[m.key] === null ? '—' : ($any(row[m.key]) | number: '1.' + m.decimals + '-' + m.decimals) }}
+                </td>
+              }
+            </tr>
+          }
+        </tbody>
+        <tfoot>
+          <tr>
+            <td class="module-cell">Pack</td>
+            @for (m of comparisonMetrics; track m.key) {
+              <td class="num" [title]="m.pack === 'avg' ? 'Average of modules' : m.pack === 'sum' ? 'Total across modules' : (m.pack === 'min' ? 'Lowest' : 'Highest') + ' module value'">
+                {{ stats[m.key] ? ($any(stats[m.key]!.pack) | number: '1.' + m.decimals + '-' + m.decimals) : '—' }}
+              </td>
+            }
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+  }
+</section>
+</div>

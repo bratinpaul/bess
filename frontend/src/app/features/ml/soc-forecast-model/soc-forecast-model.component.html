@@ -1,0 +1,357 @@
+<div class="page-header">
+  <div>
+    <h2>SOC Forecast Model</h2>
+    <p class="subtitle">
+      Build the SOC trajectory forecaster: coulomb-counting physics on the planned dispatch, corrected by LightGBM quantile
+      models (P10 / P50 / P90). View trajectories on <a routerLink="/ml/soc-forecast">SOC Trajectory</a>.
+    </p>
+  </div>
+</div>
+
+@if (optionsError) {
+  <div class="card empty-state error">{{ optionsError }}</div>
+}
+
+@if (options) {
+  <div class="train-grid">
+    <section class="card panel">
+      <h3 class="panel-title">Data</h3>
+      <h4 class="group-head">EMS (plant SOC, setpoints, dispatch schedule)</h4>
+      <div class="unit-list">
+        @for (u of options.units; track u.ems_id) {
+          <label class="feature-group" [class.on]="emsIds.has(u.ems_id)" [class.dim]="!u.readings">
+            <input type="checkbox" [checked]="emsIds.has(u.ems_id)" [disabled]="!u.readings" (change)="toggleUnit(u)" />
+            <span class="fg-text">
+              <span class="fg-title">{{ unitLabel(u) }}</span>
+              <span class="fg-meta">
+                @if (u.readings) {
+                  {{ u.readings | number }} readings · {{ u.date_from }} → {{ u.date_to }} · {{ u.commands }} dispatch commands ·
+                  rated {{ num(u.rated_energy_mwh, 2) }} MWh
+                } @else {
+                  no SOC readings
+                }
+              </span>
+            </span>
+          </label>
+        }
+      </div>
+      <div class="form-grid three">
+        <div class="field">
+          <label for="from">From</label>
+          <input id="from" type="date" [(ngModel)]="dateFrom" />
+        </div>
+        <div class="field">
+          <label for="to">To</label>
+          <input id="to" type="date" [(ngModel)]="dateTo" />
+        </div>
+        <div class="field">
+          <label for="h">Horizon (hours)</label>
+          <input id="h" type="number" min="1" max="24" step="1" [(ngModel)]="horizon" />
+        </div>
+      </div>
+
+      <h4 class="group-head">SOC limits</h4>
+      <div class="model-switch">
+        <button type="button" class="model-option" [class.on]="limitsMode === 'learned'" (click)="limitsMode = 'learned'">Learned per EMS</button>
+        <button type="button" class="model-option" [class.on]="limitsMode === 'manual'" (click)="limitsMode = 'manual'">Same for all</button>
+      </div>
+      @if (limitsMode === 'manual') {
+        <div class="param-grid">
+          <div class="field">
+            <label for="smin">SOC min (%)</label>
+            <input id="smin" type="number" min="0" max="100" step="1" [(ngModel)]="socMin" />
+          </div>
+          <div class="field">
+            <label for="smax">SOC max (%)</label>
+            <input id="smax" type="number" min="0" max="100" step="1" [(ngModel)]="socMax" />
+          </div>
+        </div>
+      } @else {
+        <p class="param-help">Each EMS's 0.5 / 99.5 % SOC percentiles in its training data — the window it actually operates in.</p>
+      }
+
+      <h4 class="group-head">Inputs</h4>
+      <p class="param-help">
+        <strong>Physics:</strong> SOC % per kWh of setpoint, fitted separately for charge and discharge per EMS (their ratio is the
+        effective round trip), plus idle drift and the SOC limits.<br />
+        <strong>Plans:</strong> the dispatch schedule (dispatch_event, typical day where no command) and the typical-day setpoint
+        profile.<br />
+        <strong>Residual model:</strong> SOC now and its rate of change, setpoint, mode, grid service, AGC, aux &amp; HVAC load,
+        target SOC, physics SOC, planned charge / discharge energy, time of day, EMS.
+      </p>
+    </section>
+
+    <section class="card panel">
+      <div class="panel-subhead" style="margin-top: 0">
+        <h3 class="panel-title" style="margin: 0">Methods &amp; backtest</h3>
+        <button type="button" class="link-btn" (click)="resetGbm()">Defaults</button>
+      </div>
+      <div class="model-list">
+        @for (m of methods; track m) {
+          <div class="model-row on">
+            <span class="model-check">
+              <span class="swatch line" [style.background]="colors[m]"></span>
+              <span><strong>{{ labels[m] }}</strong>
+                <span class="fam">
+                  @switch (m) {
+                    @case ('hold') { naïve reference: SOC stays put }
+                    @case ('physics_typical') { coulomb counting on the typical day }
+                    @case ('physics_scheduled') { coulomb counting on the dispatch schedule }
+                    @case ('hybrid_typical') { physics + LightGBM residual quantiles }
+                    @case ('hybrid_scheduled') { physics + LightGBM residual quantiles }
+                  }
+                </span>
+              </span>
+            </span>
+          </div>
+        }
+      </div>
+      <button type="button" class="link-btn" (click)="showGbm = !showGbm">{{ showGbm ? 'Hide' : 'LightGBM parameters' }}</button>
+      @if (showGbm) {
+        <div class="param-grid">
+          @for (p of options.gbm_params; track p.name) {
+            <div class="field">
+              <label [for]="'g' + p.name">{{ p.label }}</label>
+              <input [id]="'g' + p.name" type="number" [(ngModel)]="gbm[p.name]" [min]="p.min" [max]="p.max" [step]="p.step" />
+            </div>
+          }
+        </div>
+      }
+
+      <div class="param-grid">
+        <div class="field">
+          <label for="tp">Test share of each EMS (%)</label>
+          <input id="tp" type="number" min="10" max="50" step="5" [(ngModel)]="testPct" />
+        </div>
+        <div class="field">
+          <label for="os">Backtest origin every (min)</label>
+          <input id="os" type="number" min="5" max="720" step="5" [(ngModel)]="originStep" />
+        </div>
+        <div class="field">
+          <label for="ts">Training origin every (min)</label>
+          <input id="ts" type="number" min="5" max="720" step="5" [(ngModel)]="trainStep" />
+        </div>
+        <div class="field" title="Use every n-th 5-min step of the horizon in the training rows (1 = all, slower)">
+          <label for="ths">Training step thinning</label>
+          <input id="ths" type="number" min="1" max="12" step="1" [(ngModel)]="trainHorizonStep" />
+        </div>
+        <div class="field">
+          <label for="name">Run name</label>
+          <input id="name" type="text" [(ngModel)]="runName" placeholder="optional" maxlength="120" />
+        </div>
+        <div class="field check-field">
+          <label><input data-perm="ml.model:approve" type="checkbox" [(ngModel)]="makeDefault" /> Make it the viewer's default</label>
+        </div>
+      </div>
+      <p class="param-help">The schedule methods assume the dispatch commands were known at the origin (a day-ahead schedule);
+        the typical-day methods need no schedule — the gap between them is what a schedule is worth.</p>
+
+      @if (trainError) {
+        <div class="form-error">{{ trainError }}</div>
+      }
+      <div class="form-actions">
+        @if (problem) {
+          <span class="problem">{{ problem }}</span>
+        }
+        <button type="button" class="btn btn-primary train-btn" [disabled]="!!problem || training" (click)="train()">
+          @if (training) {
+            <span class="spinner" aria-hidden="true"></span> Building… {{ elapsed }} s
+          } @else {
+            Build &amp; backtest
+          }
+        </button>
+      </div>
+    </section>
+  </div>
+}
+
+@if (run; as r) {
+  <section class="card run-card" [class.refreshing]="runLoading">
+    <div class="run-head">
+      <div>
+        <h3>
+          Run #{{ r.run_id }}{{ r.run_name ? ' · ' + r.run_name : '' }}
+          <span class="status-chip" [attr.data-status]="r.status">{{ r.status }}</span>
+          @if (r.is_default) {
+            <span class="status-chip" data-status="ACTIVE">Viewer default</span>
+          }
+        </h3>
+        <p class="muted small">
+          {{ r.ems_ids.length }} EMS ({{ r.ems_ids.map(shortUnit, this).join(', ') }}) · {{ window(r) }} · {{ r.horizon_h }} h horizon ·
+          {{ r.n_train_rows | number }} training rows · {{ r.n_test_origins }} backtest origins (every {{ r.origin_step_min }} min) ·
+          {{ duration(r.duration_ms) }}
+        </p>
+      </div>
+      <div class="run-actions">
+        @if (r.status === 'COMPLETED' && !r.is_default) {
+          <button data-perm="ml.model:approve" type="button" class="btn btn-primary" (click)="makeDefaultRun(r)">Make viewer default</button>
+        }
+        @if (r.status === 'COMPLETED') {
+          <a class="btn btn-secondary" routerLink="/ml/soc-forecast" [queryParams]="{ model: r.run_id }">Open in SOC Trajectory</a>
+        }
+        <button type="button" class="btn btn-secondary" (click)="reuse(r)">Train a variant</button>
+      </div>
+    </div>
+
+    @if (r.error_message) {
+      <div class="form-error">{{ r.error_message }}</div>
+    }
+    @for (w of r.warnings; track w) {
+      <div class="warn-line">{{ w }}</div>
+    }
+
+    @if (r.status === 'COMPLETED' && r.metrics && r.results; as res) {
+      <h4 class="section-title">Backtest scores · test period · SOC points</h4>
+      <div class="table-scroll">
+        <table class="data-table compare-table score-table">
+          <thead>
+            <tr>
+              <th>Method</th>
+              @for (c of cols; track c.key) {
+                <th class="num" [title]="c.help">{{ c.label }}</th>
+              }
+            </tr>
+          </thead>
+          <tbody>
+            @for (k of methodKeys; track k) {
+              <tr>
+                <td class="nowrap"><span class="swatch line" [style.background]="colors[k]"></span> {{ labels[k] }}
+                  @if (r.best_method === k) { <span class="best-chip">best MAE</span> }</td>
+                @for (c of cols; track c.key) {
+                  <td class="num" [class.best]="isBest(k, c)">{{ cell(k, c) }}</td>
+                }
+              </tr>
+            }
+          </tbody>
+        </table>
+      </div>
+      <p class="muted small">Drawdown err: how far off the lowest SOC over the horizon is (what limits a dispatch). Breach %: share
+        of origins whose actual lowest SOC fell below the P10 lowest SOC — the worst case the optimizer plans against was too
+        optimistic. Stored in battery_ml.soc_forecast_score.</p>
+
+      <div class="chart-grid">
+        <div class="chart-box wide">
+          <h4>Error by hours ahead</h4>
+          <p class="muted small">MAE of P50 (log scale). Solid = schedule, dashed = typical day; blue = physics, orange = hybrid.</p>
+          @if (stepChart) {
+            <app-chart-canvas [config]="stepChart" [height]="280" />
+          }
+        </div>
+        <div class="chart-box wide">
+          <h4>Fitted physics per EMS</h4>
+          <table class="data-table compare-table">
+            <thead>
+              <tr>
+                <th>EMS</th>
+                <th class="num">Charge %/MWh</th>
+                <th class="num">Discharge %/MWh</th>
+                <th class="num" title="kWh of setpoint to go 0 → 100 % charging">Capacity · charge</th>
+                <th class="num" title="kWh of setpoint delivered 100 → 0 % discharging">Capacity · discharge</th>
+                <th class="num" title="discharge capacity ÷ charge capacity">Round trip</th>
+                <th class="num">SOC min</th>
+                <th class="num">SOC max</th>
+                <th class="num">Schedule coverage (test)</th>
+                <th>Test period</th>
+              </tr>
+            </thead>
+            <tbody>
+              @for (x of physicsRows; track x.ems) {
+                <tr>
+                  <td>{{ shortUnit(x.ems) }}</td>
+                  <td class="num">{{ num(x.p.c_chg * 1000, 2) }}</td>
+                  <td class="num">{{ num(x.p.c_dis * 1000, 2) }}</td>
+                  <td class="num">{{ x.p.cap_chg_kwh | number: '1.0-0' }} kWh</td>
+                  <td class="num">{{ x.p.cap_dis_kwh | number: '1.0-0' }} kWh</td>
+                  <td class="num">{{ num(x.p.round_trip * 100, 1) }} %</td>
+                  <td class="num">{{ num(x.p.soc_min, 1) }}</td>
+                  <td class="num">{{ num(x.p.soc_max, 1) }}</td>
+                  <td class="num">{{ x.cov === null ? '—' : num(x.cov * 100, 0) + ' %' }}</td>
+                  <td class="nowrap small">{{ plantTime(x.split?.test_from) }} → {{ plantTime(x.split?.to) }}</td>
+                </tr>
+              }
+            </tbody>
+          </table>
+          <p class="muted small">Fitted from SOC change per kWh of setpoint (median, away from the limits). Compare the capacities
+            with the rated energy: a large gap means the master data's rating is off.</p>
+        </div>
+        <div class="chart-box">
+          <div class="chart-head">
+            <h4>Residual model inputs</h4>
+            <div class="seg">
+              <button type="button" [class.on]="importanceSource === 'scheduled'" (click)="importanceSource = 'scheduled'; buildImportance()">Schedule</button>
+              <button type="button" [class.on]="importanceSource === 'typical'" (click)="importanceSource = 'typical'; buildImportance()">Typical day</button>
+            </div>
+          </div>
+          <p class="muted small">Share of the P50 residual model's split gain.</p>
+          @if (importanceChart) {
+            <app-chart-canvas [config]="importanceChart" [height]="importanceHeight" />
+          }
+        </div>
+      </div>
+    }
+  </section>
+}
+
+<div class="card history-card">
+  <div class="history-head">
+    <div>
+      <h3>Runs</h3>
+      <p class="muted small">battery_ml.soc_forecast_run · click a run to open it</p>
+    </div>
+  </div>
+  @if (runsLoading && !runs.length) {
+    <div class="empty-state">Loading…</div>
+  } @else if (!runs.length) {
+    <div class="empty-state">No runs yet — build the model above.</div>
+  } @else {
+    <div class="table-scroll">
+      <table class="data-table runs-table">
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>Name</th>
+            <th>EMS</th>
+            <th class="num">Horizon</th>
+            <th>Best</th>
+            <th class="num">Best MAE</th>
+            <th class="num">Hold MAE</th>
+            <th>Status</th>
+            <th class="num">Time</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          @for (x of runs; track x.run_id) {
+            <tr (click)="openRun(x.run_id)" [class.selected]="run?.run_id === x.run_id">
+              <td class="mono">{{ x.run_id }}</td>
+              <td>
+                {{ x.run_name || '—' }}
+                @if (x.is_default) {
+                  <span class="status-chip" data-status="ACTIVE">default</span>
+                }
+              </td>
+              <td class="small">{{ x.ems_ids.map(shortUnit, this).join(', ') }}</td>
+              <td class="num">{{ x.horizon_h }} h</td>
+              <td>{{ x.best_method ? labels[x.best_method] : '—' }}</td>
+              <td class="num"><strong>{{ num(x.best_method ? x.metrics?.[x.best_method]?.mae : null) }}</strong></td>
+              <td class="num">{{ num(x.metrics?.['hold']?.mae) }}</td>
+              <td>
+                <span class="status-chip" [attr.data-status]="x.status">{{ x.status }}</span>
+                @if (x.error_message) {
+                  <div class="problem small">{{ x.error_message }}</div>
+                }
+              </td>
+              <td class="num">{{ duration(x.duration_ms) }}</td>
+              <td class="nowrap">
+                @if (x.status === 'COMPLETED' && !x.is_default) {
+                  <button data-perm="ml.model:approve" type="button" class="link-btn" (click)="makeDefaultRun(x, $event)">Default</button> ·
+                }
+                <button type="button" class="link-btn" (click)="deleteRun(x, $event)">Delete</button>
+              </td>
+            </tr>
+          }
+        </tbody>
+      </table>
+    </div>
+  }
+</div>

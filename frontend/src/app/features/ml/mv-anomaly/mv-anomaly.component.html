@@ -1,0 +1,269 @@
+<div class="page-header">
+  <div>
+    <h2>Multivariate Anomaly</h2>
+    <p class="subtitle">
+      Intervals where the BMS / PCS / HVAC / EMS signals together don't look like normal operation - with the signals that
+      drove each flag, and whether a protection alarm explains it. Advisory: it complements the threshold alarms, it does not
+      replace them.
+    </p>
+  </div>
+  <a class="link training-link" routerLink="/ml/mv-anomaly-model">Open Multivariate Anomaly Model →</a>
+</div>
+
+@if (error) {
+  <div class="card empty-state error">{{ error }}</div>
+}
+
+@if (options) {
+  <div class="card picker-card mv-picker">
+    <div class="field">
+      <label for="sys">Battery system</label>
+      <select id="sys" [ngModel]="systemId" (ngModelChange)="selectSystem($event)">
+        @for (s of options.systems; track s.battery_system_id) {
+          <option [ngValue]="s.battery_system_id">{{ s.system_name }}</option>
+        }
+      </select>
+    </div>
+    <div class="field mv-run-field">
+      <label for="run">Run</label>
+      <select id="run" [ngModel]="runId" (ngModelChange)="selectRun($event)" [disabled]="!runs.length">
+        @for (r of runs; track r.run_id) {
+          <option [ngValue]="r.run_id">{{ runLabel(r) }}</option>
+        }
+      </select>
+    </div>
+    <div class="mv-live">
+      <label for="hours" class="muted small">Score the newest</label>
+      <select id="hours" class="filter-select" [(ngModel)]="liveHours">
+        <option [ngValue]="6">6 h</option>
+        <option [ngValue]="24">24 h</option>
+        <option [ngValue]="72">3 days</option>
+        <option [ngValue]="168">7 days</option>
+      </select>
+      <button data-perm="ml.run:execute" type="button" class="btn btn-primary" [disabled]="liveRunning || !runs.length" (click)="scoreLatest()"
+        title="The system's live model scores its newest telemetry (the same micro-batch a scheduled task can run)">
+        {{ liveRunning ? 'Scoring…' : 'Score latest' }}
+      </button>
+    </div>
+  </div>
+  @if (liveMessage) {
+    <div class="preview mv-msg">{{ liveMessage }}</div>
+  }
+
+  @if (!runs.length && !loading) {
+    <div class="card">
+      <div class="empty-state">No completed runs for this system. <a routerLink="/ml/mv-anomaly-model">Build a model</a>.</div>
+    </div>
+  }
+}
+
+@if (loading) {
+  <div class="card"><div class="empty-state">Loading run…</div></div>
+} @else {
+@if (run; as r) {
+  @if (r.warnings?.length) {
+    @for (w of r.warnings; track w) {
+      <div class="warn-line">{{ w }}</div>
+    }
+  }
+
+  <!-- headline -->
+  <div class="metric-grid mv-tiles">
+    <div class="metric-tile">
+      <span class="metric-label">Intervals scored</span>
+      <span class="metric-value">{{ r.summary?.['rows'] | number }}</span>
+      <span class="metric-note">{{ spanFrom | date: 'dd MMM yyyy' }} → {{ spanTo | date: 'dd MMM yyyy' }}</span>
+    </div>
+    <div class="metric-tile">
+      <span class="metric-label">Flagged intervals</span>
+      <span class="metric-value">{{ r.summary?.['flagged_intervals'] | number }}</span>
+      <span class="metric-note">{{ r.summary?.['model_flag_intervals'] | number }} by the model · {{ (r.summary?.['rule_rows'] ?? 0) | number }} sensor rule</span>
+    </div>
+    <div class="metric-tile">
+      <span class="metric-label">Episodes</span>
+      <span class="metric-value">{{ episodes.length }}</span>
+      <span class="metric-note">{{ pct(explainedShare) }} of model episodes overlap an alarm</span>
+    </div>
+    <div class="metric-tile">
+      <span class="metric-label">Primary model</span>
+      <span class="metric-value small-value"><span class="swatch" [style.background]="colors[primary]"></span> {{ modelLabel(primary) }}</span>
+      <span class="metric-note">
+        limit {{ (limits[primary] ?? 1) | number: '1.2-2' }} ·
+        {{ modelParams?.regime_strategy === 'separate' ? 'one model per regime' : 'regime as feature' }} ·
+        flag after {{ modelParams?.debounce }} intervals
+      </span>
+    </div>
+    @if (metrics?.[primary]; as m) {
+      <div class="metric-tile">
+        <span class="metric-label">Evaluation vs alarms</span>
+        <span class="metric-value small-value">F1 {{ m.f1 === null ? '—' : (m.f1 | number: '1.2-2') }} · AUC {{ m.auc === null ? '—' : (m.auc | number: '1.2-2') }}</span>
+        <span class="metric-note">precision {{ pct(m.precision) }} · recall {{ pct(m.recall) }} · alarm events caught {{ pct(m.event_recall) }}</span>
+      </div>
+    }
+  </div>
+
+  <!-- timeline -->
+  <div class="card chart-card mv-card">
+    <div class="chart-head">
+      <h3>Anomaly score over time</h3>
+      <div class="mv-legend-note">
+        <span class="mv-key alarm"></span> alarm active
+        @if (models.length > 1) {
+          <button type="button" class="link-btn" (click)="toggleOthers()">{{ showOthers ? 'Hide' : 'Show' }} other models</button>
+        }
+      </div>
+    </div>
+    @if (timelineConfig) {
+      <app-chart-canvas [config]="timelineConfig" [height]="320" />
+    } @else {
+      <div class="empty-state">No scores in this run.</div>
+    }
+  </div>
+
+  <!-- model comparison -->
+    @if (metrics) {
+      <div class="card mv-card">
+        <h3>Model comparison <span class="muted small">evaluation window · from {{ r.eval_from | date: 'dd MMM HH:mm' }}</span></h3>
+        <div class="table-scroll">
+          <table class="data-table compare-table">
+            <thead>
+              <tr>
+                <th>Model</th>
+                <th class="num">Limit</th>
+                <th class="num">AUC</th>
+                <th class="num">Precision</th>
+                <th class="num">Recall</th>
+                <th class="num">F1</th>
+                <th class="num">Alarm events caught</th>
+                <th class="num">Episodes explained</th>
+                <th class="num">Flag rate</th>
+              </tr>
+            </thead>
+            <tbody>
+              @for (row of modelRows; track row.key) {
+                <tr [class.mv-primary]="row.key === primary">
+                  <td class="nowrap"><span class="swatch" [style.background]="colors[row.key]"></span> {{ row.label }}{{ row.key === primary ? ' · primary' : '' }}</td>
+                  <td class="num">{{ row.limit | number: '1.2-3' }}</td>
+                  <td class="num">{{ row.m?.auc === null || row.m?.auc === undefined ? '—' : (row.m!.auc | number: '1.2-2') }}</td>
+                  <td class="num">{{ pct(row.m?.precision) }}</td>
+                  <td class="num">{{ pct(row.m?.recall) }}</td>
+                  <td class="num">{{ row.m?.f1 === null || row.m?.f1 === undefined ? '—' : (row.m!.f1 | number: '1.2-2') }}</td>
+                  <td class="num">{{ pct(row.m?.event_recall) }} <span class="muted small">of {{ row.m?.alarm_events }}</span></td>
+                  <td class="num">{{ pct(row.m?.episode_precision) }} <span class="muted small">of {{ row.m?.episodes }}</span></td>
+                  <td class="num">{{ pct(row.m?.flag_rate, 1) }}</td>
+                </tr>
+              }
+            </tbody>
+          </table>
+        </div>
+        <p class="param-help">Labels are alarm_event intervals of this system. Alarms are threshold events, so a detector can
+          be right to flag a combination no alarm covers - check the "new" episodes below.</p>
+      </div>
+    }
+
+  <div class="mv-two">
+    <!-- what drives the flags -->
+    <div class="card mv-card">
+      <h3>What drives the flags <span class="muted small">{{ contributors?.flagged_intervals | number }} model-flagged intervals · {{ modelLabel(primary) }}</span></h3>
+      @if (contributorConfig) {
+        <app-chart-canvas [config]="contributorConfig" [height]="300" />
+      } @else {
+        <div class="empty-state">No model flags in this run.</div>
+      }
+      @if (contributors?.rules?.length) {
+        <h4 class="group-head">Sensor rules</h4>
+        @for (rf of contributors!.rules; track rf.flag) {
+          <div class="mv-kv"><span>{{ ruleLabel(rf.flag) }}</span><span class="mono">{{ rf.intervals | number }} intervals</span></div>
+        }
+      }
+    </div>
+  </div>
+
+  <!-- episodes -->
+  <div class="card mv-card">
+    <div class="chart-head">
+      <h3>Episodes <span class="muted small">{{ filteredEpisodes.length }} of {{ episodes.length }}</span></h3>
+      <div class="seg">
+        <button type="button" [class.on]="episodeFilter === 'all'" (click)="episodeFilter = 'all'">All</button>
+        <button type="button" [class.on]="episodeFilter === 'new'" (click)="episodeFilter = 'new'">New (no alarm)</button>
+        <button type="button" [class.on]="episodeFilter === 'explained'" (click)="episodeFilter = 'explained'">With alarm</button>
+        <button type="button" [class.on]="episodeFilter === 'rules'" (click)="episodeFilter = 'rules'">Sensor rule</button>
+      </div>
+    </div>
+    @if (!filteredEpisodes.length) {
+      <div class="empty-state">No episodes.</div>
+    } @else {
+      <div class="table-scroll mv-episodes">
+        <table class="data-table runs-table">
+          <thead>
+            <tr>
+              <th>Start</th>
+              <th class="num">Duration</th>
+              <th class="num">Peak</th>
+              <th>Regime</th>
+              <th>Top contributors</th>
+              <th>Alarms / rules</th>
+            </tr>
+          </thead>
+          <tbody>
+            @for (e of filteredEpisodes; track e.start) {
+              <tr (click)="openEpisode(e)" [class.selected]="selectedEpisode === e">
+                <td class="nowrap mono">{{ e.start | date: 'dd MMM HH:mm' }}</td>
+                <td class="num">{{ duration(e) }}</td>
+                <td class="num">{{ e.peak_score === null ? '—' : (e.peak_score | number: '1.2-2') }}</td>
+                <td>{{ e.regimes.join(', ') }}</td>
+                <td>
+                  @for (c of e.top_contributors.slice(0, 3); track c.feature) {
+                    <span class="mv-chip">{{ c.label }} <span class="muted">{{ pct(c.share) }}</span></span>
+                  }
+                </td>
+                <td>
+                  @if (e.explained) {
+                    @for (a of e.alarms.slice(0, 3); track a.start + a.alarm_code) {
+                      <span class="mv-chip alarm">{{ a.alarm_code }} · {{ a.source }}</span>
+                    }
+                    @if (e.alarms.length > 3) {
+                      <span class="muted small">+{{ e.alarms.length - 3 }}</span>
+                    }
+                  } @else if (e.model_flag) {
+                    <span class="mv-chip new">New - no alarm</span>
+                  }
+                  @for (f of e.rule_flags; track f) {
+                    <span class="mv-chip rule">{{ ruleLabel(f) }}</span>
+                  }
+                </td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      </div>
+    }
+  </div>
+
+  <!-- drill-down -->
+  @if (selectedEpisode; as e) {
+    <div class="card mv-card">
+      <div class="chart-head">
+        <h3>Episode {{ e.start | date: 'dd MMM HH:mm' }} – {{ e.end | date: 'HH:mm' }} <span class="muted small">top signals, 2 h either side (episode shaded)</span></h3>
+        <button type="button" class="link-btn" (click)="selectedEpisode = null">Close</button>
+      </div>
+      @if (signalsLoading) {
+        <div class="empty-state">Loading signals…</div>
+      } @else if (signalsError) {
+        <div class="empty-state error">{{ signalsError }}</div>
+      } @else if (!signalCharts.length) {
+        <div class="empty-state">This episode comes from sensor rules only: {{ e.rule_flags.map(ruleLabel).join(', ') }}.</div>
+      } @else {
+        <div class="mv-signals">
+          @for (s of signalCharts; track s.label) {
+            <div class="chart-box">
+              <h4>{{ s.label }}</h4>
+              <app-chart-canvas [config]="s.config" [height]="200" />
+            </div>
+          }
+        </div>
+      }
+    </div>
+  }
+}
+}

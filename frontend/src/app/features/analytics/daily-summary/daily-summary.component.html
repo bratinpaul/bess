@@ -1,0 +1,162 @@
+<div class="page-header">
+  <div>
+    <h2>Daily Battery Summary</h2>
+    <p class="subtitle">Daily KPIs and trend charts computed from BMS telemetry</p>
+  </div>
+  <app-pdf-button [disabled]="!canExport" [exporting]="report.exporting" [progress]="report.progress" (download)="downloadPdf()" />
+</div>
+@if (report.error) {
+  <div class="form-error report-error">{{ report.error }}</div>
+}
+
+<!-- everything inside #report goes into the PDF -->
+<div #reportRoot class="report" [class.pdf-mode]="report.exporting">
+<app-report-header title="Daily Battery Summary" subtitle="Daily KPIs and trend charts computed from BMS telemetry"
+  [fields]="reportFields" [generatedAt]="report.generatedAt" />
+
+<div class="card analytics-filters-card">
+  <div class="toolbar telemetry-filters">
+    <div class="field">
+      <label for="analyticsSystem">System</label>
+      <select id="analyticsSystem" [(ngModel)]="selectedSystemId" (ngModelChange)="onSystemChange()">
+        @for (system of systems; track system.battery_system_id) {
+          <option [ngValue]="system.battery_system_id">{{ system.system_name }}</option>
+        }
+      </select>
+    </div>
+    <div class="field">
+      <label for="analyticsDate">Date</label>
+      <input
+        id="analyticsDate"
+        type="date"
+        [(ngModel)]="selectedDate"
+        [min]="minAvailableDate"
+        [max]="maxAvailableDate"
+        (ngModelChange)="onDateChange()" />
+    </div>
+  </div>
+</div>
+
+@if (error) {
+  <div class="card">
+    <div class="empty-state error">{{ error }}</div>
+  </div>
+} @else {
+  <div class="card analytics-metrics-card">
+    @if (loadingSummary) {
+      <div class="empty-state">Loading summary…</div>
+    } @else {
+      <div class="metric-grid">
+        @for (card of metricCards; track card.label) {
+          <div class="metric-card">
+            <span class="metric-icon">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+                @switch (card.icon) {
+                  @case ('battery') {
+                    <rect x="2.5" y="7" width="16" height="10" rx="2" stroke="currentColor" stroke-width="1.6" />
+                    <path d="M20.5 10.5v3" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
+                  }
+                  @case ('voltage') {
+                    <path d="M13 2 4 14h6l-1 8 9-12h-6l1-8Z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" />
+                  }
+                  @case ('charge') {
+                    <circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="1.6" />
+                    <path d="M12 16V8M8.5 11.5 12 8l3.5 3.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
+                  }
+                  @case ('discharge') {
+                    <circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="1.6" />
+                    <path d="M12 8v8M8.5 12.5 12 16l3.5-3.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
+                  }
+                  @case ('temperature') {
+                    <path d="M12 14.5V5a2 2 0 1 0-4 0v9.5a4 4 0 1 0 4 0Z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" />
+                  }
+                  @case ('imbalance') {
+                    <path d="M12 4 21 20H3L12 4Z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" />
+                  }
+                  @case ('efficiency') {
+                    <path d="M4 12a8 8 0 0 1 14-5.3M20 12a8 8 0 0 1-14 5.3" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
+                    <path d="M18 3v4h-4M6 21v-4h4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
+                  }
+                  @case ('cycles') {
+                    <path d="M20 11A8 8 0 1 0 18.5 16" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
+                    <path d="M20 5v6h-6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
+                  }
+                  @case ('alarm') {
+                    <path d="M6 9a6 6 0 0 1 12 0v5l1.5 3h-15L6 14V9Z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" />
+                    <path d="M10 20a2 2 0 0 0 4 0" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
+                  }
+                  @case ('health') {
+                    <path d="M12 20s-7-4.4-9.3-9A5 5 0 0 1 12 6a5 5 0 0 1 9.3 5C19 15.6 12 20 12 20Z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" />
+                  }
+                }
+              </svg>
+            </span>
+            <span class="metric-body">
+              <span class="metric-label">{{ card.label }}</span>
+              <span class="metric-value">
+                @if (card.value === null || card.value === undefined) {
+                  —
+                } @else {
+                  {{ card.value | number: '1.0-' + card.decimals }}
+                  <span class="metric-unit">{{ card.unit }}</span>
+                }
+              </span>
+            </span>
+          </div>
+        }
+      </div>
+    }
+  </div>
+
+  <div class="analytics-charts-grid">
+    <div class="card chart-card">
+      <h3>SOC vs Time</h3>
+      <div class="chart-container"><canvas #socChart></canvas></div>
+    </div>
+    <div class="card chart-card">
+      <h3>Pack Voltage vs Time</h3>
+      <div class="chart-container"><canvas #voltageChart></canvas></div>
+    </div>
+    <div class="card chart-card">
+      <h3>Pack Current vs Time</h3>
+      <div class="chart-container"><canvas #currentChart></canvas></div>
+    </div>
+    <div class="card chart-card">
+      <h3>Pack Temperature vs Time</h3>
+      <div class="chart-container"><canvas #tempChart></canvas></div>
+    </div>
+    <div class="card chart-card">
+      <h3>Power vs Time</h3>
+      <div class="chart-container"><canvas #powerChart></canvas></div>
+    </div>
+    <div class="card chart-card">
+      <h3>C Rate vs Time</h3>
+      <div class="chart-container"><canvas #cRateChart></canvas></div>
+    </div>
+    <div class="card chart-card">
+      <h3>Cell Temp Min / Max / Avg vs Time</h3>
+      <div class="chart-container"><canvas #cellTempChart></canvas></div>
+    </div>
+    <div class="card chart-card">
+      <h3>Coolant Temperature vs Time</h3>
+      <div class="chart-container"><canvas #coolantChart></canvas></div>
+    </div>
+    <div class="card chart-card">
+      <h3>SOH Over Last 7 Days</h3>
+      <div class="chart-container"><canvas #sohChart></canvas></div>
+    </div>
+    <div class="card chart-card">
+      <h3>Daily Energy Throughput (kWh)</h3>
+      <div class="chart-container"><canvas #throughputChart></canvas></div>
+    </div>
+    <div class="card chart-card">
+      <h3>Daily Max Cell Temp vs Ambient (°C)</h3>
+      <div class="chart-container"><canvas #cellVsAmbientChart></canvas></div>
+    </div>
+  </div>
+
+  @if (loadingCharts) {
+    <div class="chart-loading-note">Loading charts…</div>
+  }
+}
+</div>

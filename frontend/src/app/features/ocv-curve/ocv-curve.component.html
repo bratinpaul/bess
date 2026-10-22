@@ -1,0 +1,145 @@
+<div class="page-header">
+  <div>
+    <h2>OCV Curve</h2>
+    <p class="subtitle">Per-cell open-circuit voltage vs state of charge by chemistry, direction (charge / discharge hysteresis or their mean)
+      and temperature — the lookup that turns a rested cell voltage into SOC</p>
+  </div>
+</div>
+
+<div class="card">
+  @if (options) {
+    <div class="cal-summary">
+      <div class="cal-stat">
+        <span class="cal-stat-value">{{ stats.curves }}</span>
+        <span class="cal-stat-label">Curves · {{ stats.points }} points</span>
+      </div>
+      <div class="cal-stat">
+        <span class="cal-stat-value">{{ stats.min?.toFixed(3) ?? '—' }} – {{ stats.max?.toFixed(3) ?? '—' }} V</span>
+        <span class="cal-stat-label">OCV range per cell</span>
+      </div>
+      <div class="cal-stat" [class.cal-stat-warn]="stats.nonMonotonic > 0">
+        <span class="cal-stat-value">{{ stats.nonMonotonic }}</span>
+        <span class="cal-stat-label">{{ stats.nonMonotonic ? 'Curves where OCV does not rise with SOC' : 'All curves rise with SOC' }}</span>
+      </div>
+    </div>
+
+    <div class="toolbar telemetry-filters ocv-filters">
+      <div class="field">
+        <label for="chem">Chemistry</label>
+        <select id="chem" [(ngModel)]="chemistry" (ngModelChange)="load()">
+          @for (c of options.chemistries; track c) {
+            <option [value]="c">{{ c }}</option>
+          }
+        </select>
+      </div>
+      <div class="chip-group">
+        <span class="chip-label">Direction</span>
+        @for (d of options.directions; track d) {
+          <button type="button" class="ocv-chip" [class.on]="directions.has(d)" (click)="toggleDir(d)">
+            <span class="dot" [style.background]="dirColors[d]"></span>{{ dirLabels[d] }}
+          </button>
+        }
+      </div>
+      <div class="chip-group">
+        <span class="chip-label">Temperature</span>
+        @for (t of temperatures; track t) {
+          <button type="button" class="ocv-chip" [class.on]="temps.has(t)" (click)="toggleTemp(t)">{{ t }} °C</button>
+        }
+      </div>
+    </div>
+  }
+
+  @if (loading) {
+    <div class="empty-state">Loading OCV curves…</div>
+  } @else if (error) {
+    <div class="empty-state error">{{ error }}</div>
+  } @else if (!curves.length) {
+    <div class="empty-state">No OCV curve for this chemistry.</div>
+  } @else {
+    <div class="ocv-charts">
+      <div>
+        <h4 class="chart-title">OCV vs SOC</h4>
+        @if (curveCfg) {
+          <app-chart-canvas [config]="curveCfg" [height]="320" />
+        } @else {
+          <div class="empty-state">Pick a direction and a temperature.</div>
+        }
+      </div>
+      <div>
+        <h4 class="chart-title">Hysteresis — charge minus discharge</h4>
+        @if (hystCfg) {
+          <app-chart-canvas [config]="hystCfg" [height]="320" />
+        } @else {
+          <div class="empty-state">Needs both a charge and a discharge curve.</div>
+        }
+      </div>
+    </div>
+    <p class="upload-note ocv-note">Colour = direction, line style = temperature. LFP's long flat plateau (only ~100 mV, 3.24 → 3.34 V, from 20 to 90 %
+      SOC) is why a rested-OCV reading pins SOC well only near the ends, and why coulomb counting carries the middle.</p>
+
+    <div class="table-bar">
+      <span class="table-bar-info">{{ tableRows.length }} points shown · Δ = rise from the previous SOC point on the same curve</span>
+    </div>
+    <app-telemetry-table [columns]="columns" [rows]="tableRows" [actions]="true"
+      (editRow)="openEdit($event)" (deleteRow)="confirmDelete($event)" />
+  }
+</div>
+
+<!-- edit -->
+@if (edit; as e) {
+  <div class="modal-backdrop" (click)="edit = null">
+    <div class="modal edit-modal" (click)="$event.stopPropagation()">
+      <h3>Edit OCV · {{ e.point.chemistry }} {{ dirLabels[e.point.direction] }} · {{ e.point.temp_c }} °C · {{ e.point.soc_pct }} % SOC</h3>
+      <p class="derived-note">Chemistry, direction, temperature and SOC identify the point and can't be changed.</p>
+      <div class="form-grid">
+        <div class="field">
+          <label>Previous point</label>
+          <input type="text" disabled [value]="e.prev ? e.prev.soc_pct + ' % → ' + e.prev.ocv_v.toFixed(4) + ' V' : '— (first point)'" />
+        </div>
+        <div class="field">
+          <label for="eOcv">OCV (V per cell)</label>
+          <input id="eOcv" type="number" step="0.001" min="0" max="6" [(ngModel)]="e.ocv" />
+        </div>
+        <div class="field">
+          <label>Next point</label>
+          <input type="text" disabled [value]="e.next ? e.next.soc_pct + ' % → ' + e.next.ocv_v.toFixed(4) + ' V' : '— (last point)'" />
+        </div>
+      </div>
+      @if (editWarning) {
+        <p class="derived-note warn-note">⚠ {{ editWarning }}</p>
+      }
+      @if (editError) {
+        <div class="form-error">{{ editError }}</div>
+      }
+      <div class="modal-actions">
+        @if (editProblem) {
+          <span class="problem-note">{{ editProblem }}</span>
+        }
+        <button class="btn btn-secondary" (click)="edit = null" [disabled]="saving">Cancel</button>
+        <button class="btn btn-primary" (click)="save()" [disabled]="saving || !!editProblem">{{ saving ? 'Saving…' : 'Save changes' }}</button>
+      </div>
+    </div>
+  </div>
+}
+
+<!-- delete -->
+@if (toDelete; as d) {
+  <div class="modal-backdrop" (click)="toDelete = null">
+    <div class="modal" (click)="$event.stopPropagation()">
+      <h3>Delete OCV point?</h3>
+      <p>
+        This permanently deletes the <strong>{{ d.chemistry }} {{ dirLabels[d.direction] }} {{ d.temp_c }} °C</strong> point at
+        <strong>{{ d.soc_pct }} % SOC</strong> ({{ d.ocv_v.toFixed(4) }} V). Lookups on this curve will interpolate across the gap. This cannot be undone.
+      </p>
+      @if (deleteError) {
+        <div class="form-error">{{ deleteError }}</div>
+      }
+      <div class="modal-actions">
+        <button class="btn btn-secondary" (click)="toDelete = null" [disabled]="deleting">{{ deleteError ? 'Close' : 'Cancel' }}</button>
+        @if (!deleteError) {
+          <button class="btn btn-danger-solid" (click)="deleteConfirmed()" [disabled]="deleting">{{ deleting ? 'Deleting…' : 'Delete' }}</button>
+        }
+      </div>
+    </div>
+  </div>
+}

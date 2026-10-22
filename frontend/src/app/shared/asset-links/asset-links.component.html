@@ -1,0 +1,49 @@
+<ng-template #icon let-key="key">
+  @switch (key) {
+    @case ('telemetry') {
+      <!-- pulse line -->
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <path d="M3 12h4l2.5-6 4 12 2.5-6H21" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
+      </svg>
+    }
+    @case ('summary') {
+      <!-- calendar with bars -->
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <rect x="3.5" y="5" width="17" height="15" rx="2" stroke="currentColor" stroke-width="1.7" />
+        <path d="M3.5 9.5h17M8 3v4M16 3v4M8.5 17v-3M12 17v-4.5M15.5 17v-2" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" />
+      </svg>
+    }
+    @default {
+      <!-- tree -->
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <rect x="9" y="3" width="6" height="5" rx="1.2" stroke="currentColor" stroke-width="1.7" />
+        <rect x="3" y="16" width="6" height="5" rx="1.2" stroke="currentColor" stroke-width="1.7" />
+        <rect x="15" y="16" width="6" height="5" rx="1.2" stroke="currentColor" stroke-width="1.7" />
+        <path d="M12 8v4M6 16v-2.5a1.5 1.5 0 0 1 1.5-1.5h9a1.5 1.5 0 0 1 1.5 1.5V16" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" />
+      </svg>
+    }
+  }
+</ng-template>
+
+@if (variant === 'pills') {
+  <nav class="quick-links" aria-label="Shortcuts">
+    @for (link of links; track link.key) {
+      <a class="quick-link" [attr.data-kind]="link.key" [routerLink]="link.route" [queryParams]="link.queryParams" [title]="link.title">
+        <span class="quick-link-icon"><ng-container *ngTemplateOutlet="icon; context: { key: link.key }"></ng-container></span>
+        <span class="quick-link-label">{{ link.label }}</span>
+        <svg class="quick-link-arrow" width="12" height="12" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <path d="m9 6 6 6-6 6" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" />
+        </svg>
+      </a>
+    }
+  </nav>
+} @else {
+  <span class="icon-links">
+    @for (link of links; track link.key) {
+      <a class="icon-link" [attr.data-kind]="link.key" [routerLink]="link.route" [queryParams]="link.queryParams"
+        [attr.aria-label]="link.title" [attr.data-tip]="link.label" (click)="$event.stopPropagation()">
+        <ng-container *ngTemplateOutlet="icon; context: { key: link.key }"></ng-container>
+      </a>
+    }
+  </span>
+}

@@ -1,0 +1,146 @@
+<div class="page-header">
+  <div>
+    <h2>Tenants</h2>
+    <p class="subtitle">Organisations that own or operate sites</p>
+  </div>
+  <a class="btn btn-primary" routerLink="/tenants/new">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+      <path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+    </svg>
+    Add Tenant
+  </a>
+</div>
+
+<div class="card">
+  @if (loading) {
+    <div class="empty-state">Loading tenants…</div>
+  } @else if (error) {
+    <div class="empty-state error">{{ error }}</div>
+  } @else if (tenants.length === 0) {
+    <div class="empty-state">No tenants yet. Click "Add Tenant" to create one.</div>
+  } @else {
+    <div class="toolbar">
+      <div class="search-box">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+          <circle cx="11" cy="11" r="7" stroke="currentColor" stroke-width="1.6" />
+          <path d="m20 20-3.5-3.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
+        </svg>
+        <input
+          type="text"
+          placeholder="Filter by name, type, city, country, email, phone or contact…"
+          [(ngModel)]="searchTerm"
+          (ngModelChange)="onFilterChange()" />
+      </div>
+      <select class="status-filter" [(ngModel)]="statusFilter" (ngModelChange)="onFilterChange()" aria-label="Filter by status">
+        <option value="">All statuses</option>
+        @for (s of statuses; track s) {
+          <option [value]="s">{{ s | titlecase }}</option>
+        }
+      </select>
+      <div class="result-count">{{ totalItems }} tenant{{ totalItems === 1 ? '' : 's' }}</div>
+    </div>
+
+    @if (totalItems === 0) {
+      <div class="empty-state">No tenants match the current filters.</div>
+    } @else {
+      <div class="table-scroll">
+        <table class="data-table">
+          <thead>
+            <tr>
+              @for (col of columns; track col.key) {
+                <th class="sortable" (click)="setSort(col.key)">
+                  {{ col.label }}
+                  <span class="sort-icon" [class.active]="sortColumn === col.key">
+                    {{ sortColumn === col.key && sortDirection === 'desc' ? '▼' : '▲' }}
+                  </span>
+                </th>
+              }
+              <th class="actions-col"></th>
+            </tr>
+          </thead>
+          <tbody>
+            @for (tenant of pagedTenants; track tenant.tenant_id) {
+              <tr (click)="view(tenant)">
+                <td>
+                  <div class="tenant-name">{{ tenant.name }}</div>
+                  @if (tenant.legal_name && tenant.legal_name !== tenant.name) {
+                    <div class="tenant-legal">{{ tenant.legal_name }}</div>
+                  }
+                </td>
+                <td>{{ tenant.tenant_type || '—' }}</td>
+                <td>{{ tenant.city || '—' }}</td>
+                <td>{{ tenant.country || '—' }}</td>
+                <td>{{ tenant.primary_contact_name || '—' }}</td>
+                <td><span class="status-badge tenant-status" [attr.data-status]="tenant.status">{{ tenant.status | titlecase }}</span></td>
+                <td>{{ tenant.contact_count }}</td>
+                <td>{{ tenant.site_count }}</td>
+                <td class="actions-col">
+                  <button class="btn btn-secondary btn-icon" title="Edit" (click)="edit(tenant, $event)">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+                      <path d="M4 20h4l10.5-10.5a2.1 2.1 0 0 0-3-3L5 17v3Z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" />
+                    </svg>
+                  </button>
+                  <button class="btn btn-danger btn-icon" title="Delete" (click)="confirmDelete(tenant, $event)">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+                      <path
+                        d="M5 7h14M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2m2 0-1 13a1 1 0 0 1-1 1H8a1 1 0 0 1-1-1L6 7"
+                        stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
+                    </svg>
+                  </button>
+                </td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      </div>
+
+      <div class="pagination">
+        <div class="page-size">
+          <label for="pageSize">Rows per page</label>
+          <select id="pageSize" [ngModel]="pageSize" (ngModelChange)="setPageSize($event)">
+            @for (size of pageSizeOptions; track size) {
+              <option [ngValue]="size">{{ size }}</option>
+            }
+          </select>
+        </div>
+        <div class="page-range">{{ rangeStart }}–{{ rangeEnd }} of {{ totalItems }}</div>
+        <div class="page-controls">
+          <button class="btn btn-secondary btn-icon" [disabled]="currentPage === 1" (click)="goToPage(currentPage - 1)" title="Previous page">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+              <path d="M15 6l-6 6 6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+            </svg>
+          </button>
+          <span class="page-indicator">Page {{ currentPage }} of {{ totalPages }}</span>
+          <button class="btn btn-secondary btn-icon" [disabled]="currentPage === totalPages" (click)="goToPage(currentPage + 1)" title="Next page">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+              <path d="M9 6l6 6-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+            </svg>
+          </button>
+        </div>
+      </div>
+    }
+  }
+</div>
+
+@if (tenantToDelete) {
+  <div class="modal-backdrop" (click)="cancelDelete()">
+    <div class="modal" (click)="$event.stopPropagation()">
+      <h3>Delete tenant?</h3>
+      <p>
+        This will permanently delete <strong>{{ tenantToDelete.name }}</strong>. This action cannot be undone.
+      </p>
+      @if (deleteImpact(tenantToDelete); as impact) {
+        <p class="delete-cascade-note">{{ impact }}</p>
+      }
+      @if (deleteError) {
+        <p class="form-error">{{ deleteError }}</p>
+      }
+      <div class="modal-actions">
+        <button class="btn btn-secondary" (click)="cancelDelete()" [disabled]="deleting">Cancel</button>
+        <button class="btn btn-danger-solid" (click)="deleteConfirmed()" [disabled]="deleting">
+          {{ deleting ? 'Deleting…' : 'Delete' }}
+        </button>
+      </div>
+    </div>
+  </div>
+}
