@@ -1,0 +1,62 @@
+date,source_sample_day,scenario,dispatch_scale,offline_from,offline_to,notes
+2026-08-01,2026-08-01,normal,1.0,,,
+2026-08-02,2026-08-07,normal,1.0,,,
+2026-08-03,2026-08-11,normal,1.0,,,
+2026-08-04,2026-08-27,normal,1.0,,,
+2026-08-05,2026-08-02,normal,1.0,,,
+2026-08-06,2026-08-28,normal,1.0,,,
+2026-08-07,2026-08-26,monsoon,0.35,,,"monsoon: cool, humid, compressed low prices, shallow cycling (35 %)"
+2026-08-08,2026-08-18,monsoon,0.35,,,"monsoon: cool, humid, compressed low prices, shallow cycling (35 %); moisture: DC insulation below 2100 kOhm for ~45 min"
+2026-08-09,2026-08-30,normal,1.0,,,
+2026-08-10,2026-08-12,normal,1.0,,,
+2026-08-11,2026-08-29,normal,1.0,,,
+2026-08-12,2026-08-22,normal,1.0,,,
+2026-08-13,2026-08-13,normal,1.0,,,
+2026-08-14,2026-08-06,monsoon,0.35,,,"monsoon: cool, humid, compressed low prices, shallow cycling (35 %)"
+2026-08-15,2026-08-24,normal,1.0,,,
+2026-08-16,2026-08-08,normal,1.0,,,
+2026-08-17,2026-08-23,normal,1.0,,,
+2026-08-18,2026-08-14,normal,1.0,,,
+2026-08-19,2026-08-21,maintenance,0.0,2026-08-19 07:00:00,2026-08-19 17:00:00,"planned maintenance 07:00-17:00: contactors and PCS breaker open, plant unavailable"
+2026-08-20,2026-08-09,normal,1.0,,,
+2026-08-21,2026-08-25,normal,1.0,,,
+2026-08-22,2026-08-16,monsoon,0.35,,,"monsoon: cool, humid, compressed low prices, shallow cycling (35 %)"
+2026-08-23,2026-08-03,monsoon,0.35,,,"monsoon: cool, humid, compressed low prices, shallow cycling (35 %)"
+2026-08-24,2026-08-04,normal,1.0,,,
+2026-08-25,2026-08-19,normal,1.0,,,
+2026-08-26,2026-08-05,normal,1.0,,,
+2026-08-27,2026-08-10,heat,0.8,,,"desert heat: afternoon ambient +10.5 degC, power derated to 80 %"
+2026-08-28,2026-08-17,heat,0.8,,,"desert heat: afternoon ambient +12.0 degC, power derated to 80 %"
+2026-08-29,2026-08-20,normal,1.0,,,
+2026-08-30,2026-08-13,normal,1.0,,,
+2026-08-31,2026-08-15,normal,1.0,,,
+2026-09-01,2026-08-21,normal,1.0,,,
+2026-09-02,2026-08-06,normal,1.0,,,
+2026-09-03,2026-08-12,normal,1.0,,,
+2026-09-04,2026-08-30,monsoon,0.35,,,"monsoon: cool, humid, compressed low prices, shallow cycling (35 %)"
+2026-09-05,2026-08-14,normal,1.0,,,
+2026-09-06,2026-08-29,normal,1.0,,,
+2026-09-07,2026-08-25,normal,1.0,,,
+2026-09-08,2026-08-28,normal,1.0,,,
+2026-09-09,2026-08-22,heat,0.8,,,"desert heat: afternoon ambient +11.0 degC, power derated to 80 %"
+2026-09-10,2026-08-26,heat,0.8,,,"desert heat: afternoon ambient +12.5 degC, power derated to 80 %"
+2026-09-11,2026-08-24,heat,0.8,,,"desert heat: afternoon ambient +9.5 degC, power derated to 80 %"
+2026-09-12,2026-08-11,normal,1.0,,,
+2026-09-13,2026-08-05,normal,1.0,,,
+2026-09-14,2026-08-02,normal,1.0,,,
+2026-09-15,2026-08-19,outage,1.0,2026-09-15 09:00:00,2026-09-15 16:30:00,"forced outage: PCS ground fault trips the breaker at 09:00, restart 16:30; SOC held while offline"
+2026-09-16,2026-08-13,normal,1.0,,,
+2026-09-17,2026-08-07,normal,1.0,,,
+2026-09-18,2026-08-15,heat,0.8,,,"desert heat: afternoon ambient +11.5 degC, power derated to 80 %"
+2026-09-19,2026-08-09,normal,1.0,,,
+2026-09-20,2026-08-08,normal,1.0,,,
+2026-09-21,2026-08-04,normal,1.0,,,
+2026-09-22,2026-08-03,normal,1.0,,,
+2026-09-23,2026-08-27,normal,1.0,,,
+2026-09-24,2026-08-18,heat,0.8,,,"desert heat: afternoon ambient +12.0 degC, power derated to 80 %"
+2026-09-25,2026-08-10,heat,0.8,,,"desert heat: afternoon ambient +10.0 degC, power derated to 80 %"
+2026-09-26,2026-08-17,normal,1.0,,,
+2026-09-27,2026-08-18,normal,1.0,,,
+2026-09-28,2026-08-16,normal,1.0,,,
+2026-09-29,2026-08-20,normal,1.0,,,
+2026-09-30,2026-08-23,normal,1.0,,,

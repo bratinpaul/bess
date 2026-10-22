@@ -1,0 +1,406 @@
+{
+  "meta": {
+    "description": "BESS plant telemetry snapshot \u2014 single 5-minute interval, hierarchical",
+    "timestamp": "2026-09-28T00:00:00",
+    "interval_minutes": 5,
+    "sign_convention": "power/current > 0 = charging / grid import; < 0 = discharging / grid export",
+    "generated": "simulator: sampled from stored telemetry of 2026-08-02 00:00 (modules: 2026-08-01 00:00)"
+  },
+  "site": {
+    "site_code": "KOL-BESS-SITE-01",
+    "name": "Kolkata Grid Storage Site",
+    "timezone": "Asia/Kolkata",
+    "ems": {
+      "ems_code": "EMS-01",
+      "asset_type": "Site Controller",
+      "dispatch_mode": "IDLE",
+      "grid_service": "NONE",
+      "market_price_mwh": 17.09,
+      "poi": {
+        "active_power_kw": 7.36,
+        "reactive_power_kvar": 0.74,
+        "voltage_kv": 33.263,
+        "frequency_hz": 49.979
+      },
+      "setpoint": {
+        "p_setpoint_kw": 0.0,
+        "tracking_error_kw": 0.0,
+        "agc_signal": null
+      },
+      "soc": {
+        "plant_soc_pct": 10.0,
+        "target_soc_pct": 30.0
+      },
+      "availability": {
+        "avail_charge_kw": 1000.0,
+        "avail_discharge_kw": 0.3,
+        "plant_available": 1
+      },
+      "aux_load_kw": 7.36,
+      "alarm_level": 0
+    },
+    "bess_system": {
+      "system_code": "01-BATTERY-01",
+      "config": {
+        "chemistry": "LFP",
+        "rated_power_kw": 10000.0,
+        "usable_energy_kwh": 10000.0,
+        "topology": "384S6P (16 modules x 24S, 6P)",
+        "nominal_voltage_v": 1228.8
+      },
+      "bms": {
+        "system": {
+          "mode": "Idle",
+          "soc_pct": 10.0,
+          "soh_pct": 99.59,
+          "pack_voltage_v": 1221.1,
+          "pack_current_a": 0.0,
+          "power_kw": 0.0,
+          "c_rate": 0.0,
+          "cell_voltage": {
+            "avg_v": 3.18,
+            "min_v": 3.1791,
+            "max_v": 3.1809,
+            "delta_mv": 1.8
+          },
+          "cell_temperature": {
+            "avg_c": 25.05,
+            "min_c": 24.3,
+            "max_c": 25.79
+          },
+          "coolant_temp_c": 24.99,
+          "ambient_temp_c": 21.32,
+          "insulation_res_kohm": 2518.0,
+          "cumulative": {
+            "charge_kwh": 51543.5,
+            "discharge_kwh": 50895.2,
+            "equiv_full_cycles": 25.61
+          },
+          "contactor_state": "Open",
+          "alarm_level": 0,
+          "alarm_flags": null,
+          "current_sensing": {
+            "measured_current_a": 0.41,
+            "sensor_offset_a": 0.408
+          },
+          "soc_estimation": {
+            "soc_coulomb_pct": 10.0,
+            "soc_battery_telemetry_pct": 10.0,
+            "usable_capacity_ah": 8104.6,
+            "coulombic_efficiency": 0.9985
+          },
+          "rest": {
+            "at_rest": true,
+            "rest_duration_min": 180.0,
+            "ocv_rested_v": 3.18
+          }
+        },
+        "packs": [
+          {
+            "pack_code": "01-01-01-PACK-01",
+            "module_count": 16,
+            "modules": [
+              {
+                "module_code": "01-01-01-01-MODULE-1",
+                "cell_voltage": {
+                  "avg_v": 3.2923,
+                  "min_v": 3.2909,
+                  "max_v": 3.2937,
+                  "imbalance_mv": 2.8
+                },
+                "cell_temperature": {
+                  "max_c": 27.23,
+                  "min_c": 26.09
+                },
+                "balancing_active": false
+              },
+              {
+                "module_code": "01-01-01-01-MODULE-2",
+                "cell_voltage": {
+                  "avg_v": 3.2966,
+                  "min_v": 3.2946,
+                  "max_v": 3.2986,
+                  "imbalance_mv": 4.0
+                },
+                "cell_temperature": {
+                  "max_c": 28.64,
+                  "min_c": 27.3
+                },
+                "balancing_active": false
+              },
+              {
+                "module_code": "01-01-01-01-MODULE-3",
+                "cell_voltage": {
+                  "avg_v": 3.2943,
+                  "min_v": 3.2921,
+                  "max_v": 3.2966,
+                  "imbalance_mv": 4.5
+                },
+                "cell_temperature": {
+                  "max_c": 28.44,
+                  "min_c": 26.9
+                },
+                "balancing_active": false
+              },
+              {
+                "module_code": "01-01-01-01-MODULE-4",
+                "cell_voltage": {
+                  "avg_v": 3.2964,
+                  "min_v": 3.2941,
+                  "max_v": 3.2986,
+                  "imbalance_mv": 4.5
+                },
+                "cell_temperature": {
+                  "max_c": 27.97,
+                  "min_c": 26.91
+                },
+                "balancing_active": false
+              },
+              {
+                "module_code": "01-01-01-01-MODULE-5",
+                "cell_voltage": {
+                  "avg_v": 3.2978,
+                  "min_v": 3.2962,
+                  "max_v": 3.2993,
+                  "imbalance_mv": 3.1
+                },
+                "cell_temperature": {
+                  "max_c": 27.87,
+                  "min_c": 26.36
+                },
+                "balancing_active": false
+              },
+              {
+                "module_code": "01-01-01-01-MODULE-6",
+                "cell_voltage": {
+                  "avg_v": 3.3031,
+                  "min_v": 3.3015,
+                  "max_v": 3.3046,
+                  "imbalance_mv": 3.1
+                },
+                "cell_temperature": {
+                  "max_c": 27.61,
+                  "min_c": 26.2
+                },
+                "balancing_active": false
+              },
+              {
+                "module_code": "01-01-01-01-MODULE-7",
+                "cell_voltage": {
+                  "avg_v": 3.2979,
+                  "min_v": 3.296,
+                  "max_v": 3.2997,
+                  "imbalance_mv": 3.7
+                },
+                "cell_temperature": {
+                  "max_c": 27.96,
+                  "min_c": 26.48
+                },
+                "balancing_active": false
+              },
+              {
+                "module_code": "01-01-01-01-MODULE-8",
+                "cell_voltage": {
+                  "avg_v": 3.3023,
+                  "min_v": 3.3003,
+                  "max_v": 3.3043,
+                  "imbalance_mv": 4.0
+                },
+                "cell_temperature": {
+                  "max_c": 27.98,
+                  "min_c": 26.7
+                },
+                "balancing_active": true
+              },
+              {
+                "module_code": "01-01-01-01-MODULE-9",
+                "cell_voltage": {
+                  "avg_v": 3.293,
+                  "min_v": 3.2913,
+                  "max_v": 3.2946,
+                  "imbalance_mv": 3.3
+                },
+                "cell_temperature": {
+                  "max_c": 28.24,
+                  "min_c": 27.27
+                },
+                "balancing_active": false
+              },
+              {
+                "module_code": "01-01-01-01-MODULE-10",
+                "cell_voltage": {
+                  "avg_v": 3.2922,
+                  "min_v": 3.2903,
+                  "max_v": 3.294,
+                  "imbalance_mv": 3.7
+                },
+                "cell_temperature": {
+                  "max_c": 28.46,
+                  "min_c": 27.24
+                },
+                "balancing_active": false
+              },
+              {
+                "module_code": "01-01-01-01-MODULE-11",
+                "cell_voltage": {
+                  "avg_v": 3.2973,
+                  "min_v": 3.2958,
+                  "max_v": 3.2988,
+                  "imbalance_mv": 3.0
+                },
+                "cell_temperature": {
+                  "max_c": 27.92,
+                  "min_c": 26.74
+                },
+                "balancing_active": false
+              },
+              {
+                "module_code": "01-01-01-01-MODULE-12",
+                "cell_voltage": {
+                  "avg_v": 3.2981,
+                  "min_v": 3.2967,
+                  "max_v": 3.2994,
+                  "imbalance_mv": 2.7
+                },
+                "cell_temperature": {
+                  "max_c": 27.27,
+                  "min_c": 25.9
+                },
+                "balancing_active": false
+              },
+              {
+                "module_code": "01-01-01-01-MODULE-13",
+                "cell_voltage": {
+                  "avg_v": 3.2973,
+                  "min_v": 3.2951,
+                  "max_v": 3.2994,
+                  "imbalance_mv": 4.3
+                },
+                "cell_temperature": {
+                  "max_c": 28.48,
+                  "min_c": 27.16
+                },
+                "balancing_active": false
+              },
+              {
+                "module_code": "01-01-01-01-MODULE-14",
+                "cell_voltage": {
+                  "avg_v": 3.2908,
+                  "min_v": 3.2885,
+                  "max_v": 3.293,
+                  "imbalance_mv": 4.5
+                },
+                "cell_temperature": {
+                  "max_c": 28.13,
+                  "min_c": 26.65
+                },
+                "balancing_active": false
+              },
+              {
+                "module_code": "01-01-01-01-MODULE-15",
+                "cell_voltage": {
+                  "avg_v": 3.2985,
+                  "min_v": 3.2962,
+                  "max_v": 3.3008,
+                  "imbalance_mv": 4.6
+                },
+                "cell_temperature": {
+                  "max_c": 27.64,
+                  "min_c": 26.45
+                },
+                "balancing_active": false
+              },
+              {
+                "module_code": "01-01-01-01-MODULE-16",
+                "cell_voltage": {
+                  "avg_v": 3.2986,
+                  "min_v": 3.2971,
+                  "max_v": 3.3001,
+                  "imbalance_mv": 3.0
+                },
+                "cell_temperature": {
+                  "max_c": 27.66,
+                  "min_c": 26.54
+                },
+                "balancing_active": false
+              }
+            ]
+          }
+        ]
+      },
+      "pcs": {
+        "pcs_code": "01-01-PCS-01",
+        "asset_type": "Inverter",
+        "mode": "IDLE",
+        "grid_service": "NONE",
+        "ac": {
+          "active_power_kw": 0.0,
+          "reactive_power_kvar": 0.0,
+          "apparent_power_kva": 0.0,
+          "power_factor": null,
+          "frequency_hz": 0.0,
+          "voltage_ll_v": {
+            "ab": 0.0,
+            "bc": 0.0,
+            "ca": 0.0
+          },
+          "current_a": {
+            "a": 0.0,
+            "b": 0.0,
+            "c": 0.0
+          },
+          "thd_pct": {
+            "voltage": null,
+            "current": null
+          }
+        },
+        "dc": {
+          "voltage_v": 1221.1,
+          "current_a": 0.0,
+          "power_kw": 0.0
+        },
+        "efficiency_pct": null,
+        "thermal": {
+          "igbt_c": 27.42,
+          "heatsink_c": 26.31,
+          "inlet_coolant_c": 26.57
+        },
+        "breaker_state": "OPEN",
+        "alarm_level": 0
+      },
+      "hvac": {
+        "hvac_code": "HVAC-01",
+        "asset_type": "HVAC Unit",
+        "cooling_mode": "IDLE",
+        "coolant": {
+          "setpoint_c": 25.0,
+          "supply_c": 24.99,
+          "return_c": 28.0,
+          "delta_t_c": 3.01,
+          "flow_lpm": 0.0
+        },
+        "mechanical": {
+          "compressor_speed_pct": 0.0,
+          "condenser_fan_pct": 0.0,
+          "refrig_suction_bar": null,
+          "refrig_discharge_bar": null
+        },
+        "thermal_balance": {
+          "battery_heat_load_kw": 1.5,
+          "cooling_capacity_kw": 0.0,
+          "heat_rejected_kw": 0.0,
+          "cop": null
+        },
+        "hvac_power_kw": 4.36,
+        "enclosure": {
+          "temp_c": 27.92,
+          "humidity_pct": 50.4
+        },
+        "alarm_level": 0,
+        "alarm_flags": null
+      }
+    },
+    "active_dispatch": null,
+    "active_alarms": []
+  }
+}

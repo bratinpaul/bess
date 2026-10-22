@@ -1,0 +1,305 @@
+{
+  "generated_at": "2026-10-01T22:53:53+05:30",
+  "site_name": "Dharashiv BESS Site",
+  "system_name": "EESL-BESS-S05",
+  "battery_system_id": 15,
+  "date_from": "2026-09-01",
+  "date_to": "2026-09-30",
+  "days": 30,
+  "folder": "C:\\bratin\\claude\\bess\\input\\historical\\Dharashiv BESS",
+  "folder_relative": "historical\\Dharashiv BESS",
+  "climate": "semi-arid plateau (Marathwada)",
+  "state": "Maharashtra",
+  "id_prefix": "DHA",
+  "ratings": {
+    "rated_kw": 1500.0,
+    "capacity_kwh": 3440.0,
+    "series_cells": 1664,
+    "pcs_ac_voltage_v": 33000.0,
+    "modules": 96,
+    "packs": 6,
+    "soh_start": 99.3
+  },
+  "scenarios": {
+    "normal": 20,
+    "monsoon": 6,
+    "heat": 2,
+    "maintenance": 1,
+    "outage": 1
+  },
+  "scenario_days": [
+    {
+      "date": "2026-09-11",
+      "scenario": "maintenance",
+      "notes": "planned maintenance 07:00-17:00: contactors and PCS breaker open, plant unavailable"
+    },
+    {
+      "date": "2026-09-16",
+      "scenario": "monsoon",
+      "notes": "monsoon: cool, humid, compressed low prices, shallow cycling (35 %); moisture: DC insulation below 2100 kOhm for ~45 min"
+    },
+    {
+      "date": "2026-09-17",
+      "scenario": "heat",
+      "notes": "heat wave: afternoon ambient +7.1 degC over the sample site, power derated to 80 %"
+    },
+    {
+      "date": "2026-09-18",
+      "scenario": "heat",
+      "notes": "heat wave: afternoon ambient +5.3 degC over the sample site, power derated to 80 %"
+    },
+    {
+      "date": "2026-09-19",
+      "scenario": "monsoon",
+      "notes": "monsoon: cool, humid, compressed low prices, shallow cycling (35 %)"
+    },
+    {
+      "date": "2026-09-20",
+      "scenario": "monsoon",
+      "notes": "monsoon: cool, humid, compressed low prices, shallow cycling (35 %)"
+    },
+    {
+      "date": "2026-09-21",
+      "scenario": "outage",
+      "notes": "forced outage: PCS ground fault trips the breaker at 09:00, restart 16:30; SOC held while offline"
+    },
+    {
+      "date": "2026-09-26",
+      "scenario": "monsoon",
+      "notes": "monsoon: cool, humid, compressed low prices, shallow cycling (35 %)"
+    },
+    {
+      "date": "2026-09-27",
+      "scenario": "monsoon",
+      "notes": "monsoon: cool, humid, compressed low prices, shallow cycling (35 %)"
+    },
+    {
+      "date": "2026-09-28",
+      "scenario": "monsoon",
+      "notes": "monsoon: cool, humid, compressed low prices, shallow cycling (35 %)"
+    }
+  ],
+  "files": [
+    {
+      "feed": "BMS",
+      "file": "BESS_BMS_Dharashiv_2026-09-01_2026-09-30_5min.xlsx",
+      "rows": 8640,
+      "size": 1142968
+    },
+    {
+      "feed": "PCS",
+      "file": "BESS_PCS_Dharashiv_2026-09-01_2026-09-30_5min.xlsx",
+      "rows": 8640,
+      "size": 1259018
+    },
+    {
+      "feed": "EMS",
+      "file": "BESS_EMS_Dharashiv_2026-09-01_2026-09-30_5min__EESL-BESS-S05-EMS-01.xlsx",
+      "rows": 8640,
+      "size": 1208197
+    },
+    {
+      "feed": "HVAC",
+      "file": "BESS_HVAC_Dharashiv_2026-09-01_2026-09-30_5min__EESL-BESS-S05-HVAC-01.xlsx",
+      "rows": 8640,
+      "size": 1131311
+    },
+    {
+      "feed": "Alarms",
+      "file": "BESS_Alarm_Dharashiv_2026-09-01_2026-09-30.xlsx",
+      "rows": 89,
+      "size": 15987
+    },
+    {
+      "feed": "Dispatch events",
+      "file": "BESS_DispatchEvents_Dharashiv_2026-09-01_2026-09-30.xlsx",
+      "rows": 344,
+      "size": 45005
+    },
+    {
+      "feed": "Module",
+      "file": "module/BESS_ModuleTelemetry_Dharashiv_2026-09-01.csv",
+      "rows": 27648,
+      "size": 2222996
+    },
+    {
+      "feed": "Module",
+      "file": "module/BESS_ModuleTelemetry_Dharashiv_2026-09-02.csv",
+      "rows": 27648,
+      "size": 2224565
+    },
+    {
+      "feed": "Module",
+      "file": "module/BESS_ModuleTelemetry_Dharashiv_2026-09-03.csv",
+      "rows": 27648,
+      "size": 2224032
+    },
+    {
+      "feed": "Module",
+      "file": "module/BESS_ModuleTelemetry_Dharashiv_2026-09-04.csv",
+      "rows": 27648,
+      "size": 2223719
+    },
+    {
+      "feed": "Module",
+      "file": "module/BESS_ModuleTelemetry_Dharashiv_2026-09-05.csv",
+      "rows": 27648,
+      "size": 2223387
+    },
+    {
+      "feed": "Module",
+      "file": "module/BESS_ModuleTelemetry_Dharashiv_2026-09-06.csv",
+      "rows": 27648,
+      "size": 2224276
+    },
+    {
+      "feed": "Module",
+      "file": "module/BESS_ModuleTelemetry_Dharashiv_2026-09-07.csv",
+      "rows": 27648,
+      "size": 2224361
+    },
+    {
+      "feed": "Module",
+      "file": "module/BESS_ModuleTelemetry_Dharashiv_2026-09-08.csv",
+      "rows": 27648,
+      "size": 2224540
+    },
+    {
+      "feed": "Module",
+      "file": "module/BESS_ModuleTelemetry_Dharashiv_2026-09-09.csv",
+      "rows": 27648,
+      "size": 2224039
+    },
+    {
+      "feed": "Module",
+      "file": "module/BESS_ModuleTelemetry_Dharashiv_2026-09-10.csv",
+      "rows": 27648,
+      "size": 2224041
+    },
+    {
+      "feed": "Module",
+      "file": "module/BESS_ModuleTelemetry_Dharashiv_2026-09-11.csv",
+      "rows": 27648,
+      "size": 2222139
+    },
+    {
+      "feed": "Module",
+      "file": "module/BESS_ModuleTelemetry_Dharashiv_2026-09-12.csv",
+      "rows": 27648,
+      "size": 2224804
+    },
+    {
+      "feed": "Module",
+      "file": "module/BESS_ModuleTelemetry_Dharashiv_2026-09-13.csv",
+      "rows": 27648,
+      "size": 2224284
+    },
+    {
+      "feed": "Module",
+      "file": "module/BESS_ModuleTelemetry_Dharashiv_2026-09-14.csv",
+      "rows": 27648,
+      "size": 2224177
+    },
+    {
+      "feed": "Module",
+      "file": "module/BESS_ModuleTelemetry_Dharashiv_2026-09-15.csv",
+      "rows": 27648,
+      "size": 2223866
+    },
+    {
+      "feed": "Module",
+      "file": "module/BESS_ModuleTelemetry_Dharashiv_2026-09-16.csv",
+      "rows": 27648,
+      "size": 2224016
+    },
+    {
+      "feed": "Module",
+      "file": "module/BESS_ModuleTelemetry_Dharashiv_2026-09-17.csv",
+      "rows": 27648,
+      "size": 2223782
+    },
+    {
+      "feed": "Module",
+      "file": "module/BESS_ModuleTelemetry_Dharashiv_2026-09-18.csv",
+      "rows": 27648,
+      "size": 2223868
+    },
+    {
+      "feed": "Module",
+      "file": "module/BESS_ModuleTelemetry_Dharashiv_2026-09-19.csv",
+      "rows": 27648,
+      "size": 2224210
+    },
+    {
+      "feed": "Module",
+      "file": "module/BESS_ModuleTelemetry_Dharashiv_2026-09-20.csv",
+      "rows": 27648,
+      "size": 2223607
+    },
+    {
+      "feed": "Module",
+      "file": "module/BESS_ModuleTelemetry_Dharashiv_2026-09-21.csv",
+      "rows": 27648,
+      "size": 2225238
+    },
+    {
+      "feed": "Module",
+      "file": "module/BESS_ModuleTelemetry_Dharashiv_2026-09-22.csv",
+      "rows": 27648,
+      "size": 2224181
+    },
+    {
+      "feed": "Module",
+      "file": "module/BESS_ModuleTelemetry_Dharashiv_2026-09-23.csv",
+      "rows": 27648,
+      "size": 2223914
+    },
+    {
+      "feed": "Module",
+      "file": "module/BESS_ModuleTelemetry_Dharashiv_2026-09-24.csv",
+      "rows": 27648,
+      "size": 2223859
+    },
+    {
+      "feed": "Module",
+      "file": "module/BESS_ModuleTelemetry_Dharashiv_2026-09-25.csv",
+      "rows": 27648,
+      "size": 2223519
+    },
+    {
+      "feed": "Module",
+      "file": "module/BESS_ModuleTelemetry_Dharashiv_2026-09-26.csv",
+      "rows": 27648,
+      "size": 2223704
+    },
+    {
+      "feed": "Module",
+      "file": "module/BESS_ModuleTelemetry_Dharashiv_2026-09-27.csv",
+      "rows": 27648,
+      "size": 2223447
+    },
+    {
+      "feed": "Module",
+      "file": "module/BESS_ModuleTelemetry_Dharashiv_2026-09-28.csv",
+      "rows": 27648,
+      "size": 2224436
+    },
+    {
+      "feed": "Module",
+      "file": "module/BESS_ModuleTelemetry_Dharashiv_2026-09-29.csv",
+      "rows": 27648,
+      "size": 2223135
+    },
+    {
+      "feed": "Module",
+      "file": "module/BESS_ModuleTelemetry_Dharashiv_2026-09-30.csv",
+      "rows": 27648,
+      "size": 2223986
+    }
+  ],
+  "warnings": [],
+  "duration_s": 35.2,
+  "overrides": {},
+  "module_from": "2026-09-01",
+  "calendar_source": "page"
+}

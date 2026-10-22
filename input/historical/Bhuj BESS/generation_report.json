@@ -1,0 +1,290 @@
+{
+  "generated_at": "2026-10-01T22:53:17+05:30",
+  "site_name": "Bhuj BESS Site",
+  "system_name": "EESL-BESS-S01",
+  "battery_system_id": 11,
+  "date_from": "2026-09-01",
+  "date_to": "2026-09-30",
+  "days": 30,
+  "folder": "C:\\bratin\\claude\\bess\\input\\historical\\Bhuj BESS",
+  "folder_relative": "historical\\Bhuj BESS",
+  "climate": "hot arid (Kutch)",
+  "state": "Gujarat",
+  "id_prefix": "BHU",
+  "ratings": {
+    "rated_kw": 1500.0,
+    "capacity_kwh": 3440.0,
+    "series_cells": 1664,
+    "pcs_ac_voltage_v": 33000.0,
+    "modules": 96,
+    "packs": 6,
+    "soh_start": 99.25
+  },
+  "scenarios": {
+    "normal": 23,
+    "heat": 3,
+    "monsoon": 2,
+    "maintenance": 1,
+    "outage": 1
+  },
+  "scenario_days": [
+    {
+      "date": "2026-09-11",
+      "scenario": "maintenance",
+      "notes": "planned maintenance 07:00-17:00: contactors and PCS breaker open, plant unavailable"
+    },
+    {
+      "date": "2026-09-15",
+      "scenario": "monsoon",
+      "notes": "monsoon: cool, humid, compressed low prices, shallow cycling (35 %); moisture: DC insulation below 2100 kOhm for ~45 min"
+    },
+    {
+      "date": "2026-09-20",
+      "scenario": "monsoon",
+      "notes": "monsoon: cool, humid, compressed low prices, shallow cycling (35 %)"
+    },
+    {
+      "date": "2026-09-21",
+      "scenario": "outage",
+      "notes": "forced outage: PCS ground fault trips the breaker at 09:00, restart 16:30; SOC held while offline"
+    },
+    {
+      "date": "2026-09-25",
+      "scenario": "heat",
+      "notes": "heat wave: afternoon ambient +8.9 degC over the sample site, power derated to 80 %"
+    },
+    {
+      "date": "2026-09-26",
+      "scenario": "heat",
+      "notes": "heat wave: afternoon ambient +10.8 degC over the sample site, power derated to 80 %"
+    },
+    {
+      "date": "2026-09-27",
+      "scenario": "heat",
+      "notes": "heat wave: afternoon ambient +8.4 degC over the sample site, power derated to 80 %"
+    }
+  ],
+  "files": [
+    {
+      "feed": "BMS",
+      "file": "BESS_BMS_Bhuj_2026-09-01_2026-09-30_5min.xlsx",
+      "rows": 8640,
+      "size": 1147815
+    },
+    {
+      "feed": "PCS",
+      "file": "BESS_PCS_Bhuj_2026-09-01_2026-09-30_5min.xlsx",
+      "rows": 8640,
+      "size": 1261059
+    },
+    {
+      "feed": "EMS",
+      "file": "BESS_EMS_Bhuj_2026-09-01_2026-09-30_5min__EESL-BESS-S01-EMS-01.xlsx",
+      "rows": 8640,
+      "size": 1210529
+    },
+    {
+      "feed": "HVAC",
+      "file": "BESS_HVAC_Bhuj_2026-09-01_2026-09-30_5min__EESL-BESS-S01-HVAC-01.xlsx",
+      "rows": 8640,
+      "size": 1130204
+    },
+    {
+      "feed": "Alarms",
+      "file": "BESS_Alarm_Bhuj_2026-09-01_2026-09-30.xlsx",
+      "rows": 81,
+      "size": 15300
+    },
+    {
+      "feed": "Dispatch events",
+      "file": "BESS_DispatchEvents_Bhuj_2026-09-01_2026-09-30.xlsx",
+      "rows": 356,
+      "size": 46402
+    },
+    {
+      "feed": "Module",
+      "file": "module/BESS_ModuleTelemetry_Bhuj_2026-09-01.csv",
+      "rows": 27648,
+      "size": 2224755
+    },
+    {
+      "feed": "Module",
+      "file": "module/BESS_ModuleTelemetry_Bhuj_2026-09-02.csv",
+      "rows": 27648,
+      "size": 2223716
+    },
+    {
+      "feed": "Module",
+      "file": "module/BESS_ModuleTelemetry_Bhuj_2026-09-03.csv",
+      "rows": 27648,
+      "size": 2224173
+    },
+    {
+      "feed": "Module",
+      "file": "module/BESS_ModuleTelemetry_Bhuj_2026-09-04.csv",
+      "rows": 27648,
+      "size": 2223877
+    },
+    {
+      "feed": "Module",
+      "file": "module/BESS_ModuleTelemetry_Bhuj_2026-09-05.csv",
+      "rows": 27648,
+      "size": 2224336
+    },
+    {
+      "feed": "Module",
+      "file": "module/BESS_ModuleTelemetry_Bhuj_2026-09-06.csv",
+      "rows": 27648,
+      "size": 2223723
+    },
+    {
+      "feed": "Module",
+      "file": "module/BESS_ModuleTelemetry_Bhuj_2026-09-07.csv",
+      "rows": 27648,
+      "size": 2224023
+    },
+    {
+      "feed": "Module",
+      "file": "module/BESS_ModuleTelemetry_Bhuj_2026-09-08.csv",
+      "rows": 27648,
+      "size": 2224208
+    },
+    {
+      "feed": "Module",
+      "file": "module/BESS_ModuleTelemetry_Bhuj_2026-09-09.csv",
+      "rows": 27648,
+      "size": 2224191
+    },
+    {
+      "feed": "Module",
+      "file": "module/BESS_ModuleTelemetry_Bhuj_2026-09-10.csv",
+      "rows": 27648,
+      "size": 2224323
+    },
+    {
+      "feed": "Module",
+      "file": "module/BESS_ModuleTelemetry_Bhuj_2026-09-11.csv",
+      "rows": 27648,
+      "size": 2222232
+    },
+    {
+      "feed": "Module",
+      "file": "module/BESS_ModuleTelemetry_Bhuj_2026-09-12.csv",
+      "rows": 27648,
+      "size": 2224369
+    },
+    {
+      "feed": "Module",
+      "file": "module/BESS_ModuleTelemetry_Bhuj_2026-09-13.csv",
+      "rows": 27648,
+      "size": 2223083
+    },
+    {
+      "feed": "Module",
+      "file": "module/BESS_ModuleTelemetry_Bhuj_2026-09-14.csv",
+      "rows": 27648,
+      "size": 2224272
+    },
+    {
+      "feed": "Module",
+      "file": "module/BESS_ModuleTelemetry_Bhuj_2026-09-15.csv",
+      "rows": 27648,
+      "size": 2223155
+    },
+    {
+      "feed": "Module",
+      "file": "module/BESS_ModuleTelemetry_Bhuj_2026-09-16.csv",
+      "rows": 27648,
+      "size": 2224416
+    },
+    {
+      "feed": "Module",
+      "file": "module/BESS_ModuleTelemetry_Bhuj_2026-09-17.csv",
+      "rows": 27648,
+      "size": 2224582
+    },
+    {
+      "feed": "Module",
+      "file": "module/BESS_ModuleTelemetry_Bhuj_2026-09-18.csv",
+      "rows": 27648,
+      "size": 2223774
+    },
+    {
+      "feed": "Module",
+      "file": "module/BESS_ModuleTelemetry_Bhuj_2026-09-19.csv",
+      "rows": 27648,
+      "size": 2223801
+    },
+    {
+      "feed": "Module",
+      "file": "module/BESS_ModuleTelemetry_Bhuj_2026-09-20.csv",
+      "rows": 27648,
+      "size": 2224251
+    },
+    {
+      "feed": "Module",
+      "file": "module/BESS_ModuleTelemetry_Bhuj_2026-09-21.csv",
+      "rows": 27648,
+      "size": 2225240
+    },
+    {
+      "feed": "Module",
+      "file": "module/BESS_ModuleTelemetry_Bhuj_2026-09-22.csv",
+      "rows": 27648,
+      "size": 2224464
+    },
+    {
+      "feed": "Module",
+      "file": "module/BESS_ModuleTelemetry_Bhuj_2026-09-23.csv",
+      "rows": 27648,
+      "size": 2224372
+    },
+    {
+      "feed": "Module",
+      "file": "module/BESS_ModuleTelemetry_Bhuj_2026-09-24.csv",
+      "rows": 27648,
+      "size": 2223124
+    },
+    {
+      "feed": "Module",
+      "file": "module/BESS_ModuleTelemetry_Bhuj_2026-09-25.csv",
+      "rows": 27648,
+      "size": 2224100
+    },
+    {
+      "feed": "Module",
+      "file": "module/BESS_ModuleTelemetry_Bhuj_2026-09-26.csv",
+      "rows": 27648,
+      "size": 2223313
+    },
+    {
+      "feed": "Module",
+      "file": "module/BESS_ModuleTelemetry_Bhuj_2026-09-27.csv",
+      "rows": 27648,
+      "size": 2224179
+    },
+    {
+      "feed": "Module",
+      "file": "module/BESS_ModuleTelemetry_Bhuj_2026-09-28.csv",
+      "rows": 27648,
+      "size": 2224185
+    },
+    {
+      "feed": "Module",
+      "file": "module/BESS_ModuleTelemetry_Bhuj_2026-09-29.csv",
+      "rows": 27648,
+      "size": 2223870
+    },
+    {
+      "feed": "Module",
+      "file": "module/BESS_ModuleTelemetry_Bhuj_2026-09-30.csv",
+      "rows": 27648,
+      "size": 2224651
+    }
+  ],
+  "warnings": [],
+  "duration_s": 44.5,
+  "overrides": {},
+  "module_from": "2026-09-01",
+  "calendar_source": "page"
+}

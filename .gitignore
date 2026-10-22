@@ -39,11 +39,16 @@ ML model/artifacts/
 *.joblib
 *.pkl
 
-# ---------------------------------------------------------------- data (generated / loaded files, ~400 MB)
-input/historical/
-input/realtime/
+# ---------------------------------------------------------------- data: input/ and BESS DESIGN/ are tracked, archives are not
+# (the loaders spell it "archieve"; both spellings are excluded)
+BESS DESIGN/archive/
+BESS DESIGN/archieve/
+input/historical/archive/
+input/historical/archieve/
+input/realtime/archive/
+input/realtime/archieve/
+input/static/archive/
 input/static/archieve/
-**/archieve/
 
 # ---------------------------------------------------------------- editors / OS
 .idea/
@@ -55,9 +60,6 @@ input/static/archieve/
 Thumbs.db
 desktop.ini
 ~$*
-
-# ---------------------------------------------------------------- design documents / sample data packs (kept local)
-BESS DESIGN/
 
 # ---------------------------------------------------------------- project notes / instructions (kept local)
 claude.md

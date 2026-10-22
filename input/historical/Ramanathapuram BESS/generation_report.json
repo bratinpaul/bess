@@ -1,0 +1,285 @@
+{
+  "generated_at": "2026-10-01T22:55:31+05:30",
+  "site_name": "Ramanathapuram BESS Site",
+  "system_name": "EESL-BESS-S04",
+  "battery_system_id": 14,
+  "date_from": "2026-09-01",
+  "date_to": "2026-09-30",
+  "days": 30,
+  "folder": "C:\\bratin\\claude\\bess\\input\\historical\\Ramanathapuram BESS",
+  "folder_relative": "historical\\Ramanathapuram BESS",
+  "climate": "hot humid coast",
+  "state": "Tamil Nadu",
+  "id_prefix": "RAM",
+  "ratings": {
+    "rated_kw": 1500.0,
+    "capacity_kwh": 3440.0,
+    "series_cells": 1664,
+    "pcs_ac_voltage_v": 33000.0,
+    "modules": 96,
+    "packs": 6,
+    "soh_start": 99.35
+  },
+  "scenarios": {
+    "normal": 24,
+    "monsoon": 2,
+    "heat": 2,
+    "maintenance": 1,
+    "outage": 1
+  },
+  "scenario_days": [
+    {
+      "date": "2026-09-04",
+      "scenario": "monsoon",
+      "notes": "monsoon: cool, humid, compressed low prices, shallow cycling (35 %); moisture: DC insulation below 2100 kOhm for ~45 min"
+    },
+    {
+      "date": "2026-09-08",
+      "scenario": "monsoon",
+      "notes": "monsoon: cool, humid, compressed low prices, shallow cycling (35 %)"
+    },
+    {
+      "date": "2026-09-11",
+      "scenario": "maintenance",
+      "notes": "planned maintenance 07:00-17:00: contactors and PCS breaker open, plant unavailable"
+    },
+    {
+      "date": "2026-09-20",
+      "scenario": "heat",
+      "notes": "heat wave: afternoon ambient +8.2 degC over the sample site, power derated to 80 %"
+    },
+    {
+      "date": "2026-09-21",
+      "scenario": "heat",
+      "notes": "heat wave: afternoon ambient +6.6 degC over the sample site, power derated to 80 %"
+    },
+    {
+      "date": "2026-09-22",
+      "scenario": "outage",
+      "notes": "forced outage: PCS ground fault trips the breaker at 09:00, restart 16:30; SOC held while offline"
+    }
+  ],
+  "files": [
+    {
+      "feed": "BMS",
+      "file": "BESS_BMS_Ramanathapuram_2026-09-01_2026-09-30_5min.xlsx",
+      "rows": 8640,
+      "size": 1146944
+    },
+    {
+      "feed": "PCS",
+      "file": "BESS_PCS_Ramanathapuram_2026-09-01_2026-09-30_5min.xlsx",
+      "rows": 8640,
+      "size": 1259536
+    },
+    {
+      "feed": "EMS",
+      "file": "BESS_EMS_Ramanathapuram_2026-09-01_2026-09-30_5min__EESL-BESS-S04-EMS-01.xlsx",
+      "rows": 8640,
+      "size": 1210419
+    },
+    {
+      "feed": "HVAC",
+      "file": "BESS_HVAC_Ramanathapuram_2026-09-01_2026-09-30_5min__EESL-BESS-S04-HVAC-01.xlsx",
+      "rows": 8640,
+      "size": 1131057
+    },
+    {
+      "feed": "Alarms",
+      "file": "BESS_Alarm_Ramanathapuram_2026-09-01_2026-09-30.xlsx",
+      "rows": 76,
+      "size": 14908
+    },
+    {
+      "feed": "Dispatch events",
+      "file": "BESS_DispatchEvents_Ramanathapuram_2026-09-01_2026-09-30.xlsx",
+      "rows": 351,
+      "size": 45861
+    },
+    {
+      "feed": "Module",
+      "file": "module/BESS_ModuleTelemetry_Ramanathapuram_2026-09-01.csv",
+      "rows": 27648,
+      "size": 2224036
+    },
+    {
+      "feed": "Module",
+      "file": "module/BESS_ModuleTelemetry_Ramanathapuram_2026-09-02.csv",
+      "rows": 27648,
+      "size": 2223646
+    },
+    {
+      "feed": "Module",
+      "file": "module/BESS_ModuleTelemetry_Ramanathapuram_2026-09-03.csv",
+      "rows": 27648,
+      "size": 2224509
+    },
+    {
+      "feed": "Module",
+      "file": "module/BESS_ModuleTelemetry_Ramanathapuram_2026-09-04.csv",
+      "rows": 27648,
+      "size": 2223565
+    },
+    {
+      "feed": "Module",
+      "file": "module/BESS_ModuleTelemetry_Ramanathapuram_2026-09-05.csv",
+      "rows": 27648,
+      "size": 2224303
+    },
+    {
+      "feed": "Module",
+      "file": "module/BESS_ModuleTelemetry_Ramanathapuram_2026-09-06.csv",
+      "rows": 27648,
+      "size": 2222966
+    },
+    {
+      "feed": "Module",
+      "file": "module/BESS_ModuleTelemetry_Ramanathapuram_2026-09-07.csv",
+      "rows": 27648,
+      "size": 2223540
+    },
+    {
+      "feed": "Module",
+      "file": "module/BESS_ModuleTelemetry_Ramanathapuram_2026-09-08.csv",
+      "rows": 27648,
+      "size": 2223896
+    },
+    {
+      "feed": "Module",
+      "file": "module/BESS_ModuleTelemetry_Ramanathapuram_2026-09-09.csv",
+      "rows": 27648,
+      "size": 2224139
+    },
+    {
+      "feed": "Module",
+      "file": "module/BESS_ModuleTelemetry_Ramanathapuram_2026-09-10.csv",
+      "rows": 27648,
+      "size": 2223255
+    },
+    {
+      "feed": "Module",
+      "file": "module/BESS_ModuleTelemetry_Ramanathapuram_2026-09-11.csv",
+      "rows": 27648,
+      "size": 2222149
+    },
+    {
+      "feed": "Module",
+      "file": "module/BESS_ModuleTelemetry_Ramanathapuram_2026-09-12.csv",
+      "rows": 27648,
+      "size": 2223733
+    },
+    {
+      "feed": "Module",
+      "file": "module/BESS_ModuleTelemetry_Ramanathapuram_2026-09-13.csv",
+      "rows": 27648,
+      "size": 2223809
+    },
+    {
+      "feed": "Module",
+      "file": "module/BESS_ModuleTelemetry_Ramanathapuram_2026-09-14.csv",
+      "rows": 27648,
+      "size": 2223821
+    },
+    {
+      "feed": "Module",
+      "file": "module/BESS_ModuleTelemetry_Ramanathapuram_2026-09-15.csv",
+      "rows": 27648,
+      "size": 2223934
+    },
+    {
+      "feed": "Module",
+      "file": "module/BESS_ModuleTelemetry_Ramanathapuram_2026-09-16.csv",
+      "rows": 27648,
+      "size": 2224385
+    },
+    {
+      "feed": "Module",
+      "file": "module/BESS_ModuleTelemetry_Ramanathapuram_2026-09-17.csv",
+      "rows": 27648,
+      "size": 2224410
+    },
+    {
+      "feed": "Module",
+      "file": "module/BESS_ModuleTelemetry_Ramanathapuram_2026-09-18.csv",
+      "rows": 27648,
+      "size": 2223467
+    },
+    {
+      "feed": "Module",
+      "file": "module/BESS_ModuleTelemetry_Ramanathapuram_2026-09-19.csv",
+      "rows": 27648,
+      "size": 2223889
+    },
+    {
+      "feed": "Module",
+      "file": "module/BESS_ModuleTelemetry_Ramanathapuram_2026-09-20.csv",
+      "rows": 27648,
+      "size": 2224536
+    },
+    {
+      "feed": "Module",
+      "file": "module/BESS_ModuleTelemetry_Ramanathapuram_2026-09-21.csv",
+      "rows": 27648,
+      "size": 2223647
+    },
+    {
+      "feed": "Module",
+      "file": "module/BESS_ModuleTelemetry_Ramanathapuram_2026-09-22.csv",
+      "rows": 27648,
+      "size": 2224686
+    },
+    {
+      "feed": "Module",
+      "file": "module/BESS_ModuleTelemetry_Ramanathapuram_2026-09-23.csv",
+      "rows": 27648,
+      "size": 2224091
+    },
+    {
+      "feed": "Module",
+      "file": "module/BESS_ModuleTelemetry_Ramanathapuram_2026-09-24.csv",
+      "rows": 27648,
+      "size": 2224148
+    },
+    {
+      "feed": "Module",
+      "file": "module/BESS_ModuleTelemetry_Ramanathapuram_2026-09-25.csv",
+      "rows": 27648,
+      "size": 2223370
+    },
+    {
+      "feed": "Module",
+      "file": "module/BESS_ModuleTelemetry_Ramanathapuram_2026-09-26.csv",
+      "rows": 27648,
+      "size": 2224641
+    },
+    {
+      "feed": "Module",
+      "file": "module/BESS_ModuleTelemetry_Ramanathapuram_2026-09-27.csv",
+      "rows": 27648,
+      "size": 2223971
+    },
+    {
+      "feed": "Module",
+      "file": "module/BESS_ModuleTelemetry_Ramanathapuram_2026-09-28.csv",
+      "rows": 27648,
+      "size": 2224155
+    },
+    {
+      "feed": "Module",
+      "file": "module/BESS_ModuleTelemetry_Ramanathapuram_2026-09-29.csv",
+      "rows": 27648,
+      "size": 2223970
+    },
+    {
+      "feed": "Module",
+      "file": "module/BESS_ModuleTelemetry_Ramanathapuram_2026-09-30.csv",
+      "rows": 27648,
+      "size": 2223557
+    }
+  ],
+  "warnings": [],
+  "duration_s": 34.6,
+  "overrides": {},
+  "module_from": "2026-09-01",
+  "calendar_source": "page"
+}

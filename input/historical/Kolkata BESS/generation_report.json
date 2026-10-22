@@ -1,0 +1,290 @@
+{
+  "generated_at": "2026-10-01T22:54:22+05:30",
+  "site_name": "Kolkata Grid Storage Site",
+  "system_name": "01-BATTERY-01",
+  "battery_system_id": 1,
+  "date_from": "2026-09-01",
+  "date_to": "2026-09-30",
+  "days": 30,
+  "folder": "C:\\bratin\\claude\\bess\\input\\historical\\Kolkata BESS",
+  "folder_relative": "historical\\Kolkata BESS",
+  "climate": "moderate",
+  "state": "West Bengal",
+  "id_prefix": "KOL",
+  "ratings": {
+    "rated_kw": 10000.0,
+    "capacity_kwh": 10000.0,
+    "series_cells": 24,
+    "pcs_ac_voltage_v": 400.0,
+    "modules": 16,
+    "packs": 1,
+    "soh_start": 99.25
+  },
+  "scenarios": {
+    "normal": 23,
+    "monsoon": 3,
+    "heat": 2,
+    "maintenance": 1,
+    "outage": 1
+  },
+  "scenario_days": [
+    {
+      "date": "2026-09-02",
+      "scenario": "heat",
+      "notes": "heat wave: afternoon ambient +6.0 degC over the sample site, power derated to 80 %"
+    },
+    {
+      "date": "2026-09-03",
+      "scenario": "heat",
+      "notes": "heat wave: afternoon ambient +5.2 degC over the sample site, power derated to 80 %"
+    },
+    {
+      "date": "2026-09-11",
+      "scenario": "maintenance",
+      "notes": "planned maintenance 07:00-17:00: contactors and PCS breaker open, plant unavailable"
+    },
+    {
+      "date": "2026-09-15",
+      "scenario": "monsoon",
+      "notes": "monsoon: cool, humid, compressed low prices, shallow cycling (35 %); moisture: DC insulation below 2100 kOhm for ~45 min"
+    },
+    {
+      "date": "2026-09-16",
+      "scenario": "monsoon",
+      "notes": "monsoon: cool, humid, compressed low prices, shallow cycling (35 %)"
+    },
+    {
+      "date": "2026-09-21",
+      "scenario": "outage",
+      "notes": "forced outage: PCS ground fault trips the breaker at 09:00, restart 16:30; SOC held while offline"
+    },
+    {
+      "date": "2026-09-28",
+      "scenario": "monsoon",
+      "notes": "monsoon: cool, humid, compressed low prices, shallow cycling (35 %)"
+    }
+  ],
+  "files": [
+    {
+      "feed": "BMS",
+      "file": "BESS_BMS_Kolkata_2026-09-01_2026-09-30_5min.xlsx",
+      "rows": 8640,
+      "size": 1146112
+    },
+    {
+      "feed": "PCS",
+      "file": "BESS_PCS_Kolkata_2026-09-01_2026-09-30_5min.xlsx",
+      "rows": 8640,
+      "size": 1240221
+    },
+    {
+      "feed": "EMS",
+      "file": "BESS_EMS_Kolkata_2026-09-01_2026-09-30_5min__EMS-01.xlsx",
+      "rows": 8640,
+      "size": 1217893
+    },
+    {
+      "feed": "HVAC",
+      "file": "BESS_HVAC_Kolkata_2026-09-01_2026-09-30_5min__HVAC-01.xlsx",
+      "rows": 8640,
+      "size": 1144114
+    },
+    {
+      "feed": "Alarms",
+      "file": "BESS_Alarm_Kolkata_2026-09-01_2026-09-30.xlsx",
+      "rows": 81,
+      "size": 15167
+    },
+    {
+      "feed": "Dispatch events",
+      "file": "BESS_DispatchEvents_Kolkata_2026-09-01_2026-09-30.xlsx",
+      "rows": 350,
+      "size": 44226
+    },
+    {
+      "feed": "Module",
+      "file": "module/BESS_ModuleTelemetry_Kolkata_2026-09-01.csv",
+      "rows": 4608,
+      "size": 391344
+    },
+    {
+      "feed": "Module",
+      "file": "module/BESS_ModuleTelemetry_Kolkata_2026-09-02.csv",
+      "rows": 4608,
+      "size": 391268
+    },
+    {
+      "feed": "Module",
+      "file": "module/BESS_ModuleTelemetry_Kolkata_2026-09-03.csv",
+      "rows": 4608,
+      "size": 391468
+    },
+    {
+      "feed": "Module",
+      "file": "module/BESS_ModuleTelemetry_Kolkata_2026-09-04.csv",
+      "rows": 4608,
+      "size": 391349
+    },
+    {
+      "feed": "Module",
+      "file": "module/BESS_ModuleTelemetry_Kolkata_2026-09-05.csv",
+      "rows": 4608,
+      "size": 391190
+    },
+    {
+      "feed": "Module",
+      "file": "module/BESS_ModuleTelemetry_Kolkata_2026-09-06.csv",
+      "rows": 4608,
+      "size": 391321
+    },
+    {
+      "feed": "Module",
+      "file": "module/BESS_ModuleTelemetry_Kolkata_2026-09-07.csv",
+      "rows": 4608,
+      "size": 391251
+    },
+    {
+      "feed": "Module",
+      "file": "module/BESS_ModuleTelemetry_Kolkata_2026-09-08.csv",
+      "rows": 4608,
+      "size": 391314
+    },
+    {
+      "feed": "Module",
+      "file": "module/BESS_ModuleTelemetry_Kolkata_2026-09-09.csv",
+      "rows": 4608,
+      "size": 391276
+    },
+    {
+      "feed": "Module",
+      "file": "module/BESS_ModuleTelemetry_Kolkata_2026-09-10.csv",
+      "rows": 4608,
+      "size": 391322
+    },
+    {
+      "feed": "Module",
+      "file": "module/BESS_ModuleTelemetry_Kolkata_2026-09-11.csv",
+      "rows": 4608,
+      "size": 390962
+    },
+    {
+      "feed": "Module",
+      "file": "module/BESS_ModuleTelemetry_Kolkata_2026-09-12.csv",
+      "rows": 4608,
+      "size": 391465
+    },
+    {
+      "feed": "Module",
+      "file": "module/BESS_ModuleTelemetry_Kolkata_2026-09-13.csv",
+      "rows": 4608,
+      "size": 391502
+    },
+    {
+      "feed": "Module",
+      "file": "module/BESS_ModuleTelemetry_Kolkata_2026-09-14.csv",
+      "rows": 4608,
+      "size": 391403
+    },
+    {
+      "feed": "Module",
+      "file": "module/BESS_ModuleTelemetry_Kolkata_2026-09-15.csv",
+      "rows": 4608,
+      "size": 391298
+    },
+    {
+      "feed": "Module",
+      "file": "module/BESS_ModuleTelemetry_Kolkata_2026-09-16.csv",
+      "rows": 4608,
+      "size": 391343
+    },
+    {
+      "feed": "Module",
+      "file": "module/BESS_ModuleTelemetry_Kolkata_2026-09-17.csv",
+      "rows": 4608,
+      "size": 391334
+    },
+    {
+      "feed": "Module",
+      "file": "module/BESS_ModuleTelemetry_Kolkata_2026-09-18.csv",
+      "rows": 4608,
+      "size": 391364
+    },
+    {
+      "feed": "Module",
+      "file": "module/BESS_ModuleTelemetry_Kolkata_2026-09-19.csv",
+      "rows": 4608,
+      "size": 391400
+    },
+    {
+      "feed": "Module",
+      "file": "module/BESS_ModuleTelemetry_Kolkata_2026-09-20.csv",
+      "rows": 4608,
+      "size": 391332
+    },
+    {
+      "feed": "Module",
+      "file": "module/BESS_ModuleTelemetry_Kolkata_2026-09-21.csv",
+      "rows": 4608,
+      "size": 391543
+    },
+    {
+      "feed": "Module",
+      "file": "module/BESS_ModuleTelemetry_Kolkata_2026-09-22.csv",
+      "rows": 4608,
+      "size": 391154
+    },
+    {
+      "feed": "Module",
+      "file": "module/BESS_ModuleTelemetry_Kolkata_2026-09-23.csv",
+      "rows": 4608,
+      "size": 391290
+    },
+    {
+      "feed": "Module",
+      "file": "module/BESS_ModuleTelemetry_Kolkata_2026-09-24.csv",
+      "rows": 4608,
+      "size": 391236
+    },
+    {
+      "feed": "Module",
+      "file": "module/BESS_ModuleTelemetry_Kolkata_2026-09-25.csv",
+      "rows": 4608,
+      "size": 391534
+    },
+    {
+      "feed": "Module",
+      "file": "module/BESS_ModuleTelemetry_Kolkata_2026-09-26.csv",
+      "rows": 4608,
+      "size": 391311
+    },
+    {
+      "feed": "Module",
+      "file": "module/BESS_ModuleTelemetry_Kolkata_2026-09-27.csv",
+      "rows": 4608,
+      "size": 391336
+    },
+    {
+      "feed": "Module",
+      "file": "module/BESS_ModuleTelemetry_Kolkata_2026-09-28.csv",
+      "rows": 4608,
+      "size": 391432
+    },
+    {
+      "feed": "Module",
+      "file": "module/BESS_ModuleTelemetry_Kolkata_2026-09-29.csv",
+      "rows": 4608,
+      "size": 391409
+    },
+    {
+      "feed": "Module",
+      "file": "module/BESS_ModuleTelemetry_Kolkata_2026-09-30.csv",
+      "rows": 4608,
+      "size": 391374
+    }
+  ],
+  "warnings": [],
+  "duration_s": 28.5,
+  "overrides": {},
+  "module_from": "2026-09-01",
+  "calendar_source": "page"
+}

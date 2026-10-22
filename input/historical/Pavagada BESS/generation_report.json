@@ -1,0 +1,295 @@
+{
+  "generated_at": "2026-10-01T22:54:56+05:30",
+  "site_name": "Pavagada BESS Site",
+  "system_name": "EESL-BESS-S03",
+  "battery_system_id": 13,
+  "date_from": "2026-09-01",
+  "date_to": "2026-09-30",
+  "days": 30,
+  "folder": "C:\\bratin\\claude\\bess\\input\\historical\\Pavagada BESS",
+  "folder_relative": "historical\\Pavagada BESS",
+  "climate": "semi-arid plateau",
+  "state": "Karnataka",
+  "id_prefix": "PAV",
+  "ratings": {
+    "rated_kw": 1500.0,
+    "capacity_kwh": 3440.0,
+    "series_cells": 1664,
+    "pcs_ac_voltage_v": 33000.0,
+    "modules": 96,
+    "packs": 6,
+    "soh_start": 99.35
+  },
+  "scenarios": {
+    "normal": 22,
+    "monsoon": 5,
+    "maintenance": 1,
+    "heat": 1,
+    "outage": 1
+  },
+  "scenario_days": [
+    {
+      "date": "2026-09-11",
+      "scenario": "maintenance",
+      "notes": "planned maintenance 07:00-17:00: contactors and PCS breaker open, plant unavailable"
+    },
+    {
+      "date": "2026-09-12",
+      "scenario": "monsoon",
+      "notes": "monsoon: cool, humid, compressed low prices, shallow cycling (35 %); moisture: DC insulation below 2100 kOhm for ~45 min"
+    },
+    {
+      "date": "2026-09-13",
+      "scenario": "monsoon",
+      "notes": "monsoon: cool, humid, compressed low prices, shallow cycling (35 %)"
+    },
+    {
+      "date": "2026-09-17",
+      "scenario": "monsoon",
+      "notes": "monsoon: cool, humid, compressed low prices, shallow cycling (35 %)"
+    },
+    {
+      "date": "2026-09-19",
+      "scenario": "heat",
+      "notes": "heat wave: afternoon ambient +6.3 degC over the sample site, power derated to 80 %"
+    },
+    {
+      "date": "2026-09-21",
+      "scenario": "outage",
+      "notes": "forced outage: PCS ground fault trips the breaker at 09:00, restart 16:30; SOC held while offline"
+    },
+    {
+      "date": "2026-09-23",
+      "scenario": "monsoon",
+      "notes": "monsoon: cool, humid, compressed low prices, shallow cycling (35 %)"
+    },
+    {
+      "date": "2026-09-24",
+      "scenario": "monsoon",
+      "notes": "monsoon: cool, humid, compressed low prices, shallow cycling (35 %)"
+    }
+  ],
+  "files": [
+    {
+      "feed": "BMS",
+      "file": "BESS_BMS_Pavagada_2026-09-01_2026-09-30_5min.xlsx",
+      "rows": 8640,
+      "size": 1144881
+    },
+    {
+      "feed": "PCS",
+      "file": "BESS_PCS_Pavagada_2026-09-01_2026-09-30_5min.xlsx",
+      "rows": 8640,
+      "size": 1258460
+    },
+    {
+      "feed": "EMS",
+      "file": "BESS_EMS_Pavagada_2026-09-01_2026-09-30_5min__EESL-BESS-S03-EMS-01.xlsx",
+      "rows": 8640,
+      "size": 1208226
+    },
+    {
+      "feed": "HVAC",
+      "file": "BESS_HVAC_Pavagada_2026-09-01_2026-09-30_5min__EESL-BESS-S03-HVAC-01.xlsx",
+      "rows": 8640,
+      "size": 1129850
+    },
+    {
+      "feed": "Alarms",
+      "file": "BESS_Alarm_Pavagada_2026-09-01_2026-09-30.xlsx",
+      "rows": 85,
+      "size": 15586
+    },
+    {
+      "feed": "Dispatch events",
+      "file": "BESS_DispatchEvents_Pavagada_2026-09-01_2026-09-30.xlsx",
+      "rows": 349,
+      "size": 45517
+    },
+    {
+      "feed": "Module",
+      "file": "module/BESS_ModuleTelemetry_Pavagada_2026-09-01.csv",
+      "rows": 27648,
+      "size": 2223673
+    },
+    {
+      "feed": "Module",
+      "file": "module/BESS_ModuleTelemetry_Pavagada_2026-09-02.csv",
+      "rows": 27648,
+      "size": 2223852
+    },
+    {
+      "feed": "Module",
+      "file": "module/BESS_ModuleTelemetry_Pavagada_2026-09-03.csv",
+      "rows": 27648,
+      "size": 2223430
+    },
+    {
+      "feed": "Module",
+      "file": "module/BESS_ModuleTelemetry_Pavagada_2026-09-04.csv",
+      "rows": 27648,
+      "size": 2223300
+    },
+    {
+      "feed": "Module",
+      "file": "module/BESS_ModuleTelemetry_Pavagada_2026-09-05.csv",
+      "rows": 27648,
+      "size": 2223707
+    },
+    {
+      "feed": "Module",
+      "file": "module/BESS_ModuleTelemetry_Pavagada_2026-09-06.csv",
+      "rows": 27648,
+      "size": 2224433
+    },
+    {
+      "feed": "Module",
+      "file": "module/BESS_ModuleTelemetry_Pavagada_2026-09-07.csv",
+      "rows": 27648,
+      "size": 2223992
+    },
+    {
+      "feed": "Module",
+      "file": "module/BESS_ModuleTelemetry_Pavagada_2026-09-08.csv",
+      "rows": 27648,
+      "size": 2222812
+    },
+    {
+      "feed": "Module",
+      "file": "module/BESS_ModuleTelemetry_Pavagada_2026-09-09.csv",
+      "rows": 27648,
+      "size": 2223381
+    },
+    {
+      "feed": "Module",
+      "file": "module/BESS_ModuleTelemetry_Pavagada_2026-09-10.csv",
+      "rows": 27648,
+      "size": 2223435
+    },
+    {
+      "feed": "Module",
+      "file": "module/BESS_ModuleTelemetry_Pavagada_2026-09-11.csv",
+      "rows": 27648,
+      "size": 2221209
+    },
+    {
+      "feed": "Module",
+      "file": "module/BESS_ModuleTelemetry_Pavagada_2026-09-12.csv",
+      "rows": 27648,
+      "size": 2222806
+    },
+    {
+      "feed": "Module",
+      "file": "module/BESS_ModuleTelemetry_Pavagada_2026-09-13.csv",
+      "rows": 27648,
+      "size": 2223164
+    },
+    {
+      "feed": "Module",
+      "file": "module/BESS_ModuleTelemetry_Pavagada_2026-09-14.csv",
+      "rows": 27648,
+      "size": 2223143
+    },
+    {
+      "feed": "Module",
+      "file": "module/BESS_ModuleTelemetry_Pavagada_2026-09-15.csv",
+      "rows": 27648,
+      "size": 2223616
+    },
+    {
+      "feed": "Module",
+      "file": "module/BESS_ModuleTelemetry_Pavagada_2026-09-16.csv",
+      "rows": 27648,
+      "size": 2224029
+    },
+    {
+      "feed": "Module",
+      "file": "module/BESS_ModuleTelemetry_Pavagada_2026-09-17.csv",
+      "rows": 27648,
+      "size": 2224106
+    },
+    {
+      "feed": "Module",
+      "file": "module/BESS_ModuleTelemetry_Pavagada_2026-09-18.csv",
+      "rows": 27648,
+      "size": 2223544
+    },
+    {
+      "feed": "Module",
+      "file": "module/BESS_ModuleTelemetry_Pavagada_2026-09-19.csv",
+      "rows": 27648,
+      "size": 2223600
+    },
+    {
+      "feed": "Module",
+      "file": "module/BESS_ModuleTelemetry_Pavagada_2026-09-20.csv",
+      "rows": 27648,
+      "size": 2222843
+    },
+    {
+      "feed": "Module",
+      "file": "module/BESS_ModuleTelemetry_Pavagada_2026-09-21.csv",
+      "rows": 27648,
+      "size": 2224942
+    },
+    {
+      "feed": "Module",
+      "file": "module/BESS_ModuleTelemetry_Pavagada_2026-09-22.csv",
+      "rows": 27648,
+      "size": 2224269
+    },
+    {
+      "feed": "Module",
+      "file": "module/BESS_ModuleTelemetry_Pavagada_2026-09-23.csv",
+      "rows": 27648,
+      "size": 2224121
+    },
+    {
+      "feed": "Module",
+      "file": "module/BESS_ModuleTelemetry_Pavagada_2026-09-24.csv",
+      "rows": 27648,
+      "size": 2222625
+    },
+    {
+      "feed": "Module",
+      "file": "module/BESS_ModuleTelemetry_Pavagada_2026-09-25.csv",
+      "rows": 27648,
+      "size": 2223057
+    },
+    {
+      "feed": "Module",
+      "file": "module/BESS_ModuleTelemetry_Pavagada_2026-09-26.csv",
+      "rows": 27648,
+      "size": 2223755
+    },
+    {
+      "feed": "Module",
+      "file": "module/BESS_ModuleTelemetry_Pavagada_2026-09-27.csv",
+      "rows": 27648,
+      "size": 2223713
+    },
+    {
+      "feed": "Module",
+      "file": "module/BESS_ModuleTelemetry_Pavagada_2026-09-28.csv",
+      "rows": 27648,
+      "size": 2223739
+    },
+    {
+      "feed": "Module",
+      "file": "module/BESS_ModuleTelemetry_Pavagada_2026-09-29.csv",
+      "rows": 27648,
+      "size": 2224188
+    },
+    {
+      "feed": "Module",
+      "file": "module/BESS_ModuleTelemetry_Pavagada_2026-09-30.csv",
+      "rows": 27648,
+      "size": 2223966
+    }
+  ],
+  "warnings": [],
+  "duration_s": 34.5,
+  "overrides": {},
+  "module_from": "2026-09-01",
+  "calendar_source": "page"
+}
