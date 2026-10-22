@@ -1,0 +1,9 @@
+{
+  "name": "bess-db-docs",
+  "private": true,
+  "description": "ERD layout for db_docs/build_erd.py",
+  "type": "module",
+  "dependencies": {
+    "elkjs": "0.9.3"
+  }
+}
