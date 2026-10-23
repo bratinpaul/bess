@@ -1,0 +1,62 @@
+<div class="page-header">
+  <div>
+    <h2>Roles</h2>
+    <p class="subtitle">Manage Roles</p>
+  </div>
+  <button type="button" class="btn btn-primary" data-perm="admin:write" (click)="newRole()">+ New role</button>
+</div>
+
+@if (error) { <div class="ua-banner bad">{{ error }}</div> }
+@if (flash) { <div class="ua-banner ok">{{ flash }}</div> }
+
+@if (form) {
+  <form class="card ua-card" (ngSubmit)="save()">
+    <h3 style="margin:0 0 10px">{{ form.editing ? 'Edit ' + form.editing : 'New role' }}</h3>
+    <div class="ua-form">
+      @if (!form.editing) {
+        <div class="field"><label for="r-code">Code</label><input id="r-code" name="code" required placeholder="SITE_MANAGER" [(ngModel)]="form.role_code" /></div>
+      }
+      <div class="field"><label for="r-name">Name</label><input id="r-name" name="name" required [(ngModel)]="form.role_name" /></div>
+      <div class="field wide"><label for="r-desc">Description</label><input id="r-desc" name="desc" [(ngModel)]="form.description" /></div>
+      @if (!form.editing) {
+        <div class="field">
+          <label for="r-copy">Start with the privileges of</label>
+          <select id="r-copy" name="copy" [(ngModel)]="form.copy_from">
+            <option value="">No privileges</option>
+            @for (r of roles; track r.role_code) { <option [value]="r.role_code">{{ r.role_name }}</option> }
+          </select>
+        </div>
+      }
+      <label class="check"><input type="checkbox" name="scoped" [(ngModel)]="form.is_tenant_scoped" /> Tenant-scoped (users see only their tenant's sites)</label>
+    </div>
+    <div class="ua-actions">
+      <button type="submit" class="btn btn-primary" [disabled]="busy">{{ busy ? 'Saving…' : 'Save' }}</button>
+      <button type="button" class="btn btn-secondary" (click)="form = null">Cancel</button>
+    </div>
+  </form>
+}
+
+<div class="card ua-card">
+  <div class="table-scroll">
+    <table class="data-table ua-table">
+      <thead><tr><th>Role</th><th>Description</th><th class="num">Users</th><th class="num">Privileges</th><th>Scope</th><th class="num">Version</th><th></th></tr></thead>
+      <tbody>
+        @for (r of roles; track r.role_code) {
+          <tr>
+            <td><b>{{ r.role_name }}</b> @if (r.is_system) { <span class="ua-badge sys">system</span> }<span class="ua-sub mono">{{ r.role_code }}</span></td>
+            <td>{{ r.description || '—' }}</td>
+            <td class="num">{{ r.user_count }}</td>
+            <td class="num"><a [routerLink]="['/admin/rbac']" [queryParams]="{ role: r.role_code }">{{ r.privilege_count }}</a></td>
+            <td>{{ r.is_tenant_scoped ? 'own tenant' : 'all sites' }}</td>
+            <td class="num mono" title="Bumped on every change; tokens issued before it are refreshed">{{ r.version }}</td>
+            <td style="white-space:nowrap">
+              <button type="button" class="link-btn" data-perm="admin:write" (click)="edit(r)">Edit</button>
+              <button type="button" class="link-btn danger" data-perm="admin:delete" [disabled]="r.is_system || r.user_count > 0"
+                      [title]="r.is_system ? 'System role' : r.user_count ? 'Move its users to another role first' : ''" (click)="remove(r)">Delete</button>
+            </td>
+          </tr>
+        }
+      </tbody>
+    </table>
+  </div>
+</div>

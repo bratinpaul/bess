@@ -1,6 +1,6 @@
 """RUL aging snapshots (battery_master.aging_snapshot): list / filter, read, edit and delete. Keyed by the RUL fleet
 system (battery_master.battery_system) and the snapshot date; loaded from rul_aging_snapshots.csv
-(migrations/2026_10_06_aging_snapshot_load.py)."""
+(a one-off load; the data is in the database and its backups)."""
 from datetime import date
 from typing import Literal, Optional
 

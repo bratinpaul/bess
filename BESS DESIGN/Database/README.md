@@ -1,26 +1,42 @@
-# BESS database: ERD and DDL
+# BESS database: ERD, DDL and new-database setup
 
 Generated 2026-10-22 from database `Battery` (PostgreSQL 18.4, TimescaleDB 2.27.1).
 
 | File | Contents |
 |---|---|
 | `BESS_ERD.pdf` | Overview of the 6 schemas and the foreign keys between them, one ERD page per schema, a table index and a view index |
-| `DDL/00_create_all.sql` | Complete DDL for all 6 schemas in runnable order. **Run this one.** |
-| `DDL/battery_<schema>.sql` | The same DDL split per schema, for reading. Cross-schema foreign keys need the other schemas to exist first. |
+| `DDL/00_create_all.sql` | Complete structure for all 6 schemas in runnable order |
+| `DDL/01_seed_reference.sql` | Reference data every install needs: lookup codes (alarm severity, chemistry, modes, states, grid services, market) and the RBAC roles, privileges and role grants |
+| `DDL/battery_<schema>.sql` | The structure split per schema, for reading. Cross-schema foreign keys need the other schemas first. |
 
-## Running the DDL
+## Setting up a new database
 
 ```
 psql -h localhost -U postgres -d <new_db> -v ON_ERROR_STOP=1 -f DDL/00_create_all.sql
+psql -h localhost -U postgres -d <new_db> -v ON_ERROR_STOP=1 -f DDL/01_seed_reference.sql
+python backend/setup/bootstrap_auth.py --commit      # DATABASE_URL must point at <new_db>
 ```
 
-The script creates the extensions (timescaledb, pgcrypto), schemas, enums, tables, sequences, indexes, constraints and views. It then adds the TimescaleDB hypertables, compression settings, continuous aggregates (`WITH NO DATA`; refresh them or let the policies fill them), the views built on those aggregates, the compression, retention and refresh policies, and the database's default `search_path`, which the APIs rely on.
+1. **Structure.** The first script creates the extensions (timescaledb, pgcrypto), schemas, enums, tables, sequences, indexes, constraints and views. It then adds the TimescaleDB hypertables, compression settings, continuous aggregates (`WITH NO DATA`), the views built on them, the policies, and the database's default `search_path`, which the APIs rely on.
+2. **Reference data.** The second script is re-runnable (`ON CONFLICT DO NOTHING`).
+3. **Login bootstrap.** The script creates:
+   - the JWT signing keys in `keys/`, if they're missing;
+   - the starter users `admin@`, `asset.engineer@`, `operator@` and `data.scientist@bess.local`, with password `Password`, which must be changed at first sign-in;
+   - `tenant.viewer@bess.local`, once its tenant has been loaded;
+   - the batch service account, with its password in `keys/service_account.json`.
 
-The script is verified by rebuilding into a scratch database: tables, views, indexes, sequences, constraints, hypertables, continuous aggregates and policies all match the source.
+   Run it without `--commit` first for a rehearsal that changes nothing.
+
+Site, asset and telemetry data then come in through the loaders (static data loader, historical loader, realtime batch). The `battery_*.backup` files in `BESS DESIGN` hold a full copy of the current data (`pg_restore`).
+
+This setup was verified on a scratch database:
+- object counts and seeded row counts matched the source;
+- the role grants were identical;
+- signing in through the API worked for the admin and the service account.
 
 ## Regenerating
 
 ```
-python db_docs/generate_ddl.py --verify    # DDL, plus the scratch-database check
-python db_docs/build_erd.py                # ERD PDF (needs Node and Chrome; runs npm install in db_docs once)
+python db_docs/generate_ddl.py --verify    # DDL + seed, with the scratch-database check
+python db_docs/build_erd.py                # ERD PDF (needs Node and Chrome)
 ```

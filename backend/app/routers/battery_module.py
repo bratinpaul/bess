@@ -1,5 +1,4 @@
 from fastapi import APIRouter, Depends, HTTPException, Request
-from sqlalchemy.exc import DataError, IntegrityError
 from sqlalchemy.orm import Session
 
 from app import models, schemas
@@ -34,16 +33,9 @@ def create_battery_module(payload: schemas.BatteryModuleCreate, db: Session = De
         raise HTTPException(status_code=400, detail="Battery pack not found")
     module = models.BatteryModule(**payload.model_dump())
     db.add(module)
-    try:
-        db.flush()  # assigns module_id
-        sync_node(db, "battery_module", module.module_id)
-        db.commit()
-    except IntegrityError:
-        db.rollback()
-        raise HTTPException(status_code=409, detail="Serial number already exists")
-    except DataError:
-        db.rollback()
-        raise HTTPException(status_code=400, detail="One or more values are out of range for this field")
+    db.flush()  # assigns module_id
+    sync_node(db, "battery_module", module.module_id)
+    db.commit()
     db.refresh(module)
     return module
 
@@ -57,15 +49,8 @@ def update_battery_module(module_id: int, payload: schemas.BatteryModuleUpdate, 
         raise HTTPException(status_code=400, detail="Battery pack not found")
     for field, value in payload.model_dump().items():
         setattr(module, field, value)
-    try:
-        sync_node(db, "battery_module", module_id)  # serial number or pack may have changed
-        db.commit()
-    except IntegrityError:
-        db.rollback()
-        raise HTTPException(status_code=409, detail="Serial number already exists")
-    except DataError:
-        db.rollback()
-        raise HTTPException(status_code=400, detail="One or more values are out of range for this field")
+    sync_node(db, "battery_module", module_id)  # serial number or pack may have changed
+    db.commit()
     db.refresh(module)
     return module
 
@@ -75,13 +60,7 @@ def delete_battery_module(module_id: int, db: Session = Depends(get_db)):
     module = db.get(models.BatteryModule, module_id)
     if not module:
         raise HTTPException(status_code=404, detail="Battery module not found")
-    remove_node(db, "battery_module", module_id)  # rolled back below if the delete fails
+    remove_node(db, "battery_module", module_id)  # undone with the request (get_db) if the delete fails
     db.delete(module)
-    try:
-        db.commit()
-    except IntegrityError:
-        db.rollback()
-        raise HTTPException(
-            status_code=409, detail="Cannot delete battery module: it still has module telemetry recorded against it"
-        )
+    db.commit()
     return None

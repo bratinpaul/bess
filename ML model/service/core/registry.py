@@ -13,7 +13,8 @@ import pandas as pd
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
-from core.base import BaseRegressor, TrainingResult
+from bess_common.errors import Conflict, ModelNotReady, NotFound
+from core.base import ArtifactMissing, BaseRegressor, TrainingResult
 
 RUNS_DIR = Path(__file__).resolve().parent.parent.parent / "artifacts" / "runs"
 
@@ -165,7 +166,7 @@ def set_active(engine: Engine, use_case: str, run_id: Optional[int], battery_sys
             row = conn.execute(text("SELECT battery_system_id FROM battery_ml.model_run WHERE run_id = :id AND use_case = :uc"),
                                {"id": run_id, "uc": use_case}).first()
             if row is None:
-                raise ValueError(f"Run #{run_id} doesn't exist")
+                raise NotFound(f"Run #{run_id} doesn't exist")
             battery_system_id = row[0]
         conn.execute(text("""UPDATE battery_ml.model_run SET is_active = false
                              WHERE is_active AND use_case = :uc AND battery_system_id IS NOT DISTINCT FROM :bsid"""),
@@ -175,7 +176,7 @@ def set_active(engine: Engine, use_case: str, run_id: Optional[int], battery_sys
                                         WHERE run_id = :id AND use_case = :uc AND status = 'COMPLETED'
                                         RETURNING run_id"""), {"id": run_id, "uc": use_case}).scalar()
             if done is None:
-                raise ValueError(f"Run #{run_id} doesn't exist or didn't complete")
+                raise Conflict(f"Run #{run_id} doesn't exist or didn't complete", code="RUN_NOT_COMPLETED")
 
 
 def active_run(engine: Engine, use_case: str, battery_system_id: Optional[int] = None) -> Optional[dict]:
@@ -204,9 +205,9 @@ def load_model(run: dict, models: dict[str, type[BaseRegressor]]) -> BaseRegress
     if run["run_id"] not in _cache:
         path = run.get("artifact_path")
         if not path or not Path(path).exists():
-            raise FileNotFoundError(f"Model file of run #{run['run_id']} is missing")
+            raise ArtifactMissing(log_message=f"model file of run #{run['run_id']} is missing: {path}")
         if run["model_type"] not in models:
-            raise ValueError(f"Run #{run['run_id']} has an unknown model type '{run['model_type']}'")
+            raise ModelNotReady(f"Run #{run['run_id']} has an unknown model type '{run['model_type']}'")
         _cache[run["run_id"]] = models[run["model_type"]].load(Path(path))
     return _cache[run["run_id"]]
 

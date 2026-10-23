@@ -15,9 +15,9 @@ from zoneinfo import ZoneInfo
 from fastapi import APIRouter, Body, Depends, File, HTTPException, Query, UploadFile
 from sqlalchemy import MetaData, Table, and_, func, literal_column, or_, select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from bess_common.errors import FileFormatError
 from app.database import engine, get_db
 from app.services.demand_telemetry_import import _read_csv, _read_xlsx, _ts
 
@@ -308,11 +308,9 @@ def _fmt(v, kind: str) -> Optional[str]:
 
 
 def _commit(db: Session):
-    try:
-        db.commit()
-    except IntegrityError as exc:
-        db.rollback()
-        raise HTTPException(status_code=409, detail=str(exc.orig).splitlines()[0])
+    """Commit; a constraint violation reaches the shared handler (bess_common/errors.py), which answers 409 / 422 with
+    the constraint's catalog message - never the database text."""
+    db.commit()
 
 
 def _key_filter(spec: Spec, t: Table, key: str):
@@ -460,8 +458,9 @@ async def bulk_load(endpoint: str, file: UploadFile = File(...), db: Session = D
             raise HTTPException(status_code=400, detail="Unsupported file type. Please upload a .csv or .xlsx file.")
     except HTTPException:
         raise
-    except Exception as exc:  # noqa: BLE001
-        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:  # noqa: BLE001 - any parser failure means an unreadable file; the cause is logged
+        raise FileFormatError("The file could not be read. Please upload a valid .csv or .xlsx file.",
+                              log_message=f"upload not readable: {type(exc).__name__}: {exc}") from exc
     if len(raw_rows) > MAX_ROWS:
         raise HTTPException(status_code=400, detail=f"File has {len(raw_rows)} rows, above the {MAX_ROWS} row limit.")
     norm = [h.strip().lower() for h in headers]

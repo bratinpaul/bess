@@ -10,6 +10,7 @@ from pydantic import BaseModel, create_model
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from bess_common.errors import BusinessRuleViolation
 from app.database import get_db
 from app.services.bms_kpi.calculator import describe, load_system_params, run
 from app.services.bms_kpi.config import ConfigError, load_config, range_summary
@@ -34,8 +35,8 @@ def make_router(domain: KpiDomain, prefix: str, entity_label: str) -> APIRouter:
     def _config():
         try:
             return load_config(domain)
-        except ConfigError as exc:
-            raise HTTPException(status_code=422, detail=f"KPI configuration error: {exc}")
+        except ConfigError as exc:  # the YAML's own validation messages (written for whoever edits the file)
+            raise BusinessRuleViolation(f"KPI configuration error: {exc}", code="KPI_CONFIG_INVALID") from exc
 
     def _entity_name(db: Session, entity_id: int) -> str:
         name = db.execute(text(f"SELECT {domain.master_name} {domain.master_from} WHERE {domain.master_id} = :id"),
@@ -158,12 +159,9 @@ def make_router(domain: KpiDomain, prefix: str, entity_label: str) -> APIRouter:
         if entity_id is not None and not db.get(domain.entity_model, entity_id):
             raise HTTPException(status_code=404, detail=not_found)
         cfg = _config()
-        try:
-            return run(db, cfg, triggered_by="api", system_ids=[entity_id] if entity_id is not None else None,
-                       start_date=payload.start_date, end_date=payload.end_date, dry_run=payload.dry_run,
-                       domain=domain)
-        except Exception as exc:
-            raise HTTPException(status_code=500, detail=f"KPI calculation failed: {exc}")
+        # a failure is answered by the shared handlers (bess_common/errors.py): generic 500 + reference, trace logged
+        return run(db, cfg, triggered_by="api", system_ids=[entity_id] if entity_id is not None else None,
+                   start_date=payload.start_date, end_date=payload.end_date, dry_run=payload.dry_run, domain=domain)
 
     @router.get("/runs")
     def list_runs(limit: int = Query(10, ge=1, le=100), db: Session = Depends(get_db)):

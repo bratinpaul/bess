@@ -7,6 +7,7 @@ import numpy as np
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
+from bess_common.errors import run_guard
 from core.db import engine
 from usecases.hvac_cop import model as M
 from usecases.hvac_cop import monitor as Mon
@@ -98,15 +99,9 @@ def create_run(body: RunRequest):
         raise HTTPException(status_code=400, detail="date_from must be on or before date_to")
     run_id = store.start_run(engine, {"name": body.run_name, "ids": body.hvac_ids, "date_from": body.date_from,
                                       "date_to": body.date_to, "params": body.model_dump(mode="json")})
-    try:
+    with run_guard(fail=lambda msg: store.fail_run(engine, run_id, msg), context={"run_id": run_id}):
         result = run(engine, _config(body))
         store.complete_run(engine, run_id, result)
-    except M.HvacCopError as exc:
-        store.fail_run(engine, run_id, str(exc))
-        raise HTTPException(status_code=400, detail={"message": str(exc), "run_id": run_id})
-    except Exception as exc:  # noqa: BLE001
-        store.fail_run(engine, run_id, f"{type(exc).__name__}: {exc}")
-        raise HTTPException(status_code=500, detail={"message": f"Run failed: {exc}", "run_id": run_id})
     return store.get_run(engine, run_id)
 
 

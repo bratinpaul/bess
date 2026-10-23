@@ -1,0 +1,82 @@
+<div class="page-header">
+  <div>
+    <h2>Privileges</h2>
+    <p class="subtitle">Manage privileges.</p>
+  </div>
+  <button type="button" class="btn btn-primary" data-perm="admin:write" (click)="form = { resource: '', action: 'read', module_label: '', description: '' }">+ Add privilege</button>
+</div>
+
+@if (error) { <div class="ua-banner bad">{{ error }}</div> }
+@if (flash) { <div class="ua-banner ok">{{ flash }}</div> }
+@if (notEnforced) {
+  <div class="ua-banner bad">{{ notEnforced }} privilege(s) are not checked by any service: granting or revoking them changes nothing in the APIs.</div>
+}
+
+@if (form) {
+  <form class="card ua-card" (ngSubmit)="add()">
+    <h3 style="margin:0 0 10px">New custom privilege</h3>
+    <div class="ua-form">
+      <div class="field"><label for="p-res">Resource</label><input id="p-res" name="res" required placeholder="reports.export" [(ngModel)]="form.resource" /></div>
+      <div class="field">
+        <label for="p-act">Action</label>
+        <select id="p-act" name="act" [(ngModel)]="form.action">@for (a of actions; track a) { <option [value]="a">{{ a }}</option> }</select>
+      </div>
+      <div class="field"><label for="p-mod">Module label</label><input id="p-mod" name="mod" placeholder="Reports > export" [(ngModel)]="form.module_label" /></div>
+      <div class="field wide"><label for="p-desc">Description</label><input id="p-desc" name="desc" [(ngModel)]="form.description" /></div>
+    </div>
+    <p class="ua-sub">Code: <span class="mono">{{ (form.resource || 'resource').toLowerCase() }}:{{ form.action }}</span></p>
+    <div class="ua-actions">
+      <button type="submit" class="btn btn-primary" [disabled]="busy">{{ busy ? 'Saving…' : 'Add' }}</button>
+      <button type="button" class="btn btn-secondary" (click)="form = null">Cancel</button>
+    </div>
+  </form>
+}
+
+<div class="card ua-card">
+  <div class="ua-bar">
+    <div class="field grow"><label for="pq">Search</label><input id="pq" [(ngModel)]="q" placeholder="code or module" /></div>
+    <div class="field">
+      <label for="ps">Show</label>
+      <select id="ps" [(ngModel)]="sourceFilter">
+        <option value="">All</option><option value="system">System</option><option value="custom">Custom</option><option value="not-enforced">Not enforced</option>
+      </select>
+    </div>
+  </div>
+  <div class="table-scroll">
+    <table class="data-table ua-table">
+      <thead><tr><th>Code</th><th>Module</th><th>Source</th><th>Checked by</th><th>Granted to</th><th></th></tr></thead>
+      <tbody>
+        @for (p of shown; track p.privilege_id) {
+          <tr>
+            <td><span class="mono"><b>{{ p.code }}</b></span>
+              @if (editing?.id === p.privilege_id) {
+                <input class="ua-sub" style="width:100%;margin-top:4px" placeholder="description" [(ngModel)]="editing!.description" />
+              } @else if (p.description) { <span class="ua-sub">{{ p.description }}</span> }
+            </td>
+            <td>
+              @if (editing?.id === p.privilege_id) { <input style="width:100%" [(ngModel)]="editing!.module_label" /> } @else { {{ p.module_label || '—' }} }
+            </td>
+            <td><span class="ua-badge" [class.sys]="p.source === 'system'">{{ p.source }}</span></td>
+            <td>
+              @if (p.enforced) { @for (s of p.registered_by; track s) { <span class="ua-badge good">{{ s }}</span> } }
+              @else { <span class="ua-badge warn">not enforced</span> }
+            </td>
+            <td>@for (r of p.roles; track r) { <span class="ua-badge">{{ r }}</span> } @empty { <span class="ua-sub">no role</span> }</td>
+            <td style="white-space:nowrap">
+              @if (editing?.id === p.privilege_id) {
+                <button type="button" class="link-btn" (click)="saveEdit()">Save</button>
+                <button type="button" class="link-btn" (click)="editing = null">Cancel</button>
+              } @else {
+                <button type="button" class="link-btn" data-perm="admin:write" (click)="startEdit(p)">Edit</button>
+                @if (p.source === 'custom') {
+                  <button type="button" class="link-btn danger" data-perm="admin:delete" [disabled]="p.roles.length > 0"
+                          [title]="p.roles.length ? 'Revoke it in the RBAC matrix first' : ''" (click)="remove(p)">Delete</button>
+                }
+              }
+            </td>
+          </tr>
+        }
+      </tbody>
+    </table>
+  </div>
+</div>

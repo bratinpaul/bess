@@ -8,6 +8,7 @@ source = study   a study's run of the day - plan from dispatch_schedule, execute
 Prices: rt_price (15-min), dam_price and the run's forecast vintage (P10 / P50 / P90, hourly) for every interval.
 Power sign: + discharge / − charge.
 """
+import logging
 from datetime import date, datetime
 from functools import lru_cache
 from typing import Optional
@@ -17,13 +18,17 @@ import pandas as pd
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
+from core.base import UseCaseError
 from usecases.arbitrage import data as D
 from usecases.arbitrage.backtest import StudyConfig, run_day
 from usecases.arbitrage.optimizer import Settings
 
 
-class ViewError(Exception):
-    pass
+log = logging.getLogger(__name__)
+
+
+class ViewError(UseCaseError):
+    code = "ARBITRAGE_VIEW_REJECTED"
 
 
 def _n(v, nd=4):
@@ -136,8 +141,11 @@ def day_view(engine: Engine, source: str, day: date, system_id: int, study_id: O
             oracle = {"intervals": [{"ts": t, "p": _n(p, 2), "soc": _n(s, 2), "net": _n(n)}
                                     for t, p, s, n in zip(ts, op, osoc, onet)], "net_usd": _n(o_total, 2),
                       "as_usd": 0.0, "total_usd": _n(o_total, 2), "note": "solved on demand, energy only"}
-        except Exception as exc:  # noqa: BLE001 - the viewer still works without the oracle
-            oracle = {"error": str(exc)}
+        except UseCaseError as exc:  # e.g. missing prices: the viewer still works without the oracle
+            oracle = {"error": exc.public}
+        except Exception:  # noqa: BLE001 - the viewer still works without the oracle; the cause goes to the log
+            log.exception("perfect-foresight oracle failed", extra={"event": "arbitrage.oracle_failed"})
+            oracle = {"error": "The perfect-foresight comparison could not be solved for this day."}
     else:
         pol, ora = bt[bt["kind"] == "policy"], bt[bt["kind"] == "oracle"]
         if pol.empty:

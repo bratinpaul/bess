@@ -1,13 +1,20 @@
 from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+import logging
+
+from bess_common.errors import api_docs_kwargs, install_exception_handlers
 from bess_common.observability import RequestContextMiddleware, enable_activity_log, setup_logging
 
 setup_logging("backend")  # JSON lines to stdout + logs/backend/backend.log, before anything else logs
 
 from app.auth import authenticated, rbac_map
 from app.database import engine
+from bess_common.auth import enforced_permissions, set_freshness_check  # noqa: E402
+from bess_common.rbac_store import sync_privilege_registry  # noqa: E402
 from bess_common.tenant import ScopeResolver, TenantResponseFilter, tenant_guard
+from app.auth.freshness import freshness  # noqa: E402
+from app.auth import admin as auth_admin
 from app.auth import router as auth_router
 from app.auth import signup as auth_signup
 from app.routers import (
@@ -67,7 +74,9 @@ from app.routers import (
     fault_tables,
 )
 
-app = FastAPI(title="BESS Master Data API")
+app = FastAPI(title="BESS Master Data API", **api_docs_kwargs())  # no /docs, /redoc, /openapi.json when APP_ENV=prod
+# one error shape for every 4xx/5xx; safe messages only, 5xx logged with the stack trace (bess_common/errors.py)
+install_exception_handlers(app)
 
 routers = [
     activity_log,
@@ -143,6 +152,19 @@ for module, extra in ((ems_hvac, ems_hvac.ems_router), (ems_hvac, ems_hvac.hvac_
     app.include_router(extra, dependencies=protected(module))
 app.include_router(auth_router.router)
 app.include_router(auth_signup.router)  # public sign-up + admin review of access requests
+app.include_router(auth_admin.router)  # user management: privileges, roles, RBAC matrix, users (admin:*)
+
+# tokens whose role / user changed since they were issued are refused (401) and refreshed by the client
+set_freshness_check(freshness)
+
+
+@app.on_event("startup")
+def register_privileges() -> None:
+    """Record the permission codes this service enforces (battery_users.privilege.registered_by / enforced)."""
+    try:
+        sync_privilege_registry(engine, "backend", enforced_permissions())
+    except Exception as exc:  # noqa: BLE001 - the API must still start; the catalogue just isn't refreshed
+        logging.getLogger("bess.rbac").error("privilege registry sync failed", extra={"error": str(exc)[:200]})
 
 
 # ---------------------------------------------------------------- observability

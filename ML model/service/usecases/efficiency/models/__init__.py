@@ -1,11 +1,13 @@
 """The efficiency models: grey-box loss model (backbone), GAM, and the gradient boosting residual on the grey-box."""
+from core.base import UseCaseError
 from usecases.efficiency.models.gam import GamEfficiencyModel
 from usecases.efficiency.models.greybox import GreyBoxLossModel, eta_from_loss, loss_from_eta
 from usecases.efficiency.models.residual import BOOSTERS, ResidualBooster
 
 
-class EfficiencyError(Exception):
+class EfficiencyError(UseCaseError):
     """Bad training / estimation input (the API answers 400)."""
+    code = "EFFICIENCY_INPUT_REJECTED"
 
 
 def clean_params(specs: list[dict], params: dict, label: str) -> dict:

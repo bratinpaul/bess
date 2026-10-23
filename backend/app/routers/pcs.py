@@ -1,5 +1,4 @@
 from fastapi import APIRouter, Depends, HTTPException, Request
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app import models, schemas
@@ -34,13 +33,9 @@ def create_pcs(payload: schemas.PcsCreate, db: Session = Depends(get_db)):
         raise HTTPException(status_code=400, detail="Battery system not found")
     item = models.Pcs(**payload.model_dump())
     db.add(item)
-    try:
-        db.flush()  # assigns pcs_id
-        sync_node(db, "pcs", item.pcs_id)
-        db.commit()
-    except IntegrityError:
-        db.rollback()
-        raise HTTPException(status_code=409, detail="A PCS with this code already exists for this battery system")
+    db.flush()  # assigns pcs_id
+    sync_node(db, "pcs", item.pcs_id)
+    db.commit()
     db.refresh(item)
     return item
 
@@ -54,12 +49,8 @@ def update_pcs(pcs_id: int, payload: schemas.PcsUpdate, db: Session = Depends(ge
         raise HTTPException(status_code=400, detail="Battery system not found")
     for field, value in payload.model_dump().items():
         setattr(item, field, value)
-    try:
-        sync_node(db, "pcs", pcs_id)  # code or battery system may have changed
-        db.commit()
-    except IntegrityError:
-        db.rollback()
-        raise HTTPException(status_code=409, detail="A PCS with this code already exists for this battery system")
+    sync_node(db, "pcs", pcs_id)  # code or battery system may have changed
+    db.commit()
     db.refresh(item)
     return item
 
@@ -69,11 +60,7 @@ def delete_pcs(pcs_id: int, db: Session = Depends(get_db)):
     item = db.get(models.Pcs, pcs_id)
     if not item:
         raise HTTPException(status_code=404, detail="PCS not found")
-    remove_node(db, "pcs", pcs_id)  # rolled back below if the delete fails
+    remove_node(db, "pcs", pcs_id)  # undone with the request (get_db) if the delete fails
     db.delete(item)
-    try:
-        db.commit()
-    except IntegrityError:
-        db.rollback()
-        raise HTTPException(status_code=409, detail="Cannot delete PCS: it still has PCS telemetry recorded against it")
+    db.commit()
     return None

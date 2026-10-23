@@ -28,6 +28,7 @@ HERE = Path(__file__).resolve().parent
 if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 import generator as G  # noqa: E402
+from bess_common.errors import EXIT_FAILED, EXIT_OK, EXIT_PARTIAL, batch_error_code, run_main  # noqa: E402
 
 JOB_NAME = "historical_generate"
 LOCK = HERE / ".historical_generate.lock"
@@ -88,9 +89,9 @@ def run(jobs: dict, progress_path: Optional[Path], log=print) -> dict:
                         folder_relative=report["folder_relative"], site_name=report["site_name"],
                         system_name=report["system_name"])
         except G.GenerationError as exc:
-            site.update(status="FAILED", error=str(exc))
-        except Exception as exc:  # noqa: BLE001 - one site's failure must not stop the others
-            site.update(status="FAILED", error=f"{type(exc).__name__}: {exc}")
+            site.update(status="FAILED", error=exc.public)
+        except Exception:  # noqa: BLE001 - one site's failure must not stop the others; the trace stays in the log
+            site.update(status="FAILED", error=f"Unexpected error (ref {jobs['run_id']}) - see the generator log")
             log(traceback.format_exc())
         site["seconds"] = round(time.perf_counter() - t0, 1)
         progress.write(sites=sites)
@@ -118,17 +119,19 @@ def write_batchlog(jobs, sites, status, error, started, finished, log) -> Option
             cur.execute(
                 """INSERT INTO battery_raw.batchlog
                      (run_id, job_name, file_name, status, started_at, finished_at, duration_ms, feeds_total,
-                      feeds_loaded, feeds_failed, rows_total, feed_results, warnings, error_message, archive_path,
-                      host_name, report)
+                      feeds_loaded, feeds_failed, rows_total, feed_results, warnings, error_message, error_code,
+                      request_id, archive_path, host_name, report)
                    VALUES (%(run_id)s, %(job)s, %(file_name)s, %(status)s, %(started)s, %(finished)s, %(ms)s, %(total)s,
-                      %(done)s, %(failed)s, %(rows)s, %(feed_results)s, %(warnings)s, %(error)s, %(folder)s, %(host)s,
-                      %(report)s) RETURNING batch_id""",
+                      %(done)s, %(failed)s, %(rows)s, %(feed_results)s, %(warnings)s, %(error)s, %(error_code)s,
+                      %(run_id)s, %(folder)s, %(host)s, %(report)s) RETURNING batch_id""",
                 dict(run_id=jobs["run_id"], job=JOB_NAME, file_name=f"{names} · {jobs['date_from']} – {jobs['date_to']}",
                      status=status, started=started, finished=finished,
                      ms=int((finished - started).total_seconds() * 1000), total=len(sites),
                      done=sum(s["status"] == "DONE" for s in sites), failed=sum(s["status"] == "FAILED" for s in sites),
                      rows=rows, feed_results=Json(feed_results),
                      warnings=Json([f"{s['site_name']}: {w}" for s in sites for w in s["warnings"]]), error=error,
+                     error_code=batch_error_code(status, "GENERATION_PARTIAL" if status == "PARTIAL" else
+                                                 "GENERATION_FAILED"),
                      folder=str(G.HISTORICAL.relative_to(G.PROJECT / "input")), host=socket.gethostname(),
                      report=Json(json.loads(json.dumps({"jobs": jobs, "sites": sites}, default=str)))))
             batch_id = cur.fetchone()[0]
@@ -167,10 +170,10 @@ def main(argv: Optional[list[str]] = None) -> int:
     with Lock() as locked:
         if not locked:
             print("another generation is still running")
-            return 4
+            return EXIT_FAILED
         result = run(jobs, args.progress, log=lambda m: print(m, flush=True))
-    return {"SUCCESS": 0, "PARTIAL": 1}.get(result["status"], 2)
+    return {"SUCCESS": EXIT_OK, "PARTIAL": EXIT_PARTIAL}.get(result["status"], EXIT_FAILED)
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(run_main("historical_generate", main))

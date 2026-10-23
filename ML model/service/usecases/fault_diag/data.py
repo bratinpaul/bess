@@ -15,6 +15,8 @@ import pandas as pd
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
+from core.base import UseCaseError
+
 TZ = "Asia/Kolkata"
 
 TELEMETRY_SQL = """
@@ -138,8 +140,8 @@ UNAVAILABLE = {"can_error_rate": "no CAN error counters are logged",
                "dc_bus_ripple_v": "no DC-bus ripple measurement is logged"}
 
 
-class FaultDataError(Exception):
-    pass
+class FaultDataError(UseCaseError):
+    code = "FAULT_DATA_REJECTED"
 
 
 def _num(v):

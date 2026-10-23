@@ -7,11 +7,7 @@ from sqlalchemy.orm import Session
 from app import models, schemas
 from app.database import get_db
 from app.services.ems_telemetry_series import get_ems_series
-from app.services.ems_telemetry_import import (
-    EmsTelemetryImportError,
-    parse_ems_telemetry_file,
-    upsert_ems_telemetry_rows,
-)
+from app.services.ems_telemetry_import import parse_ems_telemetry_file, upsert_ems_telemetry_rows
 
 router = APIRouter(prefix="/api/ems-telemetry", tags=["ems-telemetry"])
 
@@ -123,12 +119,9 @@ async def bulk_add_ems_telemetry(
     if not content:
         raise HTTPException(status_code=400, detail="Uploaded file is empty")
 
-    try:
-        valid_rows, row_errors, total_rows = parse_ems_telemetry_file(
-            file.filename or "upload", content, db, controller.ems_id
-        )
-    except EmsTelemetryImportError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+    valid_rows, row_errors, total_rows = parse_ems_telemetry_file(
+        file.filename or "upload", content, db, controller.ems_id
+    )
 
     inserted, updated = upsert_ems_telemetry_rows(db, valid_rows)
     db.commit()

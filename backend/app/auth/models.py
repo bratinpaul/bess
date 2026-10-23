@@ -1,4 +1,4 @@
-"""Async SQLAlchemy models of the battery_users schema (see migrations/2026_10_21_battery_users.py).
+"""Async SQLAlchemy models of the battery_users schema (DDL: BESS DESIGN/Database/DDL/battery_users.sql).
 
 They use their own declarative base and an asyncpg engine, because fastapi-users needs an async session; the rest of the
 backend keeps its sync psycopg2 engine.
@@ -10,8 +10,8 @@ from typing import AsyncGenerator, Optional
 
 from dotenv import load_dotenv
 from fastapi_users_db_sqlalchemy import SQLAlchemyBaseUserTableUUID
-from sqlalchemy import Boolean, Computed, DateTime, ForeignKey, Integer, SmallInteger, String, Text, func
-from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy import BigInteger, Boolean, Computed, DateTime, ForeignKey, Integer, SmallInteger, String, Text, func
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -31,6 +31,9 @@ class Role(AuthBase):
     role_name: Mapped[str] = mapped_column(Text, unique=True)
     is_tenant_scoped: Mapped[bool] = mapped_column(Boolean, default=False)
     description: Mapped[Optional[str]] = mapped_column(Text)
+    is_system: Mapped[bool] = mapped_column(Boolean, default=False)
+    version: Mapped[int] = mapped_column(Integer, default=1)  # bumped on every change; tokens carry it (rv)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
 class Privilege(AuthBase):
@@ -41,6 +44,10 @@ class Privilege(AuthBase):
     action: Mapped[str] = mapped_column(Text)
     code: Mapped[str] = mapped_column(Text, Computed("resource || ':' || action"))
     module_label: Mapped[Optional[str]] = mapped_column(Text)
+    source: Mapped[str] = mapped_column(Text, default="custom")  # system (registered by code) | custom (added by admin)
+    enforced: Mapped[bool] = mapped_column(Boolean, default=False)
+    description: Mapped[Optional[str]] = mapped_column(Text)
+    registered_by: Mapped[list[str]] = mapped_column(ARRAY(Text), default=list)
 
 
 class RolePrivilege(AuthBase):
@@ -62,6 +69,7 @@ class User(SQLAlchemyBaseUserTableUUID, AuthBase):
     failed_logins: Mapped[int] = mapped_column(Integer, default=0)
     locked_until: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     last_login_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    token_version: Mapped[int] = mapped_column(Integer, default=1)  # bumped on role / tenant / status change (uv)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
@@ -96,6 +104,21 @@ class AuthAudit(AuthBase):
     detail: Mapped[Optional[dict]] = mapped_column(JSONB)
 
 
+class RbacChange(AuthBase):
+    """User-management history: who changed which role / privilege / grant / user, with before and after."""
+    __tablename__ = "rbac_change"
+    __table_args__ = {"schema": SCHEMA}
+    change_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    ts: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    actor_email: Mapped[str] = mapped_column(Text)
+    request_id: Mapped[Optional[str]] = mapped_column(Text)
+    entity: Mapped[str] = mapped_column(Text)
+    action: Mapped[str] = mapped_column(Text)
+    target: Mapped[str] = mapped_column(Text)
+    before: Mapped[Optional[dict]] = mapped_column(JSONB)
+    after: Mapped[Optional[dict]] = mapped_column(JSONB)
+
+
 def _async_url() -> str:
     url = os.getenv("DATABASE_URL", "")
     if not url:
@@ -107,9 +130,9 @@ def _async_url() -> str:
 # bound to the loop that opened them
 if os.getenv("AUTH_DB_NULLPOOL") == "1":
     from sqlalchemy.pool import NullPool
-    async_engine = create_async_engine(_async_url(), poolclass=NullPool)
+    async_engine = create_async_engine(_async_url(), poolclass=NullPool, hide_parameters=True)
 else:
-    async_engine = create_async_engine(_async_url(), pool_pre_ping=True, pool_size=5)
+    async_engine = create_async_engine(_async_url(), pool_pre_ping=True, pool_size=5, hide_parameters=True)
 AsyncSessionLocal = async_sessionmaker(async_engine, expire_on_commit=False)
 
 
@@ -119,7 +142,7 @@ async def get_async_session() -> AsyncGenerator[AsyncSession, None]:
 
 
 class AccessRequest(AuthBase):
-    """Self-service sign-up waiting for (or decided by) an Admin - see migrations/2026_10_21_access_request.py."""
+    """Self-service sign-up waiting for (or decided by) an Admin."""
     __tablename__ = "access_request"
     __table_args__ = {"schema": SCHEMA}
     request_id: Mapped[int] = mapped_column(Integer, primary_key=True)

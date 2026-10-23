@@ -15,6 +15,7 @@ from sqlalchemy import literal_column
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
+from bess_common.errors import AppError, FileFormatError
 from app import models, schemas
 from app.services.demand_telemetry_import import _read_csv, _read_xlsx
 
@@ -25,7 +26,7 @@ TRUE = {"true", "t", "yes", "y", "1"}
 FALSE = {"false", "f", "no", "n", "0"}
 
 
-class CalendarImportError(Exception):
+class CalendarImportError(FileFormatError):
     """File-level problems: bad format, missing columns, empty file."""
 
 
@@ -70,8 +71,11 @@ def parse_calendar_file(filename: str, content: bytes):
             raise CalendarImportError("Unsupported file type. Please upload a .csv or .xlsx file.")
     except CalendarImportError:
         raise
-    except Exception as exc:  # the shared readers raise their own error type
-        raise CalendarImportError(str(exc)) from exc
+    except AppError as exc:  # a reader's own file-level error
+        raise CalendarImportError(exc.public, log_message=exc.log_message) from exc
+    except Exception as exc:  # noqa: BLE001 - any other parser failure means an unreadable file
+        raise CalendarImportError("The file could not be read. Please upload a valid .csv or .xlsx file.",
+                                      log_message=f"upload not readable: {type(exc).__name__}: {exc}") from exc
     if len(raw_rows) > MAX_ROWS:
         raise CalendarImportError(f"File has {len(raw_rows)} rows, above the {MAX_ROWS} row limit.")
 

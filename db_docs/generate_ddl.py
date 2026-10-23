@@ -9,12 +9,15 @@ continuous aggregates come out as views over internal _timescaledb tables, and p
   4. policies: compression, retention, continuous-aggregate refresh
 
 Outputs
-  00_create_all.sql      everything, in a runnable order (run this one)
-  battery_<schema>.sql   one schema each, for reading / review (cross-schema FKs need the other schemas first)
+  00_create_all.sql        everything, in a runnable order (run this one first)
+  01_seed_reference.sql    reference data a new database needs: lookup codes and the RBAC roles / privileges
+  battery_<schema>.sql     one schema each, for reading / review (cross-schema FKs need the other schemas first)
 
-Usage:  python db_docs/generate_ddl.py [--verify]
-        --verify runs 00_create_all.sql into a scratch database (battery_ddl_verify), compares object counts
-        with the source, and drops it again.
+After both scripts, run backend/setup/bootstrap_auth.py for the JWT keys, starter users and batch service account.
+
+Usage:  python db_docs/generate_ddl.py [--verify [--keep]]
+        --verify runs 00 + 01 into a scratch database (battery_ddl_verify), compares object counts and seeded row
+        counts with the source, and drops it again (--keep leaves it for further checks).
 """
 import argparse
 import os
@@ -32,6 +35,15 @@ OUT = ROOT / "BESS DESIGN" / "Database" / "DDL"
 PG_BIN = Path(os.getenv("PG_BIN", r"C:\Program Files\PostgreSQL\18\bin"))
 SCHEMAS = ["battery_master", "battery_users", "battery_raw", "battery_telemetry", "battery_ml", "battery_itops"]
 VERIFY_DB = "battery_ddl_verify"
+# reference data every install needs (the rest of the data is site / tenant specific and comes from the loaders)
+SEED_TABLES = [
+    "battery_master.alarm_severity", "battery_master.battery_chemistry", "battery_master.contactor_state",
+    "battery_master.ems_dispatch_mode", "battery_master.ems_grid_service", "battery_master.eol_criteria",
+    "battery_master.hvac_cooling_mode", "battery_master.market", "battery_master.operating_mode",
+    "battery_master.pcs_breaker_state", "battery_master.pcs_command_type", "battery_master.pcs_grid_service",
+    "battery_master.pcs_mode", "battery_master.pcs_ride_through_type",
+    "battery_users.role", "battery_users.privilege", "battery_users.role_privilege",
+]
 
 
 def q(name: str) -> str:
@@ -263,23 +275,52 @@ def counts(cur) -> dict:
     return out
 
 
-def verify(dsn: dict, script: Path, source: dict) -> bool:
+def seed_sql(dsn: dict) -> str:
+    """Data-only INSERTs for SEED_TABLES (FK order, identity values and sequence positions kept; re-runnable)."""
+    args = [str(PG_BIN / ("pg_dump.exe" if os.name == "nt" else "pg_dump")), "-h", dsn["host"], "-p", str(dsn["port"]),
+            "-U", dsn["user"], "-d", dsn["dbname"], "--data-only", "--column-inserts", "--on-conflict-do-nothing",
+            "--no-owner", "--no-privileges"]
+    for t in SEED_TABLES:
+        args += ["-t", t]
+    r = subprocess.run(args, env={**os.environ, "PGPASSWORD": dsn["password"]}, capture_output=True, text=True,
+                       encoding="utf-8")
+    if r.returncode:
+        raise RuntimeError(r.stderr)
+    return "\n".join([
+        "-- BESS reference data: lookup codes and RBAC roles / privileges / role grants",
+        f"-- Generated {date.today().isoformat()} by db_docs/generate_ddl.py from database {dsn['dbname']}",
+        "-- Run after 00_create_all.sql; re-running is safe (ON CONFLICT DO NOTHING).",
+        "-- Then run backend/setup/bootstrap_auth.py (JWT keys, starter users, batch service account).",
+        "", r.stdout]) + "\n"
+
+
+def seed_counts(cur) -> dict:
+    out = {}
+    for t in SEED_TABLES:
+        s, n = t.split(".")
+        cur.execute(f"SELECT count(*) FROM {q(s)}.{q(n)}")
+        out[f"rows {t}"] = cur.fetchone()[0]
+    return out
+
+
+def verify(dsn: dict, scripts: list[Path], source: dict, keep: bool = False) -> bool:
     admin = psycopg2.connect(**{**dsn, "dbname": "postgres"})
     admin.autocommit = True
     with admin.cursor() as cur:
-        cur.execute(f"DROP DATABASE IF EXISTS {VERIFY_DB}")
+        cur.execute(f"DROP DATABASE IF EXISTS {VERIFY_DB} WITH (FORCE)")
         cur.execute(f"CREATE DATABASE {VERIFY_DB}")
     try:
-        r = subprocess.run([str(PG_BIN / ("psql.exe" if os.name == "nt" else "psql")), "-h", dsn["host"],
-                            "-p", str(dsn["port"]), "-U", dsn["user"], "-d", VERIFY_DB, "-v", "ON_ERROR_STOP=1",
-                            "-q", "-f", str(script)],
-                           env={**os.environ, "PGPASSWORD": dsn["password"], "PGCLIENTENCODING": "UTF8"},
-                           capture_output=True, text=True, encoding="utf-8")
-        if r.returncode:
-            print("verify: script failed\n" + r.stderr[-3000:])
-            return False
+        for script in scripts:
+            r = subprocess.run([str(PG_BIN / ("psql.exe" if os.name == "nt" else "psql")), "-h", dsn["host"],
+                                "-p", str(dsn["port"]), "-U", dsn["user"], "-d", VERIFY_DB, "-v", "ON_ERROR_STOP=1",
+                                "-q", "-f", str(script)],
+                               env={**os.environ, "PGPASSWORD": dsn["password"], "PGCLIENTENCODING": "UTF8"},
+                               capture_output=True, text=True, encoding="utf-8")
+            if r.returncode:
+                print(f"verify: {script.name} failed\n" + r.stderr[-3000:])
+                return False
         with psycopg2.connect(**{**dsn, "dbname": VERIFY_DB}) as c, c.cursor() as cur:
-            target = counts(cur)
+            target = {**counts(cur), **seed_counts(cur)}
         diff = {k: (source.get(k), target.get(k)) for k in sorted(set(source) | set(target))
                 if source.get(k) != target.get(k)}
         # indexes / sequences on TimescaleDB internals can differ slightly; report everything, fail on structure
@@ -291,14 +332,18 @@ def verify(dsn: dict, script: Path, source: dict) -> bool:
             print("verify: rebuilt database matches the source object counts")
         return not any(not k.endswith(".i") for k in diff)
     finally:
-        with admin.cursor() as cur:
-            cur.execute(f"DROP DATABASE IF EXISTS {VERIFY_DB} WITH (FORCE)")
+        if keep:
+            print(f"verify: scratch database {VERIFY_DB} kept")
+        else:
+            with admin.cursor() as cur:
+                cur.execute(f"DROP DATABASE IF EXISTS {VERIFY_DB} WITH (FORCE)")
         admin.close()
 
 
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--verify", action="store_true")
+    ap.add_argument("--keep", action="store_true", help="with --verify: keep the scratch database")
     args = ap.parse_args()
     dsn = psycopg2_dsn()
     OUT.mkdir(parents=True, exist_ok=True)
@@ -311,11 +356,13 @@ def main() -> int:
         (OUT / "00_create_all.sql").write_text(build(cur, dsn, SCHEMAS, all_caggs, deps), encoding="utf-8")
         for s in SCHEMAS:
             (OUT / f"{s}.sql").write_text(build(cur, dsn, [s], all_caggs, deps), encoding="utf-8")
-        source = counts(cur)
+        (OUT / "01_seed_reference.sql").write_text(seed_sql(dsn), encoding="utf-8")
+        source = {**counts(cur), **seed_counts(cur)}
     for f in sorted(OUT.glob("*.sql")):
         print(f"{f.name}: {sum(1 for _ in f.open(encoding='utf-8'))} lines")
     if args.verify:
-        return 0 if verify(dsn, OUT / "00_create_all.sql", source) else 1
+        ok = verify(dsn, [OUT / "00_create_all.sql", OUT / "01_seed_reference.sql"], source, keep=args.keep)
+        return 0 if ok else 1
     return 0
 
 

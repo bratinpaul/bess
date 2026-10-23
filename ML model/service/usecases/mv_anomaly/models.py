@@ -20,6 +20,8 @@ from sklearn.decomposition import PCA
 from sklearn.ensemble import IsolationForest
 from sklearn.neural_network import MLPRegressor
 
+from core.base import TrainingError
+
 MODEL_LABELS = {
     "pca": "PCA (Q / T²)",
     "iforest": "Isolation Forest",
@@ -183,7 +185,7 @@ class WindowAutoencoderDetector(AutoencoderDetector):
         w = self._stack(x)
         ok = ~np.isnan(w).any(axis=1) & rows & (valid if valid is not None else True)
         if ok.sum() < 50:
-            raise ValueError("too few gap-free windows to train the temporal autoencoder")
+            raise TrainingError("Too few gap-free windows to train the temporal autoencoder")
         self.n_features = x.shape[1]
         self.net = self._net(w.shape[1]).fit(w[ok], w[ok])
         return self

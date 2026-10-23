@@ -7,13 +7,14 @@ import numpy as np
 import pandas as pd
 from fastapi import APIRouter, HTTPException, Query, Request
 
+from bess_common.errors import run_guard
 from core.auth import can_approve
 from core.db import engine
 from core.metrics import finite
 from usecases.netload_forecast import features as F
 from usecases.netload_forecast import store
 from usecases.netload_forecast import trainer as T
-from usecases.netload_forecast.models import ALL_MODELS, BASELINE, PEAK, ForecastError, clean_params
+from usecases.netload_forecast.models import ALL_MODELS, BASELINE, PEAK, clean_params
 from usecases.netload_forecast.schemas import SelectionIn, TrainRequest
 
 USE_CASE = "netload_forecast"
@@ -39,10 +40,7 @@ def _run(model: str) -> tuple[dict, dict]:
     if not run:
         raise HTTPException(status_code=404, detail="No completed net-load forecast model yet" if model == "active"
                             else f"Run {model} is not a completed net-load forecast run")
-    try:
-        return run, store.load_artifact(run)
-    except FileNotFoundError as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
+    return run, store.load_artifact(run)
 
 
 def _public(run: dict) -> dict:
@@ -102,10 +100,7 @@ def train(request: Request, body: TrainRequest):
     if unknown:
         raise HTTPException(status_code=400, detail=f"Unknown model(s): {', '.join(unknown)}")
     models = [BASELINE] + [m for m in body.models if m != BASELINE]
-    try:
-        params = {m: clean_params(ALL_MODELS[m], body.params.get(m, {})) for m in models}
-    except ForecastError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+    params = {m: clean_params(ALL_MODELS[m], body.params.get(m, {})) for m in models}
     stored = {**params, "train_origin_step_h": body.train_origin_step_h, "random_state": body.random_state}
     run_id = store.start_run(engine, {
         "run_name": body.run_name, "mp_ids": body.mp_ids, "date_from": body.date_from, "date_to": body.date_to,
@@ -114,17 +109,11 @@ def train(request: Request, body: TrainRequest):
         "peak_threshold_kw": body.peak_threshold_kw, "models": models, "params": stored})
     cfg = T.RunConfig(sel, models, params, body.horizon_hours, body.test_fraction, body.origin_step_h,
                       body.train_origin_step_h, body.random_state)
-    try:
+    with run_guard(fail=lambda msg: store.fail_run(engine, run_id, msg), context={"run_id": run_id}):
         result = T.train(engine, cfg)
         artifact = store.save_artifact(run_id, result.artifact)
         store.complete_run(engine, run_id, result.summary, result.points, result.peaks, result.warnings, artifact,
                            result.artifact["threshold"])
-    except (ForecastError, ValueError) as exc:
-        store.fail_run(engine, run_id, str(exc))
-        raise HTTPException(status_code=400, detail={"message": str(exc), "run_id": run_id})
-    except Exception as exc:  # noqa: BLE001 - keep a record of unexpected failures
-        store.fail_run(engine, run_id, f"{type(exc).__name__}: {exc}")
-        raise HTTPException(status_code=500, detail={"message": f"Training failed: {exc}", "run_id": run_id})
     if body.make_default and can_approve(request):
         store.set_default(engine, run_id)
     return _public(store.get_run(engine, run_id))
@@ -202,8 +191,5 @@ def forecast(mp_id: int, model: str = "active", history_hours: int = Query(48, g
     """The next horizon from the newest reading of the metering point, with every model of the run, and the daily
     billing peaks (optionally against another threshold than the run's)."""
     run, art = _run(model)
-    try:
-        out = T.forecast(engine, art, mp_id, history_hours, threshold_kw)
-    except ForecastError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+    out = T.forecast(engine, art, mp_id, history_hours, threshold_kw)
     return {"run_id": run["run_id"], "best_model": run["best_model"], "has_classifier": PEAK in art["models"], **out}

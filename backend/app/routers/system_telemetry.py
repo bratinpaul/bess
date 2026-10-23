@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 from app import models, schemas
 from app.database import get_db
 from app.services.telemetry_series import get_series
-from app.services.telemetry_import import TelemetryImportError, parse_telemetry_file, upsert_telemetry_rows
+from app.services.telemetry_import import parse_telemetry_file, upsert_telemetry_rows
 
 router = APIRouter(prefix="/api/system-telemetry", tags=["system-telemetry"])
 
@@ -106,10 +106,7 @@ async def bulk_add_telemetry(file: UploadFile = File(...), db: Session = Depends
     if not content:
         raise HTTPException(status_code=400, detail="Uploaded file is empty")
 
-    try:
-        valid_rows, row_errors, total_rows = parse_telemetry_file(file.filename or "upload", content, db)
-    except TelemetryImportError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+    valid_rows, row_errors, total_rows = parse_telemetry_file(file.filename or "upload", content, db)
 
     inserted, updated = upsert_telemetry_rows(db, valid_rows)
     db.commit()

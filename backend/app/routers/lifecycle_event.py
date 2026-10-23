@@ -1,6 +1,6 @@
 """RUL lifecycle events (battery_master.lifecycle_event): commissioning, augmentation, module replacement, end of life,
 failure and decommissioning of the RUL fleet systems (battery_master.battery_system) - list / filter, read, edit and
-delete. Loaded from rul_lifecycle_events.csv (migrations/2026_10_06_lifecycle_event_load.py)."""
+delete. Loaded from rul_lifecycle_events.csv (one-off load)."""
 from datetime import date
 from typing import Literal, Optional
 

@@ -19,6 +19,8 @@ import pandas as pd
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
+from core.base import UseCaseError
+
 REGIMES = ["Charging", "Discharging", "Idle", "Standby"]
 SOC_BANDS = [0, 20, 40, 60, 80, 101]
 SOC_BAND_LABELS = ["0-20", "20-40", "40-60", "60-80", "80-100"]
@@ -117,8 +119,8 @@ ORDER BY s.ts
 """
 
 
-class FeatureError(Exception):
-    pass
+class FeatureError(UseCaseError):
+    code = "MV_ANOMALY_FEATURES_REJECTED"
 
 
 @dataclass

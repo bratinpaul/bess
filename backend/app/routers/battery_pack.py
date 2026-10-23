@@ -1,5 +1,4 @@
 from fastapi import APIRouter, Depends, HTTPException, Request
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app import models, schemas
@@ -34,13 +33,9 @@ def create_battery_pack(payload: schemas.BatteryPackCreate, db: Session = Depend
         raise HTTPException(status_code=400, detail="Battery container not found")
     pack = models.BatteryPack(**payload.model_dump())
     db.add(pack)
-    try:
-        db.flush()  # assigns pack_id
-        sync_node(db, "battery_pack", pack.pack_id)
-        db.commit()
-    except IntegrityError:
-        db.rollback()
-        raise HTTPException(status_code=409, detail="Could not save battery pack")
+    db.flush()  # assigns pack_id
+    sync_node(db, "battery_pack", pack.pack_id)
+    db.commit()
     db.refresh(pack)
     return pack
 
@@ -54,12 +49,8 @@ def update_battery_pack(pack_id: int, payload: schemas.BatteryPackUpdate, db: Se
         raise HTTPException(status_code=400, detail="Battery container not found")
     for field, value in payload.model_dump().items():
         setattr(pack, field, value)
-    try:
-        sync_node(db, "battery_pack", pack_id)  # name or container may have changed
-        db.commit()
-    except IntegrityError:
-        db.rollback()
-        raise HTTPException(status_code=409, detail="Could not save battery pack")
+    sync_node(db, "battery_pack", pack_id)  # name or container may have changed
+    db.commit()
     db.refresh(pack)
     return pack
 
@@ -69,13 +60,7 @@ def delete_battery_pack(pack_id: int, db: Session = Depends(get_db)):
     pack = db.get(models.BatteryPack, pack_id)
     if not pack:
         raise HTTPException(status_code=404, detail="Battery pack not found")
-    remove_node(db, "battery_pack", pack_id)  # rolled back below if the delete fails
+    remove_node(db, "battery_pack", pack_id)  # undone with the request (get_db) if the delete fails
     db.delete(pack)
-    try:
-        db.commit()
-    except IntegrityError:
-        db.rollback()
-        raise HTTPException(
-            status_code=409, detail="Cannot delete battery pack: it still has battery modules attached to it"
-        )
+    db.commit()
     return None

@@ -55,6 +55,8 @@ MAX_FILES_PER_RUN = 500
 PLANT_TZ = "Asia/Kolkata"  # times are plant local; the database session uses the same zone
 
 from bess_common import observability as obs  # noqa: E402  (JSON logs, operations, activity log)
+from bess_common.errors import (EXIT_CONFIG, EXIT_FAILED, EXIT_OK, EXIT_PARTIAL, EXIT_UNEXPECTED,  # noqa: E402
+                                batch_error_code, run_main)
 
 log = logging.getLogger("realtime_batch")
 
@@ -160,12 +162,13 @@ def record(conn, row: dict) -> Optional[int]:
             """INSERT INTO battery_raw.batchlog
                  (run_id, file_name, file_time, snapshot_time, status, started_at, finished_at, duration_ms,
                   feeds_total, feeds_loaded, feeds_failed, rows_total, rows_inserted, rows_updated, rows_skipped,
-                  feed_results, warnings, id_changes, error_message, archive_path, api_url, host_name, report)
+                  feed_results, warnings, id_changes, error_message, error_code, request_id, archive_path, api_url,
+                  host_name, report)
                VALUES (%(run_id)s, %(file_name)s, %(file_time)s, %(snapshot_time)s, %(status)s, %(started_at)s,
                   %(finished_at)s, %(duration_ms)s, %(feeds_total)s, %(feeds_loaded)s, %(feeds_failed)s,
                   %(rows_total)s, %(rows_inserted)s, %(rows_updated)s, %(rows_skipped)s, %(feed_results)s,
-                  %(warnings)s, %(id_changes)s, %(error_message)s, %(archive_path)s, %(api_url)s, %(host_name)s,
-                  %(report)s)
+                  %(warnings)s, %(id_changes)s, %(error_message)s, %(error_code)s, %(request_id)s, %(archive_path)s,
+                  %(api_url)s, %(host_name)s, %(report)s)
                RETURNING batch_id""",
             row,
         )
@@ -209,6 +212,7 @@ def process(path: Path, file_time: datetime, inbox: Path, api: str, run_id: str,
         duration_ms=int((finished - started).total_seconds() * 1000), **totals,
         feed_results=Json(report.get("feeds", [])), warnings=Json(report.get("warnings", [])),
         id_changes=Json(report.get("id_changes", [])), error_message=report.get("error"),
+        error_code=batch_error_code(status, report.get("error_code")), request_id=run_id,
         archive_path=str(folder), api_url=api, host_name=socket.gethostname(), report=Json(report),
     )
     try:
@@ -246,7 +250,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     inbox = args.inbox
     if not inbox.is_dir():
         log.error("inbox %s doesn't exist", inbox)
-        return 1
+        return EXIT_CONFIG
     (inbox / ARCHIVE_DIR).mkdir(exist_ok=True)
 
     with Lock(inbox / LOCK_NAME) as locked:
@@ -273,14 +277,16 @@ def main(argv: Optional[list[str]] = None) -> int:
             except Exception:  # noqa: BLE001 - keep the scheduler alive; the file stays for the next run
                 log.exception("unexpected error while processing %s; left in the inbox", path.name)
                 obs.activity.flush()
-                return 1
+                return EXIT_UNEXPECTED
             results.append(outcome)
             if outcome == load_snapshot.API_DOWN:
                 break  # the rest would fail the same way
         log.info("run %s: %d file(s) - %s", run_id[:8], len(results), ", ".join(results))
         obs.activity.flush()
-        return 0 if all(r == load_snapshot.SUCCESS for r in results) else 2
+        if all(r == load_snapshot.SUCCESS for r in results):
+            return EXIT_OK
+        return EXIT_PARTIAL if all(r in (load_snapshot.SUCCESS, load_snapshot.PARTIAL) for r in results) else EXIT_FAILED
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(run_main("realtime_snapshot_load", main))

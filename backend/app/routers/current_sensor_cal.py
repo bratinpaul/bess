@@ -1,6 +1,6 @@
 """Current-sensor calibrations (battery_master.current_sensor_cal): offset, gain error and offset drift per fleet system
 (battery_master.battery_system) and calibration date - list / filter, read, edit and delete. Loaded from
-current_sensor_cal.csv (migrations/2026_10_06_current_sensor_cal_load.py). Each row also carries the offset its drift
+current_sensor_cal.csv (one-off load). Each row also carries the offset its drift
 projects to today, or to the system's next calibration when there is a later one."""
 from datetime import date
 from typing import Optional

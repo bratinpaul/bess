@@ -42,7 +42,8 @@ def _read_module_xlsx(content: bytes) -> tuple[list[str], list[list]]:
     try:
         wb = openpyxl.load_workbook(io.BytesIO(content), data_only=True, read_only=True)
     except Exception as exc:  # noqa: BLE001 - surfaced to the caller as a clean import error
-        raise TelemetryImportError(f"Could not read Excel file: {exc}") from exc
+        raise TelemetryImportError("Could not read the Excel file. Please upload a valid .xlsx workbook.",
+                                   log_message=f"xlsx not readable: {type(exc).__name__}: {exc}") from exc
 
     # "Data", or a data sheet with a suffix such as "Data (01 Aug sample)"
     names = [n for n in wb.sheetnames if n.strip().lower() == "data"]

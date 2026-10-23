@@ -8,6 +8,7 @@ import pandas as pd
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
+from core.base import ArtifactMissing
 from usecases.weak_module.detector import DetectionResult
 
 ARTIFACTS = Path(__file__).resolve().parents[3] / "artifacts" / "anomaly"
@@ -52,7 +53,7 @@ def save_artifact(run_id: int, artifact: dict) -> str:
 def load_artifact(run: dict) -> dict:
     path = run.get("artifact_path")
     if not path or not Path(path).exists():
-        raise FileNotFoundError(f"The model file of run #{run['run_id']} is missing")
+        raise ArtifactMissing(f"The model file of run #{run['run_id']} is missing. Retrain the model.")
     return joblib.load(path)
 
 

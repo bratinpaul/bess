@@ -10,7 +10,7 @@ from app import models, schemas
 from app.auth import tenant_scope as scope
 from app.database import get_db
 from app.models.alarm_catalog import ALARM_SOURCES
-from app.services.alarm_event_import import AlarmEventImportError, parse_alarm_event_file, upsert_alarm_events
+from app.services.alarm_event_import import parse_alarm_event_file, upsert_alarm_events
 from app.services.asset_matcher import LABELS, AssetMatcher
 
 router = APIRouter(prefix="/api/alarm-events", tags=["alarm-events"])
@@ -329,10 +329,7 @@ async def bulk_load_alarm_events(file: UploadFile = File(...), db: Session = Dep
     content = await file.read()
     if not content:
         raise HTTPException(status_code=400, detail="Uploaded file is empty")
-    try:
-        sheet, valid, errors, total, ignored, linked, update_cols = parse_alarm_event_file(file.filename or "upload", content, db)
-    except AlarmEventImportError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+    sheet, valid, errors, total, ignored, linked, update_cols = parse_alarm_event_file(file.filename or "upload", content, db)
     # existing alarms are updated only in the columns the file has
     inserted, updated = upsert_alarm_events(db, valid, update_cols)
     db.commit()

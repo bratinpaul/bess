@@ -27,6 +27,8 @@ class BatchLogOut(BaseModel):
     warnings: list[str]
     id_changes: list[str]
     error_message: Optional[str] = None
+    error_code: Optional[str] = None  # bess_common.errors.batch_error_code
+    request_id: Optional[str] = None  # the run's X-Request-ID (search it in Admin -> Activity Log)
     archive_path: Optional[str] = None
 
     model_config = {"from_attributes": True}

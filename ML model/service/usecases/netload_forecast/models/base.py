@@ -5,13 +5,15 @@ from typing import ClassVar, Optional
 import numpy as np
 import pandas as pd
 
+from core.base import UseCaseError
 from usecases.netload_forecast.features import PER_HOUR, Series
 
 QUANTILES = (0.1, 0.5, 0.9)
 
 
-class ForecastError(Exception):
+class ForecastError(UseCaseError):
     """Bad training / forecast input (the API answers 400)."""
+    code = "NETLOAD_FORECAST_INPUT_REJECTED"
 
 
 @dataclass

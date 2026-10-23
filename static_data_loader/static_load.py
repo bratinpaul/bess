@@ -35,7 +35,8 @@ from typing import Any, Callable, Optional
 
 # the bulk APIs are deny-by-default: authenticate as the batch service account (see bess_service_auth.py)
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from bess_service_auth import auth_headers  # noqa: E402
+from bess_service_auth import auth_headers, open_authed  # noqa: E402
+from bess_common.errors import FileFormatError  # noqa: E402
 
 
 DEFAULT_API = "http://127.0.0.1:8000"  # 127.0.0.1, not localhost: localhost costs ~2 s per call (IPv6 first)
@@ -43,8 +44,9 @@ DEFAULT_API = "http://127.0.0.1:8000"  # 127.0.0.1, not localhost: localhost cos
 SUCCESS, PARTIAL, FAILED, API_DOWN = "SUCCESS", "PARTIAL", "FAILED", "API_DOWN"
 
 
-class StaticDataError(Exception):
+class StaticDataError(FileFormatError):
     """The JSON can't be used."""
+    code = "STATIC_DATA_INVALID"
 
 
 @dataclass(frozen=True)
@@ -254,7 +256,7 @@ def post_file(api: str, endpoint: str, path: Path) -> tuple[int, dict]:
     request = urllib.request.Request(api + endpoint, data=body, method="POST",
                                      headers={"Content-Type": f"multipart/form-data; boundary={boundary}", **auth_headers(api)})
     try:
-        with urllib.request.urlopen(request, timeout=300) as response:
+        with open_authed(api, request, 300) as response:
             return response.status, json.loads(response.read() or b"{}")
     except urllib.error.HTTPError as exc:
         try:
@@ -279,12 +281,13 @@ def run(source: Path, api: str = DEFAULT_API, out_dir: Optional[Path] = None, cs
     try:
         data = json.loads(source.read_text(encoding="utf-8"))
         rows, report["warnings"] = build_rows(data)
-    except (ValueError, StaticDataError) as exc:
-        report["error"] = f"{type(exc).__name__}: {exc}" if isinstance(exc, ValueError) else str(exc)
+    except (ValueError, StaticDataError) as exc:  # bad JSON or a structural problem
+        report["error"] = str(exc) if isinstance(exc, StaticDataError) else f"The file is not valid JSON: {exc}"
+        report["error_code"] = "STATIC_DATA_INVALID"
         return FAILED, report
     report["counts"] = {f.entity: len(rows[f.entity]) for f in FEEDS}
     if not csv_only and not api_is_up(api):
-        report["error"] = f"The backend at {api} isn't answering"
+        report["error"], report["error_code"] = f"The backend at {api} isn't answering", "API_UNAVAILABLE"
         return API_DOWN, report
     paths = write_csvs(rows, out_dir)
     log(f"CSVs written to {out_dir}")

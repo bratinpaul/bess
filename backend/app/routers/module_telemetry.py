@@ -10,7 +10,6 @@ from app.database import get_db
 from app.services import module_telemetry_summary
 from app.services.module_telemetry_series import get_module_series
 from app.services.module_telemetry_import import parse_module_telemetry_file, upsert_module_telemetry_rows
-from app.services.telemetry_import import TelemetryImportError
 
 router = APIRouter(prefix="/api/module-telemetry", tags=["module-telemetry"])
 
@@ -131,10 +130,7 @@ async def bulk_add_module_telemetry(file: UploadFile = File(...), db: Session = 
     if not content:
         raise HTTPException(status_code=400, detail="Uploaded file is empty")
 
-    try:
-        valid_rows, row_errors, total_rows = parse_module_telemetry_file(file.filename or "upload", content, db)
-    except TelemetryImportError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+    valid_rows, row_errors, total_rows = parse_module_telemetry_file(file.filename or "upload", content, db)
 
     inserted, updated = upsert_module_telemetry_rows(db, valid_rows)
     db.commit()

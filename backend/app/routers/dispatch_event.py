@@ -11,7 +11,6 @@ from app.auth import tenant_scope as scope
 from app.database import get_db
 from app.schemas.dispatch_event import COMMAND_CODES, DISPATCH_STATUSES
 from app.services.dispatch_event_import import (
-    DispatchEventImportError,
     find_overlap,
     parse_dispatch_event_file,
     supersede_running,
@@ -384,11 +383,8 @@ async def bulk_load_dispatch_events(file: UploadFile = File(...), db: Session = 
     content = await file.read()
     if not content:
         raise HTTPException(status_code=400, detail="Uploaded file is empty")
-    try:
-        sheet, valid, errors, total, ignored, update_cols, closes = parse_dispatch_event_file(
-            file.filename or "upload", content, db)
-    except DispatchEventImportError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+    sheet, valid, errors, total, ignored, update_cols, closes = parse_dispatch_event_file(
+        file.filename or "upload", content, db)
     # running dispatches that a newer one in the file replaces are ended at its start
     for closed_id, (start, end) in closes.items():
         _close(db, closed_id, start, end)

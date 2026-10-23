@@ -109,4 +109,4 @@ If nothing loads (bad JSON, a missing section, or every file rejected), the JSON
 - `manufacturer`, `model`, `cooling_capacity_kw` and `status` are copied.
 - `type` → `hvac_type`.
 
-The columns `source_uuid`, `site.grid_voltage_kv`, the container, pack, module, PCS, EMS and HVAC attribute columns were added by `backend/migrations/2026_09_29_static_master_columns.py`.
+The columns `source_uuid`, `site.grid_voltage_kv`, the container, pack, module, PCS, EMS and HVAC attribute columns are part of the schema (`BESS DESIGN/Database/DDL/battery_master.sql`).

@@ -1,6 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import func, text
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app import models, schemas
@@ -122,12 +121,6 @@ def _sync_contacts(db: Session, tenant_id: int, contacts: list[schemas.TenantCon
                 setattr(row, field, value)
 
 
-def _conflict(exc: IntegrityError) -> HTTPException:
-    if "idx_tenant_email" in str(exc.orig):
-        return HTTPException(status_code=409, detail="A tenant with this email already exists")
-    return HTTPException(status_code=409, detail="Tenant conflicts with existing data")
-
-
 # ---------------------------------------------------------------- tenants
 
 
@@ -157,15 +150,11 @@ def create_tenant(payload: schemas.TenantCreate, db: Session = Depends(get_db)):
     _check_type(db, payload.tenant_type)
     tenant = models.Tenant(**payload.model_dump(exclude={"contacts"}))
     db.add(tenant)
-    try:
-        db.flush()  # assigns tenant_id for the contacts
-        for c in payload.contacts:
-            db.add(models.TenantContact(tenant_id=tenant.tenant_id, **c.model_dump(exclude={"contact_id"})))
-        sync_node(db, "tenant", tenant.tenant_id)
-        db.commit()
-    except IntegrityError as exc:
-        db.rollback()
-        raise _conflict(exc)
+    db.flush()  # assigns tenant_id for the contacts
+    for c in payload.contacts:
+        db.add(models.TenantContact(tenant_id=tenant.tenant_id, **c.model_dump(exclude={"contact_id"})))
+    sync_node(db, "tenant", tenant.tenant_id)
+    db.commit()
     db.refresh(tenant)
     return _detail(db, tenant)
 
@@ -176,17 +165,10 @@ def update_tenant(tenant_id: int, payload: schemas.TenantUpdate, db: Session = D
     _check_type(db, payload.tenant_type)
     for field, value in payload.model_dump(exclude={"contacts"}).items():
         setattr(tenant, field, value)
-    try:
-        if payload.contacts is not None:
-            _sync_contacts(db, tenant_id, payload.contacts)
-        sync_node(db, "tenant", tenant_id)  # name may have changed
-        db.commit()
-    except IntegrityError as exc:
-        db.rollback()
-        raise _conflict(exc)
-    except HTTPException:
-        db.rollback()
-        raise
+    if payload.contacts is not None:
+        _sync_contacts(db, tenant_id, payload.contacts)
+    sync_node(db, "tenant", tenant_id)  # name may have changed
+    db.commit()
     db.refresh(tenant)
     return _detail(db, tenant)
 

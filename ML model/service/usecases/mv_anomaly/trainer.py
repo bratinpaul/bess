@@ -31,6 +31,7 @@ from sklearn.metrics import roc_auc_score
 from sklearn.preprocessing import StandardScaler
 from sqlalchemy.engine import Engine
 
+from core.base import UseCaseError
 from usecases.mv_anomaly import features as F
 from usecases.mv_anomaly import models as M
 
@@ -38,8 +39,8 @@ STEP = pd.Timedelta(minutes=5)
 POOLED = "all"
 
 
-class MvAnomalyError(Exception):
-    pass
+class MvAnomalyError(UseCaseError):
+    code = "MV_ANOMALY_INPUT_REJECTED"
 
 
 @dataclass

@@ -1,5 +1,5 @@
 -- BESS database DDL: battery_raw
--- Generated 2026-10-22 by db_docs/generate_ddl.py from database Battery
+-- Generated 2026-10-23 by db_docs/generate_ddl.py from database Battery
 -- Sections: extensions, pg_dump schema DDL, TimescaleDB hypertables + compression, continuous aggregates,
 --           views on continuous aggregates, TimescaleDB policies
 
@@ -11,7 +11,7 @@ CREATE EXTENSION IF NOT EXISTS pgcrypto;
 -- PostgreSQL database dump
 --
 
-\restrict XoOVqemcMlS9ARVOJgob8So9WdJy4eMsozJV8owEXhMoFYZYzgJeBdrUbM8ojhf
+\restrict BEyJC2zk2ncjUrmyzEQYFzAMzQUY1sDc3Gn9apL8lSqKX1gFlP8dA5pR1GacrPr
 
 -- Dumped from database version 18.4
 -- Dumped by pg_dump version 18.4
@@ -248,6 +248,8 @@ CREATE TABLE battery_raw.batchlog (
     host_name text,
     report jsonb,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
+    error_code text,
+    request_id text,
     CONSTRAINT batchlog_rows CHECK ((((rows_inserted + rows_updated) + rows_skipped) <= rows_total)),
     CONSTRAINT batchlog_status CHECK ((status = ANY (ARRAY['SUCCESS'::text, 'PARTIAL'::text, 'FAILED'::text]))),
     CONSTRAINT batchlog_times CHECK ((finished_at >= started_at))
@@ -259,6 +261,20 @@ CREATE TABLE battery_raw.batchlog (
 --
 
 COMMENT ON TABLE battery_raw.batchlog IS 'Load reports of the realtime snapshot batch: one row per input file processed';
+
+
+--
+-- Name: COLUMN batchlog.error_code; Type: COMMENT; Schema: battery_raw; Owner: -
+--
+
+COMMENT ON COLUMN battery_raw.batchlog.error_code IS 'Stable error code of a failed or partial run (bess_common/errors.py), e.g. API_UNAVAILABLE';
+
+
+--
+-- Name: COLUMN batchlog.request_id; Type: COMMENT; Schema: battery_raw; Owner: -
+--
+
+COMMENT ON COLUMN battery_raw.batchlog.request_id IS 'Run / request id the loader used for its API calls and log lines (X-Request-ID)';
 
 
 --
@@ -431,7 +447,7 @@ CREATE INDEX idx_batchlog_started ON battery_raw.batchlog USING btree (started_a
 -- PostgreSQL database dump complete
 --
 
-\unrestrict XoOVqemcMlS9ARVOJgob8So9WdJy4eMsozJV8owEXhMoFYZYzgJeBdrUbM8ojhf
+\unrestrict BEyJC2zk2ncjUrmyzEQYFzAMzQUY1sDc3Gn9apL8lSqKX1gFlP8dA5pR1GacrPr
 
 
 

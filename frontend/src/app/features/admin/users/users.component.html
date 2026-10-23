@@ -1,0 +1,98 @@
+<div class="page-header">
+  <div>
+    <h2>Users</h2>
+    <p class="subtitle">Manage users.</p>
+  </div>
+  <button type="button" class="btn btn-primary" data-perm="admin:write" (click)="newUser()">+ New user</button>
+</div>
+
+@if (error) { <div class="ua-banner bad">{{ error }}</div> }
+@if (flash) { <div class="ua-banner ok">{{ flash }}</div> }
+@if (secret) {
+  <div class="ua-secret">Temporary password for <b>{{ secret.email }}</b>: <code>{{ secret.password }}</code>
+    <span class="ua-sub">Shown only once. Give it to the user securely; they must change it at first sign-in.</span>
+    <button type="button" class="link-btn" (click)="secret = null">Done</button>
+  </div>
+}
+
+@if (form) {
+  <form class="card ua-card" (ngSubmit)="save()">
+    <h3 style="margin:0 0 10px">{{ form.id ? 'Edit ' + form.email : 'New user' }}</h3>
+    <div class="ua-form">
+      @if (!form.id) {
+        <div class="field"><label for="u-email">E-mail</label><input id="u-email" name="email" type="email" required [(ngModel)]="form.email" /></div>
+      }
+      <div class="field"><label for="u-name">Full name</label><input id="u-name" name="full_name" required [(ngModel)]="form.full_name" /></div>
+      <div class="field">
+        <label for="u-role">Role</label>
+        <select id="u-role" name="role" required [(ngModel)]="form.role_code">
+          <option value="" disabled>Choose…</option>
+          @for (r of assignableRoles; track r.role_code) { <option [value]="r.role_code">{{ r.role_name }}</option> }
+        </select>
+      </div>
+      @if (tenantScoped(form.role_code)) {
+        <div class="field">
+          <label for="u-tenant">Tenant</label>
+          <select id="u-tenant" name="tenant" required [(ngModel)]="form.tenant_id">
+            <option [ngValue]="null" disabled>Choose…</option>
+            @for (t of tenants; track t.tenant_id) { <option [ngValue]="t.tenant_id">{{ t.name }}</option> }
+          </select>
+        </div>
+      }
+      @if (form.id) {
+        <label class="check"><input type="checkbox" name="active" [(ngModel)]="form.is_active" /> Active</label>
+      }
+    </div>
+    @if (!form.id) { <p class="ua-sub">A temporary password is generated and shown once after saving.</p> }
+    <div class="ua-actions">
+      <button type="submit" class="btn btn-primary" [disabled]="busy">{{ busy ? 'Saving…' : 'Save' }}</button>
+      <button type="button" class="btn btn-secondary" (click)="form = null">Cancel</button>
+    </div>
+  </form>
+}
+
+<div class="card ua-card">
+  <div class="ua-bar">
+    <div class="field grow"><label for="q">Search</label><input id="q" [(ngModel)]="q" placeholder="name or e-mail" /></div>
+    <div class="field">
+      <label for="rf">Role</label>
+      <select id="rf" [(ngModel)]="roleFilter"><option value="">Any</option>
+        @for (r of roles; track r.role_code) { <option [value]="r.role_code">{{ r.role_name }}</option> }
+      </select>
+    </div>
+    <div class="field">
+      <label for="sf">Status</label>
+      <select id="sf" [(ngModel)]="statusFilter">
+        <option value="">Any</option><option value="active">Active</option><option value="disabled">Disabled</option>
+        <option value="locked">Locked</option><option value="service">Service accounts</option>
+      </select>
+    </div>
+  </div>
+  <div class="table-scroll">
+    <table class="data-table ua-table">
+      <thead><tr><th>User</th><th>Role</th><th>Tenant</th><th>Status</th><th>Last sign-in</th><th></th></tr></thead>
+      <tbody>
+        @for (u of shown; track u.id) {
+          <tr>
+            <td><b>{{ u.full_name || '—' }}</b><span class="ua-sub">{{ u.email }}</span></td>
+            <td>{{ u.role_name }}</td>
+            <td>{{ u.tenant_name || '—' }}</td>
+            <td>
+              @if (u.is_service_account) { <span class="ua-badge sys">service</span> }
+              @if (!u.is_active) { <span class="ua-badge bad">disabled</span> } @else if (u.locked) { <span class="ua-badge warn">locked</span> } @else { <span class="ua-badge good">active</span> }
+              @if (u.must_change_password) { <span class="ua-badge warn">must change password</span> }
+            </td>
+            <td>{{ u.last_login_at ? (u.last_login_at | date: 'yyyy-MM-dd HH:mm') : 'never' }}</td>
+            <td style="white-space:nowrap">
+              <button type="button" class="link-btn" data-perm="admin:write" (click)="edit(u)">Edit</button>
+              @if (u.locked) { <button type="button" class="link-btn" data-perm="admin:write" (click)="unlock(u)">Unlock</button> }
+              @if (!u.is_service_account && !isSelf(u)) { <button type="button" class="link-btn" data-perm="admin:write" (click)="reset(u)">Reset password</button> }
+              <button type="button" class="link-btn" [class.danger]="u.is_active" data-perm="admin:write" [disabled]="isSelf(u)"
+                      [title]="isSelf(u) ? 'You can\'t disable your own account' : ''" (click)="toggleActive(u)">{{ u.is_active ? 'Disable' : 'Enable' }}</button>
+            </td>
+          </tr>
+        }
+      </tbody>
+    </table>
+  </div>
+</div>

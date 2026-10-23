@@ -21,7 +21,8 @@ from sqlalchemy.engine import Engine
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import JSONResponse, Response
 
-from bess_common.auth import Principal, authenticated, log
+from bess_common.auth import Principal, authenticated
+from bess_common.observability import security_log
 
 # field / parameter name -> entity type
 ID_KEYS = {
@@ -123,8 +124,9 @@ def tenant_guard(resolver: ScopeResolver):
                 pairs += list(body.items())
         bad = _violations(pairs, keys, scope)
         if bad:
-            log.warning("tenant scope refused", extra={"event": "auth.tenant_scope", "tenant_id": principal.tenant_id,
-                                                       "fields": bad, "method": request.method, "path": request.url.path})
+            security_log.warning("tenant scope refused", extra={"event": "auth.tenant_scope",
+                                                                "tenant_id": principal.tenant_id, "fields": bad,
+                                                                "method": request.method, "path": request.url.path})
             raise HTTPException(status_code=404, detail="Not found")
     guard.tenant_guard = True
     return guard
@@ -174,5 +176,8 @@ class TenantResponseFilter(BaseHTTPMiddleware):
         # keep the inner response's headers (CORS headers included - this middleware sits outside CORSMiddleware)
         headers = {k: v for k, v in response.headers.items() if k.lower() not in ("content-length", "content-type")}
         if isinstance(data, dict) and _out_of_scope(data, keys, scope):
+            security_log.warning("tenant scope refused", extra={"event": "auth.tenant_scope",
+                                                                "tenant_id": principal.tenant_id, "method": "GET",
+                                                                "path": request.url.path})
             return JSONResponse(status_code=404, content={"detail": "Not found"}, headers=headers)
         return JSONResponse(content=_filter(data, keys, scope), status_code=200, headers=headers)

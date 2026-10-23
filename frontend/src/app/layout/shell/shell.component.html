@@ -1176,6 +1176,38 @@
       <ul class="nav-group" [class.hidden]="collapsed || !isGroupOpen('admin')">
         <li>
           <a
+            routerLink="/admin/users"
+            routerLinkActive="active"
+            class="nav-link">
+            <span class="nav-label">Users</span>
+          </a>
+        </li>
+        <li>
+          <a
+            routerLink="/admin/roles"
+            routerLinkActive="active"
+            class="nav-link">
+            <span class="nav-label">Roles</span>
+          </a>
+        </li>
+        <li>
+          <a
+            routerLink="/admin/privileges"
+            routerLinkActive="active"
+            class="nav-link">
+            <span class="nav-label">Privileges</span>
+          </a>
+        </li>
+        <li>
+          <a
+            routerLink="/admin/rbac"
+            routerLinkActive="active"
+            class="nav-link">
+            <span class="nav-label">RBAC Matrix</span>
+          </a>
+        </li>
+        <li>
+          <a
             routerLink="/admin/access-requests"
             routerLinkActive="active"
             class="nav-link">

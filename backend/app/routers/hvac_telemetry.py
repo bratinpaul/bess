@@ -7,11 +7,7 @@ from sqlalchemy.orm import Session
 from app import models, schemas
 from app.database import get_db
 from app.services.hvac_telemetry_series import get_hvac_series
-from app.services.hvac_telemetry_import import (
-    HvacTelemetryImportError,
-    parse_hvac_telemetry_file,
-    upsert_hvac_telemetry_rows,
-)
+from app.services.hvac_telemetry_import import parse_hvac_telemetry_file, upsert_hvac_telemetry_rows
 
 router = APIRouter(prefix="/api/hvac-telemetry", tags=["hvac-telemetry"])
 
@@ -126,12 +122,9 @@ async def bulk_add_hvac_telemetry(
     if not content:
         raise HTTPException(status_code=400, detail="Uploaded file is empty")
 
-    try:
-        valid_rows, row_errors, total_rows = parse_hvac_telemetry_file(
-            file.filename or "upload", content, db, unit.hvac_id
-        )
-    except HvacTelemetryImportError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+    valid_rows, row_errors, total_rows = parse_hvac_telemetry_file(
+        file.filename or "upload", content, db, unit.hvac_id
+    )
 
     inserted, updated = upsert_hvac_telemetry_rows(db, valid_rows)
     db.commit()

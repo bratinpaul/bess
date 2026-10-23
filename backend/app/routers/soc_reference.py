@@ -1,6 +1,6 @@
 """SOC reference (battery_master.soc_reference): independent ground-truth SOC per plant battery system and moment -
 list / filter (with the BMS and coulomb-counted SOC of system_telemetry at that moment and their errors), read, edit
-and delete. Loaded from soc_reference.csv (migrations/2026_10_06_soc_reference.py)."""
+and delete. Loaded from soc_reference.csv (one-off load)."""
 from datetime import date, datetime
 from typing import Optional
 

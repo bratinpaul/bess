@@ -1,6 +1,6 @@
 """RUL battery provenance (battery_master.battery_provenance): cell provenance, batch and beginning-of-life baseline
 per RUL fleet system (battery_master.battery_system) - list / filter, read, edit and delete. Loaded from rul_systems.csv
-(migrations/2026_10_06_battery_provenance_load.py). Each row is read with the system's COMMISSION lifecycle event and
+(one-off load). Each row is read with the system's COMMISSION lifecycle event and
 its chemistry's end-of-life criteria as read-only context."""
 from typing import Literal, Optional
 

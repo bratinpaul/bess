@@ -52,10 +52,7 @@ def run_batch(db: Session = Depends(get_db)):
 
     A plain (threaded) endpoint on purpose: the batch calls this backend's bulk-load APIs while it runs.
     """
-    try:
-        result = batch_control.run_now()
-    except batch_control.BatchError as exc:
-        raise HTTPException(status_code=504 if "didn't finish" in str(exc) else 500, detail=str(exc))
+    result = batch_control.run_now()
     runs = batch_control.logs_since(db, result["started_at"])
     return schemas.BatchRunResult(**result, runs=[schemas.BatchLogOut.model_validate(r) for r in runs])
 
@@ -89,22 +86,16 @@ simulator = APIRouter(prefix="/api/batch/simulator", tags=["batch"])
 @simulator.get("/info", response_model=schemas.SimulatorInfo)
 def simulator_info(db: Session = Depends(get_db)):
     """The historical days the simulator samples from, and where it writes."""
-    try:
-        return schemas.SimulatorInfo(**snapshot_simulator.source_info(db))
-    except snapshot_simulator.SimulatorError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+    return schemas.SimulatorInfo(**snapshot_simulator.source_info(db))
 
 
 @simulator.post("/run", response_model=schemas.SimulatorResult)
 def run_simulator(payload: schemas.SimulatorRequest, db: Session = Depends(get_db)):
     """Write one snapshot file per 5 minutes from start to end into the realtime inbox (sampled from stored telemetry)."""
-    try:
-        result = snapshot_simulator.simulate(
-            db, payload.start, payload.end, seed=payload.seed, overwrite=payload.overwrite,
-            source_from=payload.source_from, source_to=payload.source_to,
-        )
-    except snapshot_simulator.SimulatorError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+    result = snapshot_simulator.simulate(
+        db, payload.start, payload.end, seed=payload.seed, overwrite=payload.overwrite,
+        source_from=payload.source_from, source_to=payload.source_to,
+    )
     return schemas.SimulatorResult(**vars(result))
 
 
@@ -128,10 +119,7 @@ def static_status(db: Session = Depends(get_db)):
 @static.post("/run", response_model=schemas.BatchRunResult)
 def run_static():
     """Load every JSON file in input/static now (CSVs -> master-data bulk loaders -> archive) and report."""
-    try:
-        result = static_control.run_now()
-    except static_control.StaticBatchError as exc:
-        raise HTTPException(status_code=504 if "didn't finish" in str(exc) else 500, detail=str(exc))
+    result = static_control.run_now()
     with SessionLocal() as db:  # a fresh session: the rows were written by the batch process
         runs = static_control.logs_since(db, result["started_at"])
     return schemas.BatchRunResult(**result, runs=[schemas.BatchLogOut.model_validate(r) for r in runs])
@@ -171,21 +159,15 @@ def historical_options(db: Session = Depends(get_db)):
 @historical.post("/scan")
 def historical_scan(payload: schemas.HistoricalLoadRequest):
     """Which files in the folder would be loaded as which feed, and whether they belong to the chosen system."""
-    try:
-        return historical_control.preview(payload.system_name, payload.folder, tuple(payload.feeds), payload.recursive,
-                                          payload.ems_code, payload.hvac_code)
-    except historical_control.HistoricalLoadError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+    return historical_control.preview(payload.system_name, payload.folder, tuple(payload.feeds), payload.recursive,
+                                      payload.ems_code, payload.hvac_code)
 
 
 @historical.post("/run")
 def historical_run(payload: schemas.HistoricalLoadRequest):
     """Start loading the selected files of the folder (runs as its own process); GET /status shows its progress."""
-    try:
-        return historical_control.start(payload.system_name, payload.folder, tuple(payload.feeds), payload.recursive,
-                                        payload.ems_code, payload.hvac_code, payload.files)
-    except historical_control.HistoricalLoadError as exc:
-        raise HTTPException(status_code=409, detail=str(exc))
+    return historical_control.start(payload.system_name, payload.folder, tuple(payload.feeds), payload.recursive,
+                                    payload.ems_code, payload.hvac_code, payload.files)
 
 
 @historical.get("/status")
@@ -213,29 +195,20 @@ history_generator = APIRouter(prefix="/api/batch/history-generator", tags=["batc
 @history_generator.get("/options")
 def generator_options():
     """Battery systems that can be generated (master data present), their folders, and the default range."""
-    try:
-        return generator_control.options()
-    except generator_control.GeneratorControlError as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
+    return generator_control.options()
 
 
 @history_generator.post("/preview")
 def generator_preview(payload: schemas.GeneratorPreviewRequest):
     """A site's mapping (master data and the values used), the proposed scenario calendar and the module range."""
-    try:
-        return generator_control.preview(payload.battery_system_id, payload.date_from, payload.date_to, payload.overrides)
-    except generator_control.GeneratorControlError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+    return generator_control.preview(payload.battery_system_id, payload.date_from, payload.date_to, payload.overrides)
 
 
 @history_generator.post("/run")
 def generator_run(payload: schemas.GeneratorRunRequest):
     """Start generating the selected sites one after another (its own process); GET /status shows its progress."""
-    try:
-        return generator_control.start(payload.date_from, payload.date_to, payload.module_from,
-                                       [s.model_dump() for s in payload.sites])
-    except generator_control.GeneratorControlError as exc:
-        raise HTTPException(status_code=409 if "already running" in str(exc) else 400, detail=str(exc))
+    return generator_control.start(payload.date_from, payload.date_to, payload.module_from,
+                                   [s.model_dump() for s in payload.sites])
 
 
 @history_generator.get("/status")

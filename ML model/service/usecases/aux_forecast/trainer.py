@@ -25,6 +25,7 @@ import numpy as np
 import pandas as pd
 from sqlalchemy.engine import Engine
 
+from core.base import TrainingError, UseCaseError
 from core.metrics import finite, shares
 from usecases.aux_forecast import features as F
 from usecases.aux_forecast.physics import AuxGreyBox
@@ -52,8 +53,9 @@ STALE_LIMIT_MIN = 15
 ORIGIN_GRID = 6  # test origins every 30 min, on readings ending at :25 / :55 (so 23:55 issues the next day)
 
 
-class AuxForecastError(Exception):
+class AuxForecastError(UseCaseError):
     """Bad training / forecast input (the API answers 400)."""
+    code = "AUX_FORECAST_INPUT_REJECTED"
 
 
 @dataclass
@@ -147,8 +149,9 @@ def load_sites(engine: Engine, cfg: RunConfig, warnings: list[str]) -> list[Site
         train = df.iloc[:cut]
         try:
             gb = fit_greybox(train)
-        except ValueError as exc:
-            warnings.append(f"{info['site_name']}: {exc} - left out")
+        except (TrainingError, ValueError) as exc:  # a numerical failure of the fit leaves the site out too
+            reason = exc.public if isinstance(exc, TrainingError) else "the grey-box fit failed"
+            warnings.append(f"{info['site_name']}: {reason} - left out")
             continue
         if not gb.decomposed:
             warnings.append(f"{info['site_name']}: no HVAC telemetry - the grey-box models aux directly (no split)")

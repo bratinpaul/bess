@@ -6,6 +6,7 @@ from typing import Literal, Optional
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
+from bess_common.errors import NotFound, run_guard
 from core.db import engine
 from usecases.arbitrage import data as D
 from usecases.arbitrage import store
@@ -59,10 +60,7 @@ def options():
 def create_study(body: StudyRequest):
     if body.date_from > body.date_to:
         raise HTTPException(status_code=400, detail="date_from must be on or before date_to")
-    try:
-        node_id, _ = D.node_of(engine, body.system_id)
-    except D.ArbitrageDataError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+    node_id, _ = D.node_of(engine, body.system_id)
     settings = Settings(efficiency=body.efficiency, degradation=body.degradation, as_stacking=body.as_stacking,
                         terminal=body.terminal, terminal_soc=body.terminal_soc, cvar_lambda=body.cvar_lambda,
                         cvar_alpha=body.cvar_alpha, time_limit=body.time_limit, as_max_mw=body.as_max_mw)
@@ -71,16 +69,10 @@ def create_study(body: StudyRequest):
         "date_to": body.date_to, "mode": body.mode, "params": body.model_dump(mode="json")})
     cfg = StudyConfig(body.system_id, body.date_from, body.date_to, body.mode, settings, body.resolve_every_h,
                       body.study_name)
-    try:
+    with run_guard(fail=lambda msg: store.fail_study(engine, study_id, msg), context={"study_id": study_id}):
         result = run_study(engine, cfg)
         as_on = body.as_stacking and result["metrics"].get("as_usd", 0) > 0
         store.complete_study(engine, study_id, body.system_id, body.mode, as_on, result)
-    except D.ArbitrageDataError as exc:
-        store.fail_study(engine, study_id, str(exc))
-        raise HTTPException(status_code=400, detail={"message": str(exc), "study_id": study_id})
-    except Exception as exc:  # noqa: BLE001 - keep a record of unexpected failures
-        store.fail_study(engine, study_id, f"{type(exc).__name__}: {exc}")
-        raise HTTPException(status_code=500, detail={"message": f"Study failed: {exc}", "study_id": study_id})
     return store.get_study(engine, study_id)
 
 
@@ -133,4 +125,4 @@ def day(day: date, source: Literal["pack", "study"] = "pack", system_id: Optiona
     try:
         return V.day_view(engine, source, day, system_id, study_id)
     except (V.ViewError, D.ArbitrageDataError) as exc:
-        raise HTTPException(status_code=404, detail=str(exc))
+        raise NotFound(exc.public) from exc

@@ -45,6 +45,7 @@ MIN_FILE_AGE_S = 5  # leave files alone that may still be being written
 PLANT_TZ = "Asia/Kolkata"
 
 from bess_common import observability as obs  # noqa: E402  (JSON logs, operations, activity log)
+from bess_common.errors import EXIT_CONFIG, EXIT_FAILED, EXIT_OK, EXIT_PARTIAL, batch_error_code, run_main  # noqa: E402
 
 log = logging.getLogger("static_batch")
 
@@ -131,12 +132,13 @@ def record(dsn: dict, row: dict) -> Optional[int]:
             """INSERT INTO battery_raw.batchlog
                  (run_id, job_name, file_name, file_time, status, started_at, finished_at, duration_ms,
                   feeds_total, feeds_loaded, feeds_failed, rows_total, rows_inserted, rows_updated, rows_skipped,
-                  feed_results, warnings, id_changes, error_message, archive_path, api_url, host_name, report)
+                  feed_results, warnings, id_changes, error_message, error_code, request_id, archive_path, api_url,
+                  host_name, report)
                VALUES (%(run_id)s, %(job_name)s, %(file_name)s, %(file_time)s, %(status)s, %(started_at)s,
                   %(finished_at)s, %(duration_ms)s, %(feeds_total)s, %(feeds_loaded)s, %(feeds_failed)s,
                   %(rows_total)s, %(rows_inserted)s, %(rows_updated)s, %(rows_skipped)s, %(feed_results)s,
-                  %(warnings)s, '[]'::jsonb, %(error_message)s, %(archive_path)s, %(api_url)s, %(host_name)s,
-                  %(report)s)
+                  %(warnings)s, '[]'::jsonb, %(error_message)s, %(error_code)s, %(request_id)s, %(archive_path)s,
+                  %(api_url)s, %(host_name)s, %(report)s)
                RETURNING batch_id""", row)
         batch_id = cur.fetchone()[0]
     conn.close()
@@ -173,7 +175,8 @@ def process(path: Path, inbox: Path, api: str, run_id: str, dsn: dict) -> str:
     row = dict(run_id=run_id, job_name=JOB_NAME, file_name=path.name, file_time=file_time, status=status,
                started_at=started, finished_at=finished, duration_ms=int((finished - started).total_seconds() * 1000),
                **totals, feed_results=Json(report.get("feeds", [])), warnings=Json(report.get("warnings", [])),
-               error_message=report.get("error"), archive_path=str(archived) if archived else None, api_url=api,
+               error_message=report.get("error"), error_code=batch_error_code(status, report.get("error_code")),
+               request_id=run_id, archive_path=str(archived) if archived else None, api_url=api,
                host_name=socket.gethostname(), report=Json(json.loads(json.dumps(report, default=str))))
     try:
         batch_id = record(dsn, row)
@@ -204,7 +207,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     setup_logging(args.verbose)
     if not args.inbox.is_dir():
         log.error("inbox %s doesn't exist", args.inbox)
-        return 2
+        return EXIT_CONFIG
     with Lock(args.inbox / LOCK_NAME) as locked:
         if not locked:
             log.info("another run is still going; nothing done")
@@ -222,9 +225,9 @@ def main(argv: Optional[list[str]] = None) -> int:
                 outcomes.append(process(p, args.inbox, args.api, run_id, dsn))
         obs.activity.flush()
     if static_load.API_DOWN in outcomes:
-        return 3
-    return 0 if all(o == static_load.SUCCESS for o in outcomes) else 1
+        return EXIT_FAILED
+    return EXIT_OK if all(o == static_load.SUCCESS for o in outcomes) else EXIT_PARTIAL
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(run_main("static_data_load", main))

@@ -21,6 +21,7 @@ import numpy as np
 import pandas as pd
 from sklearn.model_selection import StratifiedGroupKFold
 
+from core.base import UseCaseError
 from usecases.fault_diag import data as D
 from usecases.fault_diag import engine as E
 from usecases.fault_diag import features as F
@@ -51,8 +52,8 @@ class RunConfig:
     ml: M.MLSettings = field(default_factory=M.MLSettings)
 
 
-class FaultDiagError(Exception):
-    pass
+class FaultDiagError(UseCaseError):
+    code = "FAULT_DIAG_INPUT_REJECTED"
 
 
 # --------------------------------------------------------------------------------------------------- examples

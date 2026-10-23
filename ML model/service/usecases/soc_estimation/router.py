@@ -9,6 +9,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 from sqlalchemy import text
 
+from bess_common.errors import run_guard
 from core.auth import can_approve
 from core.db import engine
 from core.metrics import finite
@@ -115,10 +116,7 @@ def _run(model: str) -> tuple[dict, dict]:
     if not run:
         raise HTTPException(status_code=404, detail="No completed SOC estimation model yet" if model == "active"
                             else f"Run {model} is not a completed SOC estimation run")
-    try:
-        return run, store.load_artifact(run)
-    except FileNotFoundError as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
+    return run, store.load_artifact(run)
 
 
 @router.get("/options")
@@ -130,11 +128,8 @@ def options():
 
 @router.post("/runs")
 def train(request: Request, body: TrainRequest):
-    try:
-        gbm = T.clean_gbm(body.gbm_params)
-        ekf = T.clean_ekf(body.ekf_params)
-    except T.SocEstimationError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+    gbm = T.clean_gbm(body.gbm_params)
+    ekf = T.clean_ekf(body.ekf_params)
     params = {"gbm": gbm, "ekf": ekf, "tune_ekf": body.tune_ekf, "full_charge_reset": body.full_charge_reset,
               "label_source_requested": body.label_source}
     run_id = store.start_run(engine, {
@@ -142,16 +137,10 @@ def train(request: Request, body: TrainRequest):
         "test_fraction": body.test_fraction, "label_source": body.label_source, "params": params})
     cfg = T.RunConfig(F.Selection(body.system_ids, body.date_from, body.date_to), body.test_fraction, body.label_source,
                       body.tune_ekf, ekf, body.full_charge_reset, gbm)
-    try:
+    with run_guard(fail=lambda msg: store.fail_run(engine, run_id, msg), context={"run_id": run_id}):
         artifact, summary, points, warnings = T.train(engine, cfg)
         path = store.save_artifact(run_id, artifact)
         store.complete_run(engine, run_id, summary, points, warnings, path)
-    except (T.SocEstimationError, ValueError) as exc:
-        store.fail_run(engine, run_id, str(exc))
-        raise HTTPException(status_code=400, detail={"message": str(exc), "run_id": run_id})
-    except Exception as exc:  # noqa: BLE001 - keep a record of unexpected failures
-        store.fail_run(engine, run_id, f"{type(exc).__name__}: {exc}")
-        raise HTTPException(status_code=500, detail={"message": f"Training failed: {exc}", "run_id": run_id})
     if body.make_default and can_approve(request):
         store.set_default(engine, run_id)
     return _public(store.get_run(engine, run_id))
@@ -286,10 +275,7 @@ def estimate(body: EstimateRequest, model: str = "active"):
     end_ts = last.index[-1]
     start = end_ts - pd.Timedelta(hours=body.history_hours + WARMUP_H)
     df = last[last.index >= start]
-    try:
-        rows, end_state = T.estimate_rows(art, sid, df, T.seed_state(art, sid, float(df["soc_coulomb_pct"].iloc[0])))
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+    rows, end_state = T.estimate_rows(art, sid, df, T.seed_state(art, sid, float(df["soc_coulomb_pct"].iloc[0])))
     mode = "replay"
     current = _output(sid, end_ts, rows.iloc[-1], end_state)
     if as_of is None:
@@ -354,10 +340,7 @@ def step(body: StepRequest, model: str = "active"):
     df["at_rest"] = df["at_rest"].astype(bool)
     if not body.features.at_rest:
         df["ocv_rested_v"] = np.nan
-    try:
-        rows, end_state = T.estimate_rows(art, sid, df, state_obj)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+    rows, end_state = T.estimate_rows(art, sid, df, state_obj)
     out = _output(sid, ts, rows.iloc[-1], end_state)
     msgs = []
     if body.features.ocv_rested_v is not None and not body.features.at_rest:

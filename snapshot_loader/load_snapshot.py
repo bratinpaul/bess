@@ -34,7 +34,8 @@ from typing import Any, Callable, Optional
 
 # the bulk APIs are deny-by-default: authenticate as the batch service account (see bess_service_auth.py)
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from bess_service_auth import auth_headers  # noqa: E402
+from bess_service_auth import auth_headers, open_authed  # noqa: E402
+from bess_common.errors import EXIT_FAILED, EXIT_OK, EXIT_PARTIAL, FileFormatError, run_main  # noqa: E402
 
 
 HERE = Path(__file__).resolve().parent
@@ -216,8 +217,8 @@ FEEDS: list[Feed] = [
 # ---------------------------------------------------------------- snapshot checks
 
 
-class SnapshotError(Exception):
-    pass
+class SnapshotError(FileFormatError):
+    code = "SNAPSHOT_INVALID"
 
 
 def check_snapshot(snap: dict) -> tuple[datetime, list[str]]:
@@ -310,7 +311,7 @@ def post_file(api: str, endpoint: str, path: Path, form: dict[str, str]) -> tupl
         headers={"Content-Type": f"multipart/form-data; boundary={boundary}", **auth_headers(api)},
     )
     try:
-        with urllib.request.urlopen(request, timeout=120) as response:
+        with open_authed(api, request, 120) as response:
             return response.status, json.loads(response.read() or b"{}")
     except urllib.error.HTTPError as exc:
         try:
@@ -321,7 +322,7 @@ def post_file(api: str, endpoint: str, path: Path, form: dict[str, str]) -> tupl
 
 def get_json(api: str, path: str) -> tuple[int, Any]:
     try:
-        with urllib.request.urlopen(urllib.request.Request(api + path, headers=auth_headers(api)), timeout=30) as response:
+        with open_authed(api, urllib.request.Request(api + path), 30) as response:
             return response.status, json.loads(response.read() or b"null")
     except urllib.error.HTTPError as exc:
         return exc.code, None
@@ -431,8 +432,10 @@ def run(snapshot: Path, api: str = DEFAULT_API, out_dir: Optional[Path] = None, 
     report: dict = {"snapshot": str(snapshot), "api": api, "interval": None, "warnings": [], "id_changes": [],
                     "feeds": [], "csv_dir": None, "error": None}
 
-    def finish(outcome: str, error: Optional[str] = None) -> tuple[str, dict]:
+    def finish(outcome: str, error: Optional[str] = None, code: Optional[str] = None) -> tuple[str, dict]:
         report["status"] = outcome
+        if code:
+            report["error_code"] = code  # battery_raw.batchlog.error_code
         if error:
             report["error"] = error
             log(f"ERROR: {error}")
@@ -446,9 +449,9 @@ def run(snapshot: Path, api: str = DEFAULT_API, out_dir: Optional[Path] = None, 
         snap = json.loads(snapshot.read_text(encoding="utf-8"))
         ts, warnings = check_snapshot(snap)
     except FileNotFoundError:
-        return finish(FAILED, f"{snapshot} not found")
+        return finish(FAILED, f"{snapshot.name} not found", "FILE_NOT_FOUND")
     except (json.JSONDecodeError, UnicodeDecodeError, SnapshotError, KeyError, TypeError) as exc:
-        return finish(FAILED, f"{snapshot.name} can't be used: {exc}")
+        return finish(FAILED, f"{snapshot.name} can't be used: {exc}", "SNAPSHOT_INVALID")
     report["interval"], report["warnings"] = ts.isoformat(), warnings
     log(f"Snapshot {snapshot.name} | interval {ts:%Y-%m-%d %H:%M} | site {get(snap, 'site.site_code')}")
     for w in warnings:
@@ -459,11 +462,11 @@ def run(snapshot: Path, api: str = DEFAULT_API, out_dir: Optional[Path] = None, 
         try:
             report["id_changes"] = resolve_ids(snap, api)
         except (RuntimeError, urllib.error.URLError, KeyError, TypeError) as exc:
-            return finish(FAILED, f"couldn't check alarm/dispatch IDs: {exc}")
+            return finish(FAILED, f"couldn't check alarm/dispatch IDs: {exc}", "ID_CHECK_FAILED")
         for change in report["id_changes"]:
             log(f"  ID: {change}")
     elif not csv_only:
-        return finish(API_DOWN, f"the backend at {api} isn't answering (/api/health)")
+        return finish(API_DOWN, f"the backend at {api} isn't answering (/api/health)", "API_UNAVAILABLE")
     else:
         log(f"  NOTE: {api} not reachable - alarm/dispatch IDs not checked against the database")
 
@@ -477,7 +480,7 @@ def run(snapshot: Path, api: str = DEFAULT_API, out_dir: Optional[Path] = None, 
         try:
             path, count, absent = build_csv(feed, snap, out_dir)
         except (KeyError, TypeError) as exc:
-            return finish(FAILED, f"{feed.name}: snapshot section missing ({exc})")
+            return finish(FAILED, f"{feed.name}: snapshot section missing ({exc})", "SNAPSHOT_INVALID")
         log(f"  {feed.name:16} {count:3} row(s)  {path.name if path else '(nothing to load)'}")
         if absent:
             log(f"  {'':16} missing in snapshot, left empty: {', '.join(absent)}")
@@ -503,6 +506,8 @@ def run(snapshot: Path, api: str = DEFAULT_API, out_dir: Optional[Path] = None, 
         if http != 200:
             outcome = PARTIAL
             entry["error"] = body.get("detail") if isinstance(body, dict) else str(body)
+            if isinstance(body, dict) and isinstance(body.get("error"), dict):
+                entry["error_code"] = body["error"].get("code")
             log(f"  {feed.name:16} FAILED  HTTP {http}: {entry['error']}")
         else:
             inserted, updated = body.get("inserted", 0), body.get("updated", 0)
@@ -530,8 +535,8 @@ def main(argv: Optional[list[str]] = None) -> int:
     outcome, _ = run(args.snapshot, args.api, args.out, args.csv_only)
     if outcome in (SUCCESS, PARTIAL):
         print("Done." if outcome == SUCCESS else "Finished with problems (see above).")
-    return {SUCCESS: 0, PARTIAL: 2}.get(outcome, 1)
+    return {SUCCESS: EXIT_OK, PARTIAL: EXIT_PARTIAL}.get(outcome, EXIT_FAILED)
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(run_main("snapshot_load", main))

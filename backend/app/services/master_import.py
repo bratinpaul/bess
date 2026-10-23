@@ -25,6 +25,9 @@ from uuid import UUID
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from bess_common.errors import FileFormatError
+from bess_common.errors_db import integrity_message
+
 from app import models
 from app.hierarchy import sync_node
 from app.services.telemetry_import import (
@@ -39,7 +42,7 @@ from app.services.telemetry_import import (
 MAX_ROWS = 50_000
 
 
-class MasterImportError(Exception):
+class MasterImportError(FileFormatError):
     """File-level problem: unknown entity, bad format, missing columns."""
 
 
@@ -226,13 +229,14 @@ def _read(filename: str, content: bytes) -> tuple[list[str], list[list]]:
         if filename.lower().endswith(".csv"):
             return _read_csv(content)
     except TelemetryImportError as exc:
-        raise MasterImportError(str(exc)) from exc
+        raise MasterImportError(exc.public, log_message=exc.log_message) from exc
     raise MasterImportError("Upload a .csv or .xlsx file")
 
 
 def import_file(db: Session, entity_key: str, filename: str, content: bytes) -> ImportResult:
     if entity_key not in ENTITIES:
-        raise MasterImportError(f"Unknown master data '{entity_key}' (one of: {', '.join(LOAD_ORDER)})")
+        raise MasterImportError(f"Unknown master data '{entity_key}' (one of: {', '.join(LOAD_ORDER)})", status=404,
+                                code="MASTER_ENTITY_UNKNOWN")
     entity = ENTITIES[entity_key]
     headers, rows = _read(filename, content)
     names = [h.strip().lower() for h in headers]
@@ -364,7 +368,7 @@ def import_file(db: Session, entity_key: str, filename: str, content: bytes) -> 
         except IntegrityError as exc:
             savepoint.rollback()
             existing.pop(source, None)
-            result.errors.append({"row": n, "errors": [_integrity_message(exc)]})
+            result.errors.append({"row": n, "errors": [integrity_message(exc)]})
             continue
         existing[source] = record
         if created:
@@ -390,7 +394,3 @@ def _set_owner(db: Session, site_id: int, tenant_id: int, extra: dict) -> None:
     link.is_primary_owner = primary
     db.flush()
 
-
-def _integrity_message(exc: IntegrityError) -> str:
-    detail = str(getattr(exc.orig, "diag", None) and exc.orig.diag.message_detail or exc.orig).strip()
-    return f"Conflicts with an existing record: {detail}" if detail else "Conflicts with an existing record"

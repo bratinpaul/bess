@@ -1,0 +1,149 @@
+// Shared by Administration -> Users, Roles, Privileges, RBAC Matrix
+.ua-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: flex-end;
+  margin-bottom: 12px;
+
+  .field {
+    min-width: 160px;
+  }
+
+  .grow {
+    flex: 1;
+  }
+}
+
+.ua-card {
+  padding: 14px 16px;
+  margin-bottom: 12px;
+}
+
+.ua-banner {
+  margin-bottom: 12px;
+  padding: 10px 14px;
+  border-radius: 8px;
+  font-size: 13px;
+
+  &.ok {
+    background: #e5f6ee;
+    color: #12734f;
+  }
+
+  &.bad {
+    background: #fdecec;
+    color: #9b1c1c;
+  }
+}
+
+.ua-secret {
+  margin-bottom: 12px;
+  padding: 12px 14px;
+  border: 1px dashed #63f8ba;
+  border-radius: 8px;
+  background: #f2fef8;
+  font-size: 13px;
+
+  code {
+    padding: 2px 8px;
+    border-radius: 4px;
+    background: #fff;
+    font-size: 15px;
+    user-select: all;
+  }
+}
+
+.ua-form {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 10px 14px;
+  align-items: end;
+
+  .wide {
+    grid-column: 1 / -1;
+  }
+
+  .check {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+    font-size: 13px;
+  }
+}
+
+.ua-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.ua-table td {
+  vertical-align: middle;
+}
+
+.ua-sub {
+  display: block;
+  font-size: 11px;
+  color: var(--color-text-muted);
+}
+
+.ua-badge {
+  display: inline-block;
+  margin: 1px 3px 1px 0;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  background: #eef0f2;
+  color: #3a3d42;
+
+  &.good {
+    background: #e5f6ee;
+    color: #12734f;
+  }
+
+  &.warn {
+    background: #fff4e0;
+    color: #875800;
+  }
+
+  &.bad {
+    background: #fdecec;
+    color: #9b1c1c;
+  }
+
+  &.sys {
+    background: #e5f0fb;
+    color: #1f4e79;
+  }
+}
+
+.btn-sm {
+  padding: 3px 10px;
+  font-size: 12px;
+}
+
+.link-btn {
+  border: none;
+  background: none;
+  padding: 0 4px;
+  font: inherit;
+  font-size: 12px;
+  color: #2a78d6;
+  cursor: pointer;
+
+  &.danger {
+    color: #b42318;
+  }
+
+  &:disabled {
+    color: #9aa3ad;
+    cursor: default;
+  }
+}
+
+.mono {
+  font-family: Consolas, 'Courier New', monospace;
+  font-size: 12px;
+}

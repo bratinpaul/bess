@@ -14,6 +14,9 @@ from typing import Optional
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from bess_common import observability as obs
+from bess_common.errors import DependencyTimeout, InternalError
+
 HERE = Path(__file__).resolve().parent
 if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
@@ -29,8 +32,12 @@ STATUSES = ("SUCCESS", "PARTIAL", "FAILED")
 BUSY_MESSAGE = "another run is still going"
 
 
-class StaticBatchError(Exception):
-    """The batch couldn't be started or didn't finish."""
+class StaticBatchError(InternalError):
+    """The batch couldn't be started (generic 500 for the page; the cause is in log_message)."""
+
+
+class StaticBatchTimeout(DependencyTimeout):
+    """The batch ran longer than the page waits (504; it may still finish - see the batch log)."""
 
 
 def inbox_files(inbox: Path = INBOX) -> list[dict]:
@@ -57,7 +64,7 @@ def lock_state() -> tuple[bool, Optional[str]]:
 def run_now(timeout_s: int = RUN_TIMEOUT_S) -> dict:
     """Run the batch once and wait for it (a separate process: it calls this backend's bulk loaders)."""
     if not SCRIPT.exists():
-        raise StaticBatchError(f"Batch script not found: {SCRIPT}")
+        raise StaticBatchError(log_message=f"batch script not found: {SCRIPT}")
     started = datetime.now().astimezone()
     try:
         result = subprocess.run(
@@ -65,18 +72,19 @@ def run_now(timeout_s: int = RUN_TIMEOUT_S) -> dict:
             errors="replace", timeout=timeout_s, env={**os.environ, "PYTHONIOENCODING": "utf-8"},
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
-    except subprocess.TimeoutExpired:
-        raise StaticBatchError(f"The batch didn't finish within {timeout_s // 60} minutes")
+    except subprocess.TimeoutExpired as exc:
+        raise StaticBatchTimeout(f"The batch didn't finish within {timeout_s // 60} minutes. It may still "
+                                 f"complete - check the batch log.") from exc
     output = [line for line in (result.stdout + result.stderr).splitlines() if line.strip()]
     return {"started_at": started, "finished_at": datetime.now().astimezone(), "exit_code": result.returncode,
-            "busy": any(BUSY_MESSAGE in line for line in output), "output": output}
+            "busy": any(BUSY_MESSAGE in line for line in output), "output": obs.display_lines(output)}
 
 
 # ---------------------------------------------------------------- battery_raw.batchlog (this job only)
 
 _LIST_COLUMNS = """batch_id, run_id::text AS run_id, file_name, file_time, snapshot_time, status, started_at, finished_at,
     duration_ms, feeds_total, feeds_loaded, feeds_failed, rows_total, rows_inserted, rows_updated, rows_skipped,
-    feed_results, warnings, id_changes, error_message, archive_path"""
+    feed_results, warnings, id_changes, error_message, error_code, request_id, archive_path"""
 
 
 def _dicts(db: Session, sql: str, **params) -> list[dict]:

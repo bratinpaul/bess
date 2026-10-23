@@ -6,7 +6,6 @@ from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from sqlalchemy import func
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app import models  # noqa: F401 - registers site for the price_node foreign key
@@ -22,7 +21,7 @@ from app.schemas.dam_price import (
     DamPriceUpdate,
     PriceNodeOut,
 )
-from app.services.dam_price_import import DamPriceImportError, first_last, parse_dam_price_file, upsert_dam_prices
+from app.services.dam_price_import import first_last, parse_dam_price_file, upsert_dam_prices
 
 router = APIRouter(prefix="/api/dam-prices", tags=["market data"])
 
@@ -121,11 +120,7 @@ def add_price(payload: DamPriceCreate, db: Session = Depends(get_db)):
         raise HTTPException(status_code=409, detail=f"{code} already has a DAM price at {start.isoformat()}")
     row = DamPrice(**{**payload.model_dump(), "delivery_start": start})
     db.add(row)
-    try:
-        db.commit()
-    except IntegrityError as exc:
-        db.rollback()
-        raise HTTPException(status_code=409, detail=str(exc.orig).splitlines()[0])
+    db.commit()
     db.refresh(row)
     return _out(row, code)
 
@@ -157,10 +152,7 @@ async def bulk_load(file: UploadFile = File(...), node_id: Optional[int] = Form(
     content = await file.read()
     if not content:
         raise HTTPException(status_code=400, detail="Uploaded file is empty")
-    try:
-        valid, errors, total, ignored, nodes = parse_dam_price_file(db, file.filename or "upload", content, node_id)
-    except DamPriceImportError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+    valid, errors, total, ignored, nodes = parse_dam_price_file(db, file.filename or "upload", content, node_id)
     inserted, updated = upsert_dam_prices(db, valid)
     db.commit()
     n_errors = len(errors)

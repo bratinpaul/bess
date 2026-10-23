@@ -6,6 +6,7 @@ from typing import Literal, Optional
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
+from bess_common.errors import run_guard
 from core.db import engine
 from usecases.loss import data as D
 from usecases.loss import store
@@ -99,16 +100,10 @@ def create_run(body: RunRequest):
         raise HTTPException(status_code=400, detail=f"No BMS / PCS / EMS telemetry for battery system(s) {unknown}")
     run_id = store.start_run(engine, {"name": body.run_name, "systems": body.system_ids, "date_from": body.date_from,
                                       "date_to": body.date_to, "params": body.model_dump(mode="json")})
-    try:
+    with run_guard(fail=lambda msg: store.fail_run(engine, run_id, msg), context={"run_id": run_id}):
         result = run(engine, _config(body))
         steps = {r.system_id: r.summary["audit"]["step_min"] / 60 for r in result["results"]}
         store.complete_run(engine, run_id, result, steps)
-    except D.LossDataError as exc:
-        store.fail_run(engine, run_id, str(exc))
-        raise HTTPException(status_code=400, detail={"message": str(exc), "run_id": run_id})
-    except Exception as exc:  # noqa: BLE001 - keep a record of unexpected failures
-        store.fail_run(engine, run_id, f"{type(exc).__name__}: {exc}")
-        raise HTTPException(status_code=500, detail={"message": f"Run failed: {exc}", "run_id": run_id})
     return store.get_run(engine, run_id)
 
 

@@ -28,6 +28,7 @@ import pandas as pd
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
+from core.base import UseCaseError
 from core.metrics import finite, shares
 from usecases.soc_estimation import ekf as E
 from usecases.soc_estimation import features as F
@@ -71,8 +72,9 @@ EKF_PARAMS = [
 TUNE_GRID = {"r_mv": [1.0, 3.0, 10.0], "q_bias": [0.005, 0.02, 0.1], "hysteresis": [0.0, 0.5, 1.0]}
 
 
-class SocEstimationError(Exception):
+class SocEstimationError(UseCaseError):
     """Bad training / estimation input (the API answers 400)."""
+    code = "SOC_ESTIMATION_INPUT_REJECTED"
 
 
 @dataclass
@@ -259,7 +261,7 @@ def load_systems(engine: Engine, cfg: RunConfig, warnings: list[str]) -> list[Sy
         chem = F.chemistry(engine, sid)
         try:
             curve = F.ocv_curve(engine, chem)
-        except ValueError as exc:
+        except UseCaseError as exc:
             warnings.append(f"{name}: {exc} - left out")
             continue
         truth = dense_truth(engine, sid, df.index)

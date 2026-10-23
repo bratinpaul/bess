@@ -18,7 +18,7 @@ import numpy as np
 import pandas as pd
 from sqlalchemy.engine import Engine
 
-from core.base import split
+from core.base import UseCaseError, split
 from core.metrics import finite, regression_scores, shares
 from usecases.efficiency import cycles as C
 from usecases.efficiency import features as F
@@ -74,8 +74,8 @@ def train(engine: Engine, cfg: RunConfig) -> RunResult:
         raise EfficiencyError(f"Unknown residual model '{cfg.booster}' ({' or '.join(BOOSTERS)})")
     try:
         train_df, test_df = split(df, cfg.split_method, cfg.test_fraction, cfg.seed, "pcs_id")
-    except Exception as exc:  # noqa: BLE001 - the split's own messages are user-facing
-        raise EfficiencyError(str(exc))
+    except UseCaseError as exc:  # the split's own messages are user-facing
+        raise EfficiencyError(exc.public) from exc
     for d, label in ((1.0, "charge"), (0.0, "discharge")):
         if (train_df["is_charge"] == d).sum() < 20:
             warnings.append(f"Few {label} readings in the training rows: the {label} curve is uncertain")

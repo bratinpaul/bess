@@ -7,11 +7,7 @@ from sqlalchemy.orm import Session
 from app import models, schemas
 from app.database import get_db
 from app.services.pcs_telemetry_series import get_pcs_series
-from app.services.pcs_telemetry_import import (
-    PcsTelemetryImportError,
-    parse_pcs_telemetry_file,
-    upsert_pcs_telemetry_rows,
-)
+from app.services.pcs_telemetry_import import parse_pcs_telemetry_file, upsert_pcs_telemetry_rows
 
 router = APIRouter(prefix="/api/pcs-telemetry", tags=["pcs-telemetry"])
 
@@ -125,10 +121,7 @@ async def bulk_add_pcs_telemetry(file: UploadFile = File(...), db: Session = Dep
     if not content:
         raise HTTPException(status_code=400, detail="Uploaded file is empty")
 
-    try:
-        valid_rows, row_errors, total_rows = parse_pcs_telemetry_file(file.filename or "upload", content, db)
-    except PcsTelemetryImportError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+    valid_rows, row_errors, total_rows = parse_pcs_telemetry_file(file.filename or "upload", content, db)
 
     inserted, updated = upsert_pcs_telemetry_rows(db, valid_rows)
     db.commit()

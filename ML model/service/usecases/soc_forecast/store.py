@@ -10,6 +10,8 @@ import pandas as pd
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
+from core.base import ArtifactMissing
+
 ARTIFACTS = Path(__file__).resolve().parents[3] / "artifacts" / "soc_forecast"
 
 RUN_COLUMNS = """run_id, run_name, status, is_default, ems_ids, date_from, date_to, horizon_h, test_fraction,
@@ -163,7 +165,7 @@ _cache: dict[str, dict] = {}
 def load_artifact(run: dict) -> dict:
     path = run.get("artifact_path")
     if not path or not Path(path).exists():
-        raise FileNotFoundError(f"The model file of run #{run['run_id']} is missing")
+        raise ArtifactMissing(f"The model file of run #{run['run_id']} is missing. Retrain the model.")
     if path not in _cache:
         _cache[path] = joblib.load(path)
     return _cache[path]

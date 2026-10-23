@@ -26,12 +26,15 @@ import pandas as pd
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
+from core.base import UseCaseError
+
 TZ = "Asia/Kolkata"
 STEP_H = 5 / 60
 
 
-class HvacCopError(Exception):
+class HvacCopError(UseCaseError):
     """Bad input for a COP run (the API answers 400)."""
+    code = "HVAC_COP_INPUT_REJECTED"
 
 
 @dataclass

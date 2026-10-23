@@ -8,6 +8,7 @@ import pandas as pd
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
+from bess_common.errors import run_guard
 from core.auth import can_approve
 from core.db import engine
 from usecases.mv_anomaly import features as F
@@ -80,10 +81,7 @@ def _artifact(run: dict) -> tuple[dict, dict]:
     model = store.model_run(engine, run)
     if not model or model["status"] != "COMPLETED":
         raise HTTPException(status_code=400, detail=f"Run #{run['run_id']} has no completed model")
-    try:
-        return model, store.load_artifact(model)
-    except FileNotFoundError as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
+    return model, store.load_artifact(model)
 
 
 @router.get("/options")
@@ -112,10 +110,7 @@ def preview(body: WindowBody):
     cfg = T.RunConfig(body.system_id, body.date_from, body.date_to, eval_fraction=body.eval_fraction,
                       frozen_intervals=body.frozen_intervals, alarm_pad_min=body.alarm_pad_min,
                       commissioning_days=body.commissioning_days, exclude_alarm_level=body.exclude_alarm_level)
-    try:
-        _, _, info = T.prepare(engine, cfg)
-    except T.MvAnomalyError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+    _, _, info = T.prepare(engine, cfg)
     return {**info, "eval_from": info["eval_from"].isoformat()}
 
 
@@ -134,17 +129,11 @@ def train(request: Request, body: TrainBody):
     params = body.model_dump(exclude={"system_id", "date_from", "date_to", "run_name", "make_default"})
     run_id = store.start_run(engine, {"run_name": body.run_name, "run_kind": "train", "system_id": body.system_id,
                                       "date_from": body.date_from, "date_to": body.date_to, "params": params})
-    try:
+    with run_guard(fail=lambda msg: store.fail_run(engine, run_id, msg), context={"run_id": run_id}):
         art, result, rows, warnings = T.train(engine, cfg)
         path = store.save_artifact(run_id, art)
         store.write_scores(engine, run_id, body.system_id, rows)
         store.complete_run(engine, run_id, result, warnings, path, result["summary"]["duration_ms"])
-    except (T.MvAnomalyError, ValueError) as exc:
-        store.fail_run(engine, run_id, str(exc))
-        raise HTTPException(status_code=400, detail={"message": str(exc), "run_id": run_id})
-    except Exception as exc:  # noqa: BLE001 - keep a record of unexpected failures
-        store.fail_run(engine, run_id, f"{type(exc).__name__}: {exc}")
-        raise HTTPException(status_code=500, detail={"message": f"Training failed: {exc}", "run_id": run_id})
     if (body.make_default and can_approve(request)) or not any(r["is_default"] for r in store.list_runs(engine, body.system_id)
                                     if r["run_kind"] == "train"):
         store.set_default(engine, run_id)  # the first model of a system becomes its live model
@@ -185,16 +174,10 @@ def score(run_id: int, body: ScoreBody):
     new_id = store.start_run(engine, {"run_name": body.run_name, "run_kind": "score", "parent_run_id": model["run_id"],
                                       "system_id": model["system_id"], "date_from": body.date_from,
                                       "date_to": body.date_to, "params": {}})
-    try:
+    with run_guard(fail=lambda msg: store.fail_run(engine, new_id, msg), context={"run_id": new_id}):
         rows, summary, warnings = T.score_window(engine, art, F.Window(model["system_id"], body.date_from, body.date_to))
         store.write_scores(engine, new_id, model["system_id"], rows)
         store.complete_run(engine, new_id, {"summary": summary}, warnings, None, 0)
-    except T.MvAnomalyError as exc:
-        store.fail_run(engine, new_id, str(exc))
-        raise HTTPException(status_code=400, detail={"message": str(exc), "run_id": new_id})
-    except Exception as exc:  # noqa: BLE001
-        store.fail_run(engine, new_id, f"{type(exc).__name__}: {exc}")
-        raise HTTPException(status_code=500, detail={"message": f"Scoring failed: {exc}", "run_id": new_id})
     return _public(store.get_run(engine, new_id))
 
 
@@ -229,10 +212,7 @@ def live_score(system_id: Optional[int], hours: int) -> list[dict]:
 
 @router.post("/live/score")
 def live(body: LiveBody):
-    try:
-        return live_score(body.system_id, body.hours)
-    except T.MvAnomalyError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+    return live_score(body.system_id, body.hours)
 
 
 # --- results viewer reads --------------------------------------------------------------------------------------------

@@ -19,6 +19,7 @@ from typing import Optional
 from sqlalchemy import bindparam, text
 from sqlalchemy.orm import Session
 
+from bess_common.errors import run_failure_text
 from bess_common.observability import operation
 
 from app.services.bms_kpi import expr
@@ -353,6 +354,6 @@ def _run_body(db: Session, cfg: KpiConfig, run_id: int, codes: list[str], ent: s
                 UPDATE {domain.run_table}
                 SET status = 'failed', error_message = :err, finished_at = now(), duration_ms = :ms
                 WHERE run_id = :run_id"""),
-                {"err": str(exc)[:2000], "ms": int((time.perf_counter() - started) * 1000), "run_id": run_id})
+                {"err": run_failure_text(exc), "ms": int((time.perf_counter() - started) * 1000), "run_id": run_id})
             db.commit()
         raise

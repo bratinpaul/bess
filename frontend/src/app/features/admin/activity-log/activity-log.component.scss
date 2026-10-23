@@ -156,3 +156,15 @@
     word-break: break-word;
   }
 }
+
+.al-chip {
+  display: inline-flex;
+  gap: 8px;
+  align-items: center;
+  margin-top: 10px;
+  padding: 4px 10px;
+  border: 1px solid #63f8ba;
+  border-radius: 999px;
+  background: #f2fef8;
+  font-size: 12px;
+}

@@ -24,6 +24,7 @@ from sqlalchemy import func, literal_column
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
+from bess_common.errors import FileFormatError
 from app import models, schemas
 from app.schemas.dispatch_event import COMMAND_CODES, DISPATCH_STATUSES
 
@@ -90,7 +91,7 @@ TRUE_WORDS = {"true", "yes", "y", "1", "=true()"}
 FALSE_WORDS = {"false", "no", "n", "0", "=false()"}
 
 
-class DispatchEventImportError(Exception):
+class DispatchEventImportError(FileFormatError):
     """File-level problem: unreadable file, missing sheet or columns, too many rows."""
 
 
@@ -102,7 +103,8 @@ def _read_xlsx(content: bytes) -> tuple[str, list[str], list[list]]:
     try:
         wb = openpyxl.load_workbook(io.BytesIO(content), data_only=True, read_only=True)
     except Exception as exc:  # noqa: BLE001 - reported to the caller as a clean import error
-        raise DispatchEventImportError(f"Could not read Excel file: {exc}") from exc
+        raise DispatchEventImportError("Could not read the Excel file. Please upload a valid .xlsx workbook.",
+                                       log_message=f"xlsx not readable: {type(exc).__name__}: {exc}") from exc
     lowered = {n.strip().lower(): n for n in wb.sheetnames}
     name = next((lowered[s] for s in SHEET_NAMES if s in lowered), None)
     if name is None:
@@ -123,7 +125,8 @@ def _read_csv(content: bytes) -> tuple[None, list[str], list[list]]:
     try:
         text = content.decode("utf-8-sig")
     except UnicodeDecodeError as exc:
-        raise DispatchEventImportError(f"Could not read CSV file as UTF-8: {exc}") from exc
+        raise DispatchEventImportError("Could not read the CSV file. Please save it as UTF-8 and upload it again.",
+                                       log_message=f"csv not UTF-8: {exc}") from exc
     reader = csv.reader(io.StringIO(text))
     try:
         headers = [h.strip() for h in next(reader)]

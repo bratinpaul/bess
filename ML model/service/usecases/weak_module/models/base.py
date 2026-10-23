@@ -11,9 +11,12 @@ from typing import Any, ClassVar, Optional
 
 import numpy as np
 
+from core.base import UseCaseError
 
-class DetectionError(Exception):
+
+class DetectionError(UseCaseError):
     """Bad settings or data (the API answers 400)."""
+    code = "WEAK_MODULE_INPUT_REJECTED"
 
 
 @dataclass

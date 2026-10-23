@@ -17,6 +17,8 @@ import pandas as pd
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
+from bess_common.errors import BadRequest
+
 GRAINS = ("day", "hour")
 
 FEATURE_GROUPS: dict[str, dict] = {
@@ -113,7 +115,7 @@ def build(engine: Engine, sel: Selection, pack_id: Optional[int] = None) -> pd.D
     """Feature rows (module_id, pack_id, bucket, readings, all features); missing load-state values filled from the
     module's overall pack deviation of that bucket (no discharge that day = no sag seen). pack_id: one pack only."""
     if sel.grain not in GRAINS:
-        raise ValueError(f"grain must be one of {', '.join(GRAINS)}")
+        raise BadRequest(f"grain must be one of {', '.join(GRAINS)}")
     with engine.connect() as conn:
         df = pd.read_sql(text(_SQL), conn, params={"sid": sel.battery_system_id, "date_from": sel.date_from,
                                                    "date_to": sel.date_to, "grain": sel.grain, "pack_id": pack_id})

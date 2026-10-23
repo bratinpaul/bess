@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 
 from app import models, schemas
 from app.database import get_db
-from app.services.demand_telemetry_import import DemandTelemetryImportError, parse_demand_file, upsert_demand_rows
+from app.services.demand_telemetry_import import parse_demand_file, upsert_demand_rows
 from app.services.demand_telemetry_series import get_demand_series
 
 router = APIRouter(prefix="/api/demand-telemetry", tags=["demand-telemetry"])
@@ -169,10 +169,7 @@ async def bulk_load(file: UploadFile = File(...), metering_point_code: Optional[
     content = await file.read()
     if not content:
         raise HTTPException(status_code=400, detail="Uploaded file is empty")
-    try:
-        valid, errors, total, ignored, codes = parse_demand_file(file.filename or "upload", content, db, default_id)
-    except DemandTelemetryImportError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+    valid, errors, total, ignored, codes = parse_demand_file(file.filename or "upload", content, db, default_id)
     inserted, updated = upsert_demand_rows(db, valid)
     db.commit()
     if ignored:

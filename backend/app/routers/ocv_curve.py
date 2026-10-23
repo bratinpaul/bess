@@ -1,6 +1,6 @@
 """OCV curves (battery_master.ocv_curve): per-cell open-circuit voltage vs SOC by chemistry, direction and temperature -
 list / filter, the curves for charting, read, edit and delete a point. Loaded from ocv_curve.csv
-(migrations/2026_10_06_ocv_curve_load.py)."""
+(one-off load)."""
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException

@@ -1,5 +1,4 @@
 from fastapi import APIRouter, Depends, HTTPException, Request
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app import models, schemas
@@ -34,13 +33,9 @@ def create_battery_container(payload: schemas.BatteryContainerCreate, db: Sessio
         raise HTTPException(status_code=400, detail="Battery system not found")
     container = models.BatteryContainer(**payload.model_dump())
     db.add(container)
-    try:
-        db.flush()  # assigns container_id
-        sync_node(db, "battery_container", container.container_id)
-        db.commit()
-    except IntegrityError:
-        db.rollback()
-        raise HTTPException(status_code=409, detail="Could not save battery container")
+    db.flush()  # assigns container_id
+    sync_node(db, "battery_container", container.container_id)
+    db.commit()
     db.refresh(container)
     return container
 
@@ -56,12 +51,8 @@ def update_battery_container(
         raise HTTPException(status_code=400, detail="Battery system not found")
     for field, value in payload.model_dump().items():
         setattr(container, field, value)
-    try:
-        sync_node(db, "battery_container", container_id)  # name or battery system may have changed
-        db.commit()
-    except IntegrityError:
-        db.rollback()
-        raise HTTPException(status_code=409, detail="Could not save battery container")
+    sync_node(db, "battery_container", container_id)  # name or battery system may have changed
+    db.commit()
     db.refresh(container)
     return container
 
@@ -71,13 +62,7 @@ def delete_battery_container(container_id: int, db: Session = Depends(get_db)):
     container = db.get(models.BatteryContainer, container_id)
     if not container:
         raise HTTPException(status_code=404, detail="Battery container not found")
-    remove_node(db, "battery_container", container_id)  # rolled back below if the delete fails
+    remove_node(db, "battery_container", container_id)  # undone with the request (get_db) if the delete fails
     db.delete(container)
-    try:
-        db.commit()
-    except IntegrityError:
-        db.rollback()
-        raise HTTPException(
-            status_code=409, detail="Cannot delete battery container: it still has battery packs attached to it"
-        )
+    db.commit()
     return None

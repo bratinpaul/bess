@@ -25,6 +25,8 @@ import pandas as pd
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
+from bess_common.errors import BadRequest
+
 TARGET = "soh_pct"
 GRAINS = {"5min": "5min", "hour": "h", "day": "D"}
 
@@ -157,7 +159,7 @@ def _readings(engine: Engine, sel: DataSelection) -> pd.DataFrame:
 def build_dataset(engine: Engine, sel: DataSelection) -> pd.DataFrame:
     """Feature rows (columns: system_id, ts, soh_pct, all features, has_module) for the selection."""
     if sel.grain not in GRAINS:
-        raise ValueError(f"grain must be one of {', '.join(GRAINS)}")
+        raise BadRequest(f"grain must be one of {', '.join(GRAINS)}")
     df = _readings(engine, sel)
     if df.empty:
         return pd.DataFrame(columns=["system_id", "ts", TARGET, "has_module"] + sel.features)

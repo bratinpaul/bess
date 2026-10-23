@@ -1,5 +1,5 @@
 -- BESS database DDL: battery_master
--- Generated 2026-10-22 by db_docs/generate_ddl.py from database Battery
+-- Generated 2026-10-23 by db_docs/generate_ddl.py from database Battery
 -- Sections: extensions, pg_dump schema DDL, TimescaleDB hypertables + compression, continuous aggregates,
 --           views on continuous aggregates, TimescaleDB policies
 
@@ -11,7 +11,7 @@ CREATE EXTENSION IF NOT EXISTS pgcrypto;
 -- PostgreSQL database dump
 --
 
-\restrict mCVe5mqyusrNiy3FIdesFxYZAu7eklk4EIBCxRLfJojFWnw7L8sTSXWwuNEDN2L
+\restrict CwpZR7eReEKlqaNgL6fZYcyly8tLM8cbpbhsvP0pB2dej4ygwRKZjkbcoH23wn3
 
 -- Dumped from database version 18.4
 -- Dumped by pg_dump version 18.4
@@ -3562,7 +3562,7 @@ ALTER TABLE ONLY battery_master.weather_station
 -- PostgreSQL database dump complete
 --
 
-\unrestrict mCVe5mqyusrNiy3FIdesFxYZAu7eklk4EIBCxRLfJojFWnw7L8sTSXWwuNEDN2L
+\unrestrict CwpZR7eReEKlqaNgL6fZYcyly8tLM8cbpbhsvP0pB2dej4ygwRKZjkbcoH23wn3
 
 
 

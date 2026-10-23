@@ -26,11 +26,14 @@ import pandas as pd
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
+from core.base import UseCaseError
+
 PLANT_TZ = "Asia/Kolkata"
 
 
-class ArbitrageDataError(Exception):
+class ArbitrageDataError(UseCaseError):
     """Missing inputs (the API answers 400)."""
+    code = "ARBITRAGE_INPUT_REJECTED"
 
 
 @dataclass

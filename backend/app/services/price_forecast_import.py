@@ -19,6 +19,7 @@ from sqlalchemy import literal_column
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
+from bess_common.errors import AppError, FileFormatError
 from app.models.dam_price import PriceForecast, PriceNode
 from app.schemas.price_forecast import BulkPriceForecastRowError, PriceForecastCreate
 from app.services.dam_price_import import NODE_HEADERS, _num, _pick
@@ -30,7 +31,7 @@ TARGET_HEADERS = ("target_ts", "target", "delivery_start")
 QUANTILES = {"p10_mwh": ("p10_mwh", "p10"), "p50_mwh": ("p50_mwh", "p50"), "p90_mwh": ("p90_mwh", "p90")}
 
 
-class PriceForecastImportError(Exception):
+class PriceForecastImportError(FileFormatError):
     """File-level problems: bad format, missing columns, unknown node, empty file."""
 
 
@@ -46,8 +47,11 @@ def parse_price_forecast_file(db: Session, filename: str, content: bytes, node_i
             raise PriceForecastImportError("Unsupported file type. Please upload a .csv or .xlsx file.")
     except PriceForecastImportError:
         raise
-    except Exception as exc:  # the shared readers raise their own error type
-        raise PriceForecastImportError(str(exc)) from exc
+    except AppError as exc:  # a reader's own file-level error
+        raise PriceForecastImportError(exc.public, log_message=exc.log_message) from exc
+    except Exception as exc:  # noqa: BLE001 - any other parser failure means an unreadable file
+        raise PriceForecastImportError("The file could not be read. Please upload a valid .csv or .xlsx file.",
+                                           log_message=f"upload not readable: {type(exc).__name__}: {exc}") from exc
     if len(raw_rows) > MAX_ROWS:
         raise PriceForecastImportError(f"File has {len(raw_rows)} rows, above the {MAX_ROWS} row limit.")
 

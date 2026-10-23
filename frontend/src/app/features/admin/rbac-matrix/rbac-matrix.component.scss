@@ -1,0 +1,136 @@
+.tabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 12px;
+  border-bottom: 1px solid #dfe3e7;
+
+  .tab {
+    padding: 8px 16px;
+    border: none;
+    border-bottom: 3px solid transparent;
+    background: none;
+    font: inherit;
+    font-weight: 600;
+    color: #55595f;
+    cursor: pointer;
+
+    &.active {
+      border-bottom-color: #63f8ba;
+      color: #1f2937;
+    }
+  }
+}
+
+.rm-pending {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  border-left: 4px solid #63f8ba;
+}
+
+.rm-scroll {
+  max-height: 70vh;
+  overflow: auto;
+}
+
+.rm-grid {
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 12px;
+
+  th,
+  td {
+    border-bottom: 1px solid #edf0f2;
+    padding: 4px 8px;
+  }
+
+  thead th {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    background: #f8f9fa;
+  }
+
+  .rm-corner {
+    left: 0;
+    z-index: 3;
+    min-width: 260px;
+    text-align: left;
+  }
+
+  .rm-role {
+    min-width: 92px;
+    text-align: center;
+    vertical-align: bottom;
+
+    span {
+      display: block;
+    }
+  }
+
+  .rm-priv {
+    position: sticky;
+    left: 0;
+    z-index: 1;
+    background: #fff;
+    white-space: nowrap;
+  }
+
+  .rm-rowbtns,
+  .rm-colbtns {
+    margin-left: 6px;
+    opacity: 0;
+    transition: opacity 0.15s;
+  }
+
+  tr:hover .rm-rowbtns,
+  th:hover .rm-colbtns {
+    opacity: 1;
+  }
+
+  .rm-cell {
+    text-align: center;
+
+    &.pending {
+      background: #fff4d6 !important;
+    }
+  }
+
+  .focus {
+    background: #f2fef8;
+  }
+
+  .rm-group td {
+    position: sticky;
+    left: 0;
+    padding-top: 10px;
+    background: #f1f3f5;
+    font-weight: 700;
+    color: #374151;
+  }
+
+  input[type='checkbox'] {
+    width: 16px;
+    height: 16px;
+    accent-color: #1f6f5c;
+    cursor: pointer;
+
+    &:disabled {
+      cursor: not-allowed;
+    }
+  }
+}
+
+.rm-pre {
+  max-height: 60vh;
+  overflow: auto;
+  padding: 12px;
+  border-radius: 8px;
+  background: #f6f7f8;
+  font-size: 12px;
+}
+
+.rm-diff {
+  font-size: 12px;
+  word-break: break-word;
+}

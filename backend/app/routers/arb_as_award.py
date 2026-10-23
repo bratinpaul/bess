@@ -14,7 +14,7 @@ from app.models.arbitrage import AsAward
 from app.models.as_price import AsProduct
 from app.routers.arb_common import bulk_result, commit_or_409, fmt, in_days, local, resolvers, system_code
 from app.schemas.arbitrage import AsAwardCreate, AsAwardOut, AsAwardUpdate, BulkResult, Page, Stat
-from app.services.arbitrage_import import ArbitrageImportError, Col, num, parse_upload, ts_span, upsert, validate_rows
+from app.services.arbitrage_import import Col, num, parse_upload, ts_span, upsert, validate_rows
 
 router = APIRouter(prefix="/api/as-awards", tags=["dispatch"])
 
@@ -149,10 +149,7 @@ async def bulk_load(file: UploadFile = File(...), db: Session = Depends(get_db))
     content = await file.read()
     if not content:
         raise HTTPException(status_code=400, detail="Uploaded file is empty")
-    try:
-        records, errors, total, ignored = parse_upload(file.filename or "upload", content, COLS, resolvers(db))
-    except ArbitrageImportError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+    records, errors, total, ignored = parse_upload(file.filename or "upload", content, COLS, resolvers(db))
     min_bid = {p.product_id: (p.product_code, p.min_bid_mw) for p in db.query(AsProduct)}
 
     def check(m: AsAwardCreate):

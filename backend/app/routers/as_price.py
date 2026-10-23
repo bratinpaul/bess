@@ -6,7 +6,6 @@ from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from sqlalchemy import func
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -22,7 +21,7 @@ from app.schemas.as_price import (
     BulkAsPriceResult,
     BulkAsPriceRowError,
 )
-from app.services.as_price_import import AsPriceImportError, first_last, parse_as_price_file, upsert_as_prices
+from app.services.as_price_import import first_last, parse_as_price_file, upsert_as_prices
 
 router = APIRouter(prefix="/api/as-prices", tags=["market data"])
 
@@ -126,11 +125,7 @@ def add_price(payload: AsPriceCreate, db: Session = Depends(get_db)):
         raise HTTPException(status_code=409, detail=f"{code} already has an AS price at {start.isoformat()}")
     row = AsPrice(**{**payload.model_dump(), "delivery_start": start})
     db.add(row)
-    try:
-        db.commit()
-    except IntegrityError as exc:
-        db.rollback()
-        raise HTTPException(status_code=409, detail=str(exc.orig).splitlines()[0])
+    db.commit()
     db.refresh(row)
     return _out(row, code)
 
@@ -163,11 +158,8 @@ async def bulk_load(file: UploadFile = File(...), product_id: Optional[int] = Fo
     content = await file.read()
     if not content:
         raise HTTPException(status_code=400, detail="Uploaded file is empty")
-    try:
-        valid, errors, total, ignored, products = parse_as_price_file(db, file.filename or "upload", content,
-                                                                      product_id)
-    except AsPriceImportError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+    valid, errors, total, ignored, products = parse_as_price_file(db, file.filename or "upload", content,
+                                                                  product_id)
     inserted, updated = upsert_as_prices(db, valid)
     db.commit()
     n_errors = len(errors)

@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from app import models, schemas
 from app.database import get_db
-from app.services.calendar_import import CalendarImportError, parse_calendar_file, upsert_calendar_rows
+from app.services.calendar_import import parse_calendar_file, upsert_calendar_rows
 
 router = APIRouter(prefix="/api/calendar-days", tags=["calendar"])
 
@@ -97,10 +97,7 @@ async def bulk_load(file: UploadFile = File(...), db: Session = Depends(get_db))
     content = await file.read()
     if not content:
         raise HTTPException(status_code=400, detail="Uploaded file is empty")
-    try:
-        valid, errors, total, ignored = parse_calendar_file(file.filename or "upload", content)
-    except CalendarImportError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+    valid, errors, total, ignored = parse_calendar_file(file.filename or "upload", content)
     inserted, updated = upsert_calendar_rows(db, valid)
     db.commit()
     n_errors = len(errors)

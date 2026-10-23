@@ -5,7 +5,7 @@ are deny-by-default, as the service account batch.service@bess.local (role Data 
     request = urllib.request.Request(url, headers={**auth_headers(api), ...})
 
 Credentials: BESS_SERVICE_EMAIL / BESS_SERVICE_PASSWORD, else <project>/keys/service_account.json (written by
-backend/migrations/2026_10_21_battery_users.py). The access / refresh tokens are cached in keys/.service_token.json, so the
+backend/setup/bootstrap_auth.py). The access / refresh tokens are cached in keys/.service_token.json, so the
 every-minute realtime batch reuses one login session (refresh rotation) instead of logging in each run.
 """
 import json
@@ -75,6 +75,34 @@ def access_token(api: str) -> str:
     fresh = _post_token(api, {"grant_type": "password", "username": email, "password": password})
     _save(fresh)
     return fresh["access_token"]
+
+
+def invalidate_access_token() -> None:
+    """Forget the cached access token (keep the refresh token), so the next call fetches a fresh one - used after a
+    401, e.g. when an admin changed the account's role and the old token is refused as out of date."""
+    data = dict(_memory)
+    if not data:
+        try:
+            data = json.loads(CACHE.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            data = {}
+    if data:
+        data["access_exp"] = 0
+        _save(data)
+
+
+def open_authed(api: str, request: urllib.request.Request, timeout: float):
+    """urlopen with the service account's bearer token; on 401 refresh the token once and retry."""
+    for attempt in (1, 2):
+        for name, value in auth_headers(api).items():
+            request.add_header(name, value)
+        try:
+            return urllib.request.urlopen(request, timeout=timeout)
+        except urllib.error.HTTPError as exc:
+            if exc.code == 401 and attempt == 1:
+                invalidate_access_token()
+                continue
+            raise
 
 
 def auth_headers(api: str) -> dict:

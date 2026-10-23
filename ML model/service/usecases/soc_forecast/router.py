@@ -7,6 +7,7 @@ import pandas as pd
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
+from bess_common.errors import run_guard
 from core.auth import can_approve
 from core.db import engine
 from usecases.soc_forecast import features as F
@@ -71,10 +72,7 @@ def _run(model: str) -> tuple[dict, dict]:
     if not run:
         raise HTTPException(status_code=404, detail="No completed SOC forecast model yet" if model == "active"
                             else f"Run {model} is not a completed SOC forecast run")
-    try:
-        return run, store.load_artifact(run)
-    except FileNotFoundError as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
+    return run, store.load_artifact(run)
 
 
 @router.get("/options")
@@ -91,10 +89,7 @@ def train(request: Request, body: TrainRequest):
         if body.soc_min is None or body.soc_max is None or body.soc_max <= body.soc_min:
             raise HTTPException(status_code=400, detail="Enter both SOC limits (min below max), or neither for the learned ones")
         limits = (body.soc_min, body.soc_max)
-    try:
-        gbm = T.clean_gbm(body.gbm_params)
-    except T.SocForecastError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+    gbm = T.clean_gbm(body.gbm_params)
     params = {"gbm": gbm, "train_origin_step_min": body.train_origin_step_min, "train_horizon_step": body.train_horizon_step,
               "soc_min": body.soc_min, "soc_max": body.soc_max}
     run_id = store.start_run(engine, {
@@ -103,16 +98,10 @@ def train(request: Request, body: TrainRequest):
         "params": params})
     cfg = T.RunConfig(F.Selection(body.ems_ids, body.date_from, body.date_to), body.horizon_h, body.test_fraction,
                       body.origin_step_min, body.train_origin_step_min, body.train_horizon_step, limits, gbm)
-    try:
+    with run_guard(fail=lambda msg: store.fail_run(engine, run_id, msg), context={"run_id": run_id}):
         artifact, summary, points, warnings = T.train(engine, cfg)
         path = store.save_artifact(run_id, artifact)
         store.complete_run(engine, run_id, summary, points, warnings, path)
-    except (T.SocForecastError, ValueError) as exc:
-        store.fail_run(engine, run_id, str(exc))
-        raise HTTPException(status_code=400, detail={"message": str(exc), "run_id": run_id})
-    except Exception as exc:  # noqa: BLE001 - keep a record of unexpected failures
-        store.fail_run(engine, run_id, f"{type(exc).__name__}: {exc}")
-        raise HTTPException(status_code=500, detail={"message": f"Training failed: {exc}", "run_id": run_id})
     if body.make_default and can_approve(request):
         store.set_default(engine, run_id)
     return _public(store.get_run(engine, run_id))
@@ -175,9 +164,6 @@ def forecast(body: ForecastRequest, model: str = "active"):
     """SOC trajectories from the newest reading of the EMS for a plan source (custom = the given blocks, typical day
     elsewhere), with the derived available energy and time to the SOC limits."""
     run, art = _run(model)
-    try:
-        out = T.forecast(engine, art, body.ems_id, body.source, [b.model_dump() for b in body.blocks],
-                         body.history_hours, body.horizon_h)
-    except T.SocForecastError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+    out = T.forecast(engine, art, body.ems_id, body.source, [b.model_dump() for b in body.blocks],
+                     body.history_hours, body.horizon_h)
     return {"run_id": run["run_id"], **out}

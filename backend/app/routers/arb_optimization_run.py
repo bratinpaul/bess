@@ -29,7 +29,7 @@ from app.schemas.arbitrage import (
     Page,
     Stat,
 )
-from app.services.arbitrage_import import ArbitrageImportError, Col, num, parse_upload, ts_span, upsert, validate_rows
+from app.services.arbitrage_import import Col, num, parse_upload, ts_span, upsert, validate_rows
 
 router = APIRouter(prefix="/api/optimization-runs", tags=["dispatch"])
 
@@ -182,10 +182,7 @@ async def bulk_load(file: UploadFile = File(...), db: Session = Depends(get_db))
     content = await file.read()
     if not content:
         raise HTTPException(status_code=400, detail="Uploaded file is empty")
-    try:
-        records, errors, total, ignored = parse_upload(file.filename or "upload", content, COLS, resolvers(db))
-    except ArbitrageImportError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+    records, errors, total, ignored = parse_upload(file.filename or "upload", content, COLS, resolvers(db))
 
     def check(m: OptimizationRunCreate):
         if m.run_id is not None and db.get(Run, m.run_id):

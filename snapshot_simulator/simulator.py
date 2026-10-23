@@ -33,6 +33,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from snapshot_simulator.soc_signals import SocSignals, nominal_ah
+from bess_common.errors import BadRequest
 
 PROJECT = Path(__file__).resolve().parents[1]  # the bess project root
 INBOX = PROJECT / "input" / "realtime"
@@ -45,8 +46,9 @@ MAX_FILES = 7 * SLOTS_PER_DAY  # one week per run
 CLOSEST_DAYS = 3
 
 
-class SimulatorError(Exception):
+class SimulatorError(BadRequest):
     """Bad input or no data to sample from."""
+    code = "SIMULATOR_REJECTED"
 
 
 def _naive(dt: datetime) -> datetime:

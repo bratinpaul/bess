@@ -4,7 +4,7 @@ FastAPI service on port 8100 (run from `service/` with the project `.venv`):
 
 ```
 cd "ML model/service"
-..\..\.venv\Scripts\python -m uvicorn main:app --port 8100
+..\..\.venv\Scripts\python -m uvicorn main:app --port 8100 --no-server-header
 ```
 
 ## Layout
@@ -165,6 +165,6 @@ else the latest completed run.
    `core.registry` with the use case's `NAME` (every registry call takes it, so runs, the default run and
    the model files stay separate per use case).
 6. **Database** - runs go into `battery_ml.model_run` with `use_case = NAME`. The table's CHECK constraints
-   allow model types `xgboost` / `lightgbm` and grains `5min` / `hour` / `day`; widen them with a migration in
-   `backend/migrations/` if the new use case needs others.
+   allow model types `xgboost` / `lightgbm` and grains `5min` / `hour` / `day`; widen them with an `ALTER TABLE`
+   on the database (and regenerate the DDL with `db_docs/generate_ddl.py`) if the new use case needs others.
 7. **Frontend** - add a service pointing at `http://localhost:8100/<name>` and the pages under `features/ml/`.

@@ -12,14 +12,16 @@ import pandas as pd
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
+from core.base import UseCaseError
 from usecases.loss import data as LD
 
 TZ = "Asia/Kolkata"
 STEP_MIN = 5
 
 
-class HeatLoadError(Exception):
+class HeatLoadError(UseCaseError):
     """Bad input for a heat-load run (the API answers 400)."""
+    code = "HEATLOAD_INPUT_REJECTED"
 
 
 _SERIES_SQL = """

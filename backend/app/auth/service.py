@@ -97,7 +97,8 @@ async def _issue(db: AsyncSession, user: User, family_id: uuid.UUID, family_expi
     access, lifetime = create_access_token(
         user_id=str(user.id), email=user.email, name=user.full_name, role=role.role_code, role_name=role.role_name,
         perms=perms, tenant_id=user.tenant_id if role.is_tenant_scoped else None,
-        must_change_password=user.must_change_password, is_service=user.is_service_account)
+        must_change_password=user.must_change_password, is_service=user.is_service_account,
+        role_version=role.version, user_version=user.token_version)
     raw = secrets.token_urlsafe(48)
     row = RefreshToken(token_id=uuid.uuid4(), user_id=user.id, family_id=family_id, token_hash=_hash(raw),
                        expires_at=family_expires, user_agent=(agent or "")[:300], ip=ip)

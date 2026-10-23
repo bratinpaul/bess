@@ -25,6 +25,8 @@ import pandas as pd
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
+from core.base import UseCaseError
+
 TZ = "Asia/Kolkata"
 STEP_MIN = 5
 DIRECTIONS = ("CHARGE", "DISCHARGE", "MEAN")
@@ -153,7 +155,7 @@ class OcvCurve:
                 m[i] = v + np.arange(len(v)) * 1e-7
             self.temps[d], self.grids[d] = temps, (socs, m)
         if not self.grids:
-            raise ValueError("The OCV curve is empty")
+            raise UseCaseError("The OCV curve is empty")
         if "MEAN" not in self.grids:  # mean of the two branches
             c, dch = self.grids.get("CHARGE"), self.grids.get("DISCHARGE")
             base = c or dch
@@ -196,7 +198,7 @@ def ocv_curve(engine: Engine, chem: str) -> OcvCurve:
         df = pd.read_sql(text("""SELECT direction, temp_c, soc_pct, ocv_v FROM battery_master.ocv_curve
                                  WHERE upper(chemistry) = upper(:c)"""), conn, params={"c": chem})
     if df.empty:
-        raise ValueError(f"No OCV curve for chemistry {chem} in battery_master.ocv_curve")
+        raise UseCaseError(f"No OCV curve for chemistry {chem}")
     for c in ("temp_c", "soc_pct", "ocv_v"):
         df[c] = df[c].astype(float)
     return OcvCurve(df)

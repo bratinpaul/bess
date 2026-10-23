@@ -20,11 +20,14 @@ import pandas as pd
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
+from core.base import UseCaseError
+
 TZ = "Asia/Kolkata"
 
 
-class LossDataError(Exception):
+class LossDataError(UseCaseError):
     """Bad input for a loss run (the API answers 400)."""
+    code = "LOSS_INPUT_REJECTED"
 
 
 _SERIES_SQL = """

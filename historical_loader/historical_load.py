@@ -38,7 +38,9 @@ from typing import Any, Callable, Optional
 
 # the bulk APIs are deny-by-default: authenticate as the batch service account (see bess_service_auth.py)
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from bess_service_auth import auth_headers  # noqa: E402
+from bess_service_auth import auth_headers, open_authed  # noqa: E402
+from bess_common.errors import (EXIT_FAILED, EXIT_OK, EXIT_PARTIAL, BusinessRuleViolation,  # noqa: E402
+                                batch_error_code, run_main)
 from bess_common import observability as obs  # noqa: E402  (JSON logs, operations, activity log)
 
 from urllib.parse import unquote, urlparse
@@ -79,8 +81,9 @@ FEEDS: tuple[Feed, ...] = (
 FEED_KEYS = tuple(f.key for f in FEEDS)
 
 
-class LoadError(Exception):
-    pass
+class LoadError(BusinessRuleViolation):
+    status = 400
+    code = "HISTORICAL_LOAD_REJECTED"
 
 
 # ---------------------------------------------------------------- setup
@@ -240,7 +243,7 @@ def post_file(api: str, endpoint: str, path: Path, form: dict[str, str]) -> tupl
     request = urllib.request.Request(api + endpoint, data=b"".join(parts), method="POST",
                                      headers={"Content-Type": f"multipart/form-data; boundary={boundary}", **auth_headers(api)})
     try:
-        with urllib.request.urlopen(request, timeout=1800) as response:
+        with open_authed(api, request, 1800) as response:
             return response.status, json.loads(response.read() or b"{}")
     except urllib.error.HTTPError as exc:
         try:
@@ -362,10 +365,11 @@ def run(folder: str, system: str, feeds: tuple[str, ...] = FEED_KEYS, recursive:
             progress.write(current="Refreshing daily summaries")
             try:
                 report["aggregates_refreshed"] = refresh_aggregates(dsn, assets["system_id"], loaded_feeds, log)
-            except psycopg2.Error as exc:
-                report["warnings"].append(f"Daily summaries not refreshed: {exc}")
+            except psycopg2.Error as exc:  # the database text goes to the log, not to the batch page
+                log(f"daily summaries not refreshed: {obs.scrub(str(exc).splitlines()[0])}")
+                report["warnings"].append("Daily summaries not refreshed (database error - see the loader log)")
     except LoadError as exc:
-        report["error"] = str(exc)
+        report["error"], report["error_code"] = exc.public, exc.code
         log(f"error: {exc}")
 
     finished = datetime.now().astimezone()
@@ -398,15 +402,17 @@ def run(folder: str, system: str, feeds: tuple[str, ...] = FEED_KEYS, recursive:
                 """INSERT INTO battery_raw.batchlog
                      (run_id, job_name, file_name, status, started_at, finished_at, duration_ms, feeds_total,
                       feeds_loaded, feeds_failed, rows_total, rows_inserted, rows_updated, rows_skipped, feed_results,
-                      warnings, id_changes, error_message, archive_path, api_url, host_name, report)
+                      warnings, id_changes, error_message, error_code, request_id, archive_path, api_url, host_name,
+                      report)
                    VALUES (%(run_id)s, %(job)s, %(file_name)s, %(status)s, %(started)s, %(finished)s, %(ms)s,
                       %(feeds_total)s, %(feeds_loaded)s, %(feeds_failed)s, %(rows_total)s, %(rows_inserted)s,
                       %(rows_updated)s, %(rows_skipped)s, %(feed_results)s, %(warnings)s, '[]'::jsonb, %(error)s,
-                      %(folder)s, %(api)s, %(host)s, %(report)s) RETURNING batch_id""",
+                      %(error_code)s, %(run_id)s, %(folder)s, %(api)s, %(host)s, %(report)s) RETURNING batch_id""",
                 dict(run_id=run_id, job=JOB_NAME, file_name=f"{report.get('site') or system} · {Path(folder).name}",
                      status=status, started=started, finished=finished,
                      ms=int((finished - started).total_seconds() * 1000), **totals, feed_results=Json(feed_results),
-                     warnings=Json(report["warnings"]), error=report["error"], folder=folder, api=api,
+                     warnings=Json(report["warnings"]), error=report["error"],
+                     error_code=batch_error_code(status, report.get("error_code")), folder=folder, api=api,
                      host=socket.gethostname(), report=Json(json.loads(json.dumps(report, default=str)))))
             batch_id = cur.fetchone()[0]
         conn.close()
@@ -501,7 +507,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     with Lock() as locked:
         if not locked:
             print("another historical load is still running")
-            return 4
+            return EXIT_FAILED
         include = set(json.loads(args.files_json.read_text(encoding="utf-8"))) if args.files_json else None
         obs.setup_logging("loader-historical")
         obs.enable_activity_log(obs.engine_from_dsn(database_dsn()))
@@ -513,8 +519,8 @@ def main(argv: Optional[list[str]] = None) -> int:
                    status=result["status"], batch_id=result.get("batch_id"),
                    outcome="success" if result["status"] == "SUCCESS" else "failed")
         obs.activity.flush()
-    return {"SUCCESS": 0, "PARTIAL": 1}.get(result["status"], 2)
+    return {"SUCCESS": EXIT_OK, "PARTIAL": EXIT_PARTIAL}.get(result["status"], EXIT_FAILED)
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(run_main("historical_load", main))

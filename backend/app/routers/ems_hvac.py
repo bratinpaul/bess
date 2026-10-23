@@ -1,6 +1,5 @@
 """Master-data CRUD for EMS controllers and HVAC units (each belongs to a battery system)."""
 from fastapi import APIRouter, Depends, HTTPException, Request
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app import models, schemas
@@ -47,13 +46,9 @@ def _crud_router(
         return system.system_name if system else None
 
     def save(db: Session, row, item_id=None):
-        try:
-            db.flush()
-            sync_node(db, asset_type, item_id or getattr(row, id_attr))
-            db.commit()
-        except IntegrityError:
-            db.rollback()
-            raise HTTPException(status_code=409, detail=f"Another {label} already uses this code")
+        db.flush()
+        sync_node(db, asset_type, item_id or getattr(row, id_attr))
+        db.commit()
         db.refresh(row)
         return to_out(row, system_name(db, row.battery_system_id))
 
@@ -93,13 +88,9 @@ def _crud_router(
     @router.delete("/{item_id}", status_code=204)
     def delete_item(item_id: int, db: Session = Depends(get_db)):
         row = get_or_404(db, item_id)
-        remove_node(db, asset_type, item_id)  # rolled back below if the delete fails
+        remove_node(db, asset_type, item_id)  # undone with the request (get_db) if the delete fails
         db.delete(row)
-        try:
-            db.commit()
-        except IntegrityError:
-            db.rollback()
-            raise HTTPException(status_code=409, detail=f"Cannot delete {label}: it still has telemetry recorded against it")
+        db.commit()
         return None
 
     # FastAPI names operations after the function; keep them unique per router

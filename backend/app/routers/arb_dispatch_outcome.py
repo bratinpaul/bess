@@ -21,7 +21,7 @@ from app.schemas.arbitrage import (
     Page,
     Stat,
 )
-from app.services.arbitrage_import import ArbitrageImportError, Col, num, parse_upload, ts_span, upsert, validate_rows
+from app.services.arbitrage_import import Col, num, parse_upload, ts_span, upsert, validate_rows
 
 router = APIRouter(prefix="/api/dispatch-outcomes", tags=["dispatch"])
 
@@ -151,10 +151,7 @@ async def bulk_load(file: UploadFile = File(...), db: Session = Depends(get_db))
     content = await file.read()
     if not content:
         raise HTTPException(status_code=400, detail="Uploaded file is empty")
-    try:
-        records, errors, total, ignored = parse_upload(file.filename or "upload", content, COLS, resolvers(db))
-    except ArbitrageImportError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+    records, errors, total, ignored = parse_upload(file.filename or "upload", content, COLS, resolvers(db))
     runs = {r.run_id: r for r in db.query(Run)}
     valid = validate_rows(records, DispatchOutcomeCreate, errors,
                           lambda m: _run_fits(runs.get(m.run_id), m.run_id, local(m.interval_start)),

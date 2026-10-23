@@ -1,5 +1,4 @@
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app import models, schemas
@@ -97,17 +96,10 @@ def get_site(site_id: int, db: Session = Depends(get_db), principal: Principal =
 def create_site(payload: schemas.SiteCreate, db: Session = Depends(get_db), _: Principal = Depends(WRITE)):
     site = models.Site(**payload.model_dump(exclude={"owners"}))
     db.add(site)
-    try:
-        db.flush()  # assigns site_id for the ownership rows
-        _replace_owners(db, site.site_id, payload.owners)
-        sync_node(db, "site", site.site_id)  # parent = primary owner
-        db.commit()
-    except IntegrityError:
-        db.rollback()
-        raise HTTPException(status_code=409, detail="Site code already exists")
-    except HTTPException:
-        db.rollback()
-        raise
+    db.flush()  # assigns site_id for the ownership rows
+    _replace_owners(db, site.site_id, payload.owners)
+    sync_node(db, "site", site.site_id)  # parent = primary owner
+    db.commit()
     db.refresh(site)
     return _to_out(site, _owners_by_site(db, [site.site_id]).get(site.site_id, []))
 
@@ -120,17 +112,10 @@ def update_site(site_id: int, payload: schemas.SiteUpdate, db: Session = Depends
         raise HTTPException(status_code=404, detail="Site not found")
     for field, value in payload.model_dump(exclude={"owners"}).items():
         setattr(site, field, value)
-    try:
-        if payload.owners is not None:
-            _replace_owners(db, site_id, payload.owners)
-        sync_node(db, "site", site_id)  # name or primary owner may have changed
-        db.commit()
-    except IntegrityError:
-        db.rollback()
-        raise HTTPException(status_code=409, detail="Site code already exists")
-    except HTTPException:
-        db.rollback()
-        raise
+    if payload.owners is not None:
+        _replace_owners(db, site_id, payload.owners)
+    sync_node(db, "site", site_id)  # name or primary owner may have changed
+    db.commit()
     db.refresh(site)
     return _to_out(site, _owners_by_site(db, [site_id]).get(site_id, []))
 
@@ -140,13 +125,7 @@ def delete_site(site_id: int, db: Session = Depends(get_db), _: Principal = Depe
     site = db.get(models.Site, site_id)
     if not site:
         raise HTTPException(status_code=404, detail="Site not found")
-    remove_node(db, "site", site_id)  # rolled back below if the site can't be deleted
+    remove_node(db, "site", site_id)  # undone with the request (get_db) if the site can't be deleted
     db.delete(site)  # tenant_site rows go with it (ON DELETE CASCADE)
-    try:
-        db.commit()
-    except IntegrityError:
-        db.rollback()
-        raise HTTPException(
-            status_code=409, detail="Cannot delete site: it still has battery systems attached to it"
-        )
+    db.commit()
     return None

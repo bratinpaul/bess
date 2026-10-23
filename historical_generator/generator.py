@@ -43,6 +43,7 @@ _ROOT = Path(__file__).resolve().parents[1]
 if str(_ROOT) not in sys.path:  # the shared signal model lives in <project>/snapshot_simulator
     sys.path.insert(0, str(_ROOT))
 from snapshot_simulator.soc_signals import SocSignals  # noqa: E402
+from bess_common.errors import BusinessRuleViolation  # noqa: E402
 
 warnings.filterwarnings("ignore")
 
@@ -62,8 +63,9 @@ MAX_DAYS = 92
 _LOCK = threading.Lock()
 
 
-class GenerationError(Exception):
-    pass
+class GenerationError(BusinessRuleViolation):
+    status = 400
+    code = "GENERATION_REJECTED"
 
 
 # ---------------------------------------------------------------- site profile (master data + climate)

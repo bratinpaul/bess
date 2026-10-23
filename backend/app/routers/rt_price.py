@@ -8,7 +8,6 @@ from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from sqlalchemy import and_, func
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -22,7 +21,7 @@ from app.schemas.rt_price import (
     RtPriceStats,
     RtPriceUpdate,
 )
-from app.services.rt_price_import import RtPriceImportError, first_last, parse_rt_price_file, upsert_rt_prices
+from app.services.rt_price_import import first_last, parse_rt_price_file, upsert_rt_prices
 
 router = APIRouter(prefix="/api/rt-prices", tags=["market data"])
 
@@ -120,11 +119,7 @@ def add_price(payload: RtPriceCreate, db: Session = Depends(get_db)):
     if db.get(RtPrice, (payload.node_id, start)):
         raise HTTPException(status_code=409, detail=f"{code} already has an RT price at {start.isoformat()}")
     db.add(RtPrice(**{**payload.model_dump(), "interval_start": start}))
-    try:
-        db.commit()
-    except IntegrityError as exc:
-        db.rollback()
-        raise HTTPException(status_code=409, detail=str(exc.orig).splitlines()[0])
+    db.commit()
     return _out(*_get(db, payload.node_id, start))
 
 
@@ -154,10 +149,7 @@ async def bulk_load(file: UploadFile = File(...), node_id: Optional[int] = Form(
     content = await file.read()
     if not content:
         raise HTTPException(status_code=400, detail="Uploaded file is empty")
-    try:
-        valid, errors, total, ignored, nodes = parse_rt_price_file(db, file.filename or "upload", content, node_id)
-    except RtPriceImportError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+    valid, errors, total, ignored, nodes = parse_rt_price_file(db, file.filename or "upload", content, node_id)
     inserted, updated = upsert_rt_prices(db, valid)
     db.commit()
     n_errors = len(errors)

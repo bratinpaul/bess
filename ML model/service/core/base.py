@@ -27,13 +27,27 @@ from typing import Any, ClassVar, Optional
 import numpy as np
 import pandas as pd
 
+from bess_common import errors as E
 from core.metrics import finite, permutation_shares, regression_scores, shares
 
 IMPORTANCE_METHODS = ("auto", "gain", "permutation")
 
 
-class TrainingError(Exception):
+# ---------------------------------------------------------------- errors (bess_common/errors.py answers them)
+class UseCaseError(E.BusinessRuleViolation):
+    """Base of the use cases' input errors: authored messages meant for the user (the API answers 400 with the text).
+    Anything that is not a UseCaseError / AppError is answered with the generic message and logged with its trace."""
+    status, code = 400, "ML_INPUT_REJECTED"
+
+
+class TrainingError(UseCaseError):
     """Bad training input (the API answers 400)."""
+    code = "TRAINING_REJECTED"
+
+
+class ArtifactMissing(E.ModelNotReady):
+    """A completed run whose model files are gone (the path stays in the log)."""
+    code, public = "MODEL_ARTIFACT_MISSING", "The model files of this run are missing. Retrain the model."
 
 
 # ---------------------------------------------------------------- algorithm

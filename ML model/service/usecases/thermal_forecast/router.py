@@ -6,6 +6,7 @@ from typing import Any, Literal, Optional
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
+from bess_common.errors import run_guard
 from core.auth import can_approve
 from core.db import engine
 from usecases.thermal_forecast import features as F
@@ -68,10 +69,7 @@ def _run(model: str) -> tuple[dict, dict]:
     if not run:
         raise HTTPException(status_code=404, detail="No completed temperature forecast model yet" if model == "active"
                             else f"Run {model} is not a completed temperature forecast run")
-    try:
-        return run, store.load_artifact(run)
-    except FileNotFoundError as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
+    return run, store.load_artifact(run)
 
 
 @router.get("/options")
@@ -87,10 +85,7 @@ def options():
 
 @router.post("/runs")
 def train(request: Request, body: TrainRequest):
-    try:
-        gbm = T.clean_gbm(body.gbm_params)
-    except T.ThermalForecastError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+    gbm = T.clean_gbm(body.gbm_params)
     params = {"gbm": gbm, "thresholds": body.thresholds, "plan_source": body.plan_source,
               "train_origin_step": body.train_origin_step}
     run_id = store.start_run(engine, {
@@ -99,16 +94,10 @@ def train(request: Request, body: TrainRequest):
         "params": params})
     cfg = T.RunConfig(F.Selection(body.system_ids, body.date_from, body.date_to), body.targets, body.horizons_min,
                       body.thresholds, body.plan_source, body.test_fraction, body.train_origin_step, gbm_params=gbm)
-    try:
+    with run_guard(fail=lambda msg: store.fail_run(engine, run_id, msg), context={"run_id": run_id}):
         artifact, summary, points, warnings = T.train(engine, cfg)
         path = store.save_artifact(run_id, artifact)
         store.complete_run(engine, run_id, summary, points, warnings, path)
-    except (T.ThermalForecastError, ValueError) as exc:
-        store.fail_run(engine, run_id, str(exc))
-        raise HTTPException(status_code=400, detail={"message": str(exc), "run_id": run_id})
-    except Exception as exc:  # noqa: BLE001 - keep a record of unexpected failures
-        store.fail_run(engine, run_id, f"{type(exc).__name__}: {exc}")
-        raise HTTPException(status_code=500, detail={"message": f"Training failed: {exc}", "run_id": run_id})
     if body.make_default and can_approve(request):
         store.set_default(engine, run_id)
     return _public(store.get_run(engine, run_id))
@@ -159,11 +148,8 @@ def predict(body: PredictRequest, model: str = "active"):
     """Online: features from v_thermal_features at the newest reading -> {target, asset_id, horizon_min, pred_c,
     p10_c, p90_c} per target and horizon, NULL with a flag when stale / missing."""
     run, art = _run(model)
-    try:
-        out = T.predict_live(engine, art, body.system_id, body.plan_source, body.targets, body.horizons_min,
-                             body.history_hours, body.max_data_age_min)
-    except T.ThermalForecastError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+    out = T.predict_live(engine, art, body.system_id, body.plan_source, body.targets, body.horizons_min,
+                         body.history_hours, body.max_data_age_min)
     return {"run_id": run["run_id"], **out}
 
 
@@ -171,9 +157,6 @@ def predict(body: PredictRequest, model: str = "active"):
 def predict_vector(body: VectorRequest, model: str = "active"):
     """Stateless: the forecast of one target from a feature vector (no database read)."""
     run, art = _run(model)
-    try:
-        out = T.predict_vector(art, body.system_id, body.target, body.inputs, body.horizons_min, body.plan_kw,
-                               body.origin_ts)
-    except T.ThermalForecastError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+    out = T.predict_vector(art, body.system_id, body.target, body.inputs, body.horizons_min, body.plan_kw,
+                           body.origin_ts)
     return {"run_id": run["run_id"], **out}

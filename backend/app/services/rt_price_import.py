@@ -17,6 +17,7 @@ from sqlalchemy import literal_column
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
+from bess_common.errors import AppError, FileFormatError
 from app.models.dam_price import PriceNode, RtPrice
 from app.schemas.rt_price import BulkRtPriceRowError, RtPriceCreate
 from app.services.dam_price_import import NODE_HEADERS, PRICE_HEADERS, _num, _pick
@@ -26,7 +27,7 @@ MAX_ROWS = 300_000
 TS_HEADERS = ("interval_start", "ts", "timestamp", "time")
 
 
-class RtPriceImportError(Exception):
+class RtPriceImportError(FileFormatError):
     """File-level problems: bad format, missing columns, unknown node, empty file."""
 
 
@@ -42,8 +43,11 @@ def parse_rt_price_file(db: Session, filename: str, content: bytes, node_id: Opt
             raise RtPriceImportError("Unsupported file type. Please upload a .csv or .xlsx file.")
     except RtPriceImportError:
         raise
-    except Exception as exc:  # the shared readers raise their own error type
-        raise RtPriceImportError(str(exc)) from exc
+    except AppError as exc:  # a reader's own file-level error
+        raise RtPriceImportError(exc.public, log_message=exc.log_message) from exc
+    except Exception as exc:  # noqa: BLE001 - any other parser failure means an unreadable file
+        raise RtPriceImportError("The file could not be read. Please upload a valid .csv or .xlsx file.",
+                                     log_message=f"upload not readable: {type(exc).__name__}: {exc}") from exc
     if len(raw_rows) > MAX_ROWS:
         raise RtPriceImportError(f"File has {len(raw_rows)} rows, above the {MAX_ROWS} row limit.")
 

@@ -14,7 +14,7 @@ from app.database import get_db
 
 router = APIRouter(prefix="/api/admin/activity", tags=["activity-log"])
 COLUMNS = """activity_id, ts, service, kind, event, outcome, request_id, user_email, role, method, path, status_code,
-    duration_ms, operation, rows_total, rows_inserted, rows_updated, rows_rejected, ip, detail"""
+    duration_ms, operation, rows_total, rows_inserted, rows_updated, rows_rejected, ip, detail, error_code"""
 
 
 @router.get("")
@@ -35,7 +35,8 @@ def list_activity(kind: Optional[Literal["REQUEST", "AUTH", "LOAD", "KPI", "TRAI
     if request_id:
         where.append("request_id = :rid"); params["rid"] = request_id.strip()
     if q:
-        where.append("(path ILIKE :q OR operation ILIKE :q OR event ILIKE :q OR detail::text ILIKE :q)")
+        where.append("(path ILIKE :q OR operation ILIKE :q OR event ILIKE :q OR error_code ILIKE :q"
+                     " OR detail::text ILIKE :q)")
         params["q"] = f"%{q.strip()}%"
     if date_from:
         where.append("ts >= :d0"); params["d0"] = date_from

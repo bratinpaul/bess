@@ -6,12 +6,13 @@ from typing import Optional
 import pandas as pd
 from fastapi import APIRouter, HTTPException, Query, Request
 
+from bess_common.errors import run_guard
 from core.auth import can_approve
 from core.db import engine
 from usecases.price_forecast import features as F
 from usecases.price_forecast import store
 from usecases.price_forecast import trainer as T
-from usecases.price_forecast.models import BASELINE, FORECASTERS, ForecastError, clean_params
+from usecases.price_forecast.models import BASELINE, FORECASTERS, clean_params
 from usecases.price_forecast.schemas import SelectionIn, TrainRequest
 
 USE_CASE = "price_forecast"
@@ -36,10 +37,7 @@ def _run(model: str) -> tuple[dict, dict]:
     if not run:
         raise HTTPException(status_code=404, detail="No completed price forecast model yet" if model == "active"
                             else f"Run {model} is not a completed price forecast run")
-    try:
-        return run, store.load_artifact(run)
-    except FileNotFoundError as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
+    return run, store.load_artifact(run)
 
 
 def _public(run: dict) -> dict:
@@ -91,10 +89,7 @@ def train(request: Request, body: TrainRequest):
     if unknown:
         raise HTTPException(status_code=400, detail=f"Unknown model(s): {', '.join(unknown)}")
     models = [BASELINE] + [m for m in body.models if m != BASELINE]
-    try:
-        params = {m: clean_params(FORECASTERS[m], body.params.get(m, {})) for m in models}
-    except ForecastError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+    params = {m: clean_params(FORECASTERS[m], body.params.get(m, {})) for m in models}
     stored = {**params, "spike_threshold": body.spike_threshold, "train_origin_step_h": body.train_origin_step_h,
               "random_state": body.random_state}
     run_id = store.start_run(engine, {
@@ -103,16 +98,10 @@ def train(request: Request, body: TrainRequest):
         "feature_groups": sel.feature_groups, "models": models, "params": stored})
     cfg = T.RunConfig(sel, models, params, body.horizon_hours, body.test_fraction, body.origin_step_h,
                       body.train_origin_step_h, body.random_state)
-    try:
+    with run_guard(fail=lambda msg: store.fail_run(engine, run_id, msg), context={"run_id": run_id}):
         result = T.train(engine, cfg)
         artifact = store.save_artifact(run_id, result.artifact)
         store.complete_run(engine, run_id, result.summary, result.points, result.warnings, artifact)
-    except (ForecastError, ValueError) as exc:
-        store.fail_run(engine, run_id, str(exc))
-        raise HTTPException(status_code=400, detail={"message": str(exc), "run_id": run_id})
-    except Exception as exc:  # noqa: BLE001 - keep a record of unexpected failures
-        store.fail_run(engine, run_id, f"{type(exc).__name__}: {exc}")
-        raise HTTPException(status_code=500, detail={"message": f"Training failed: {exc}", "run_id": run_id})
     if body.make_default and can_approve(request):
         store.set_default(engine, run_id)
     return _public(store.get_run(engine, run_id))
@@ -184,8 +173,5 @@ def models():
 def forecast(ems_id: int, model: str = "active", history_hours: int = Query(72, ge=24, le=336)):
     """The next horizon from the newest complete hour of the EMS's prices, with every model of the run."""
     run, art = _run(model)
-    try:
-        out = T.forecast(engine, art, ems_id, list(art["models"]), history_hours)
-    except ForecastError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+    out = T.forecast(engine, art, ems_id, list(art["models"]), history_hours)
     return {"run_id": run["run_id"], "best_model": run["best_model"], **out}

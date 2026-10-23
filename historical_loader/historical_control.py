@@ -18,14 +18,16 @@ HERE = Path(__file__).resolve().parent
 if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 import historical_load as H  # noqa: E402
+from bess_common.errors import BusinessRuleViolation  # noqa: E402
 
 SCRIPT = HERE / "historical_load.py"
 PROGRESS = HERE / "logs" / "last_run.json"
 STATUSES = ("SUCCESS", "PARTIAL", "FAILED")
 
 
-class HistoricalLoadError(Exception):
-    pass
+class HistoricalLoadError(BusinessRuleViolation):
+    status = 400
+    code = "HISTORICAL_LOAD_REJECTED"
 
 
 def options(db: Session) -> dict:
@@ -73,7 +75,7 @@ def preview(db_system: str, folder: str, feeds: tuple[str, ...], recursive: bool
             assets = H.system_assets(conn, db_system)
         conn.close()
     except H.LoadError as exc:
-        raise HistoricalLoadError(str(exc))
+        raise HistoricalLoadError(exc.public, log_message=exc.log_message) from exc
     plan = H.scan(path, assets, feeds, recursive, ems_code, hvac_code)
     plan["site_name"] = assets["site_name"]
     plan["system_name"] = assets["system_name"]
@@ -93,7 +95,7 @@ def start(system: str, folder: str, feeds: tuple[str, ...], recursive: bool, ems
     if files is not None and not files:
         raise HistoricalLoadError("Select at least one file to load")
     if running()[0]:
-        raise HistoricalLoadError("A historical load is already running")
+        raise HistoricalLoadError("A historical load is already running", status=409, code="HISTORICAL_LOAD_RUNNING")
     PROGRESS.parent.mkdir(exist_ok=True)
     PROGRESS.unlink(missing_ok=True)
     args = [sys.executable, str(SCRIPT), "--folder", folder, "--system", system, "--feeds", ",".join(feeds),
@@ -145,7 +147,7 @@ def status() -> dict:
 
 _COLUMNS = """batch_id, run_id::text AS run_id, file_name, file_time, snapshot_time, status, started_at, finished_at,
     duration_ms, feeds_total, feeds_loaded, feeds_failed, rows_total, rows_inserted, rows_updated, rows_skipped,
-    feed_results, warnings, id_changes, error_message, archive_path"""
+    feed_results, warnings, id_changes, error_message, error_code, request_id, archive_path"""
 
 
 def _dicts(db: Session, sql: str, **params) -> list[dict]:

@@ -6,11 +6,12 @@ import pandas as pd
 from fastapi import APIRouter, HTTPException, Query
 from sqlalchemy import text
 
+from bess_common.errors import run_guard
 from core.db import engine
 from usecases.weak_module import detector as D
 from usecases.weak_module import features as F
 from usecases.weak_module import store
-from usecases.weak_module.models import DETECTORS, DetectionError
+from usecases.weak_module.models import DETECTORS
 from usecases.weak_module.schemas import DetectRequest, ScoreRequest, WindowIn
 
 USE_CASE = "weak_module"
@@ -68,11 +69,8 @@ def detect(request: DetectRequest):
     if unknown:
         raise HTTPException(status_code=400, detail=f"Unknown feature group(s): {', '.join(unknown)}")
     sel = F.Selection(request.battery_system_id, request.date_from, request.date_to, request.grain, request.feature_groups)
-    try:
-        if_params = DETECTORS["isolation_forest"].clean_params(request.if_params)
-        db_params = DETECTORS["dbscan"].clean_params(request.db_params)
-    except DetectionError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+    if_params = DETECTORS["isolation_forest"].clean_params(request.if_params)
+    db_params = DETECTORS["dbscan"].clean_params(request.db_params)
     params = {"isolation_forest": if_params, "dbscan": db_params, "min_anomalous_share": request.min_anomalous_share,
               "random_state": request.random_state}
     run_id = store.start_run(engine, {
@@ -80,19 +78,13 @@ def detect(request: DetectRequest):
         "battery_system_id": request.battery_system_id, "system_name": system["system_name"],
         "date_from": request.date_from, "date_to": request.date_to, "grain": request.grain,
         "feature_groups": request.feature_groups, "features": sel.features, "params": params})
-    try:
+    with run_guard(fail=lambda msg: store.fail_run(engine, run_id, msg), context={"run_id": run_id}):
         df = F.build(engine, sel)
         result = D.train(df, sel.features, if_params, db_params, request.min_anomalous_share,
                          F.modules(engine, request.battery_system_id), request.random_state)
         params["dbscan"] = {**db_params, "min_samples": result.stats["min_samples_used"]}
         artifact = store.save_artifact(run_id, D.artifact_of(result, sel.features, request.min_anomalous_share))
         store.complete_run(engine, run_id, result, params, artifact)
-    except (DetectionError, ValueError) as exc:
-        store.fail_run(engine, run_id, str(exc))
-        raise HTTPException(status_code=400, detail={"message": str(exc), "run_id": run_id})
-    except Exception as exc:  # noqa: BLE001 - keep a record of unexpected failures
-        store.fail_run(engine, run_id, f"{type(exc).__name__}: {exc}")
-        raise HTTPException(status_code=500, detail={"message": f"Detection failed: {exc}", "run_id": run_id})
     return _public(store.get_run(engine, run_id))
 
 
@@ -103,10 +95,7 @@ def score(run_id: int, request: ScoreRequest):
     parent = _run_or_404(run_id)
     if parent["run_kind"] != "train" or parent["status"] != "COMPLETED":
         raise HTTPException(status_code=400, detail="Only a completed train run can score new data")
-    try:
-        artifact = store.load_artifact(parent)
-    except FileNotFoundError as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
+    artifact = store.load_artifact(parent)
     sel = F.Selection(parent["battery_system_id"], request.date_from, request.date_to, parent["grain"],
                       list(parent["feature_groups"]))
     new_id = store.start_run(engine, {
@@ -115,13 +104,10 @@ def score(run_id: int, request: ScoreRequest):
         "date_from": request.date_from, "date_to": request.date_to, "grain": parent["grain"],
         "feature_groups": list(parent["feature_groups"]), "features": list(parent["features"]),
         "params": parent["params"]})
-    try:
+    with run_guard(fail=lambda msg: store.fail_run(engine, new_id, msg), context={"run_id": new_id}):
         df = F.build(engine, sel)
         result = D.score(df, artifact, F.modules(engine, parent["battery_system_id"]))
         store.complete_run(engine, new_id, result, parent["params"], None)
-    except (DetectionError, ValueError) as exc:
-        store.fail_run(engine, new_id, str(exc))
-        raise HTTPException(status_code=400, detail={"message": str(exc), "run_id": new_id})
     return _public(store.get_run(engine, new_id))
 
 

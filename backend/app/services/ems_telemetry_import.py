@@ -11,6 +11,7 @@ from sqlalchemy import literal_column
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
+from bess_common.errors import FileFormatError
 from app import models, schemas
 
 MAX_ROWS = 200_000
@@ -70,7 +71,7 @@ DECIMAL_FIELDS = {
 }
 
 
-class EmsTelemetryImportError(Exception):
+class EmsTelemetryImportError(FileFormatError):
     """Raised for file-level problems: bad format, missing columns, empty file."""
 
 
@@ -78,7 +79,8 @@ def _read_xlsx(content: bytes) -> tuple[list[str], list[list]]:
     try:
         wb = openpyxl.load_workbook(io.BytesIO(content), data_only=True, read_only=True)
     except Exception as exc:  # noqa: BLE001 - surfaced to the caller as a clean import error
-        raise EmsTelemetryImportError(f"Could not read Excel file: {exc}") from exc
+        raise EmsTelemetryImportError("Could not read the Excel file. Please upload a valid .xlsx workbook.",
+                                      log_message=f"xlsx not readable: {type(exc).__name__}: {exc}") from exc
 
     sheet_name = next((n for n in wb.sheetnames if n.strip().lower() == "data"), None)
     if sheet_name is None:
@@ -102,7 +104,8 @@ def _read_csv(content: bytes) -> tuple[list[str], list[list]]:
     try:
         text_content = content.decode("utf-8-sig")
     except UnicodeDecodeError as exc:
-        raise EmsTelemetryImportError(f"Could not read CSV file as UTF-8: {exc}") from exc
+        raise EmsTelemetryImportError("Could not read the CSV file. Please save it as UTF-8 and upload it again.",
+                                      log_message=f"csv not UTF-8: {exc}") from exc
     reader = csv.reader(io.StringIO(text_content))
     try:
         headers = [h.strip() for h in next(reader)]

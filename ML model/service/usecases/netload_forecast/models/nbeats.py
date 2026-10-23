@@ -11,6 +11,7 @@ import numpy as np
 import pandas as pd
 from sklearn.neural_network import MLPRegressor
 
+from core.base import TrainingError
 from usecases.netload_forecast import features as F
 from usecases.netload_forecast.models.base import Forecaster, TrainData, apply_offsets, frame, residual_offsets
 
@@ -78,7 +79,7 @@ class NBeatsMLP(Forecaster):
                 else:
                     cal.append((mp, opos))
         if not Xs:
-            raise ValueError("N-BEATS: no training samples")
+            raise TrainingError("N-BEATS: no training samples")
         p = self.params
         self.model = MLPRegressor(hidden_layer_sizes=(int(p["hidden_units"]),) * int(p["layers"]), alpha=p["alpha"],
                                   learning_rate_init=p["learning_rate_init"], max_iter=int(p["max_iter"]),

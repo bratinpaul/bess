@@ -31,6 +31,7 @@ import numpy as np
 import pandas as pd
 from sqlalchemy.engine import Engine
 
+from core.base import UseCaseError
 from core.metrics import finite, shares
 from usecases.rul import features as F
 from usecases.rul import physics as P
@@ -60,8 +61,9 @@ PHYSICS_PARAMS = [
 ]
 
 
-class RulError(Exception):
+class RulError(UseCaseError):
     """Bad training / prediction input (the API answers 400)."""
+    code = "RUL_INPUT_REJECTED"
 
 
 @dataclass

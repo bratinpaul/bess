@@ -1,5 +1,5 @@
 -- BESS database DDL: battery_itops
--- Generated 2026-10-22 by db_docs/generate_ddl.py from database Battery
+-- Generated 2026-10-23 by db_docs/generate_ddl.py from database Battery
 -- Sections: extensions, pg_dump schema DDL, TimescaleDB hypertables + compression, continuous aggregates,
 --           views on continuous aggregates, TimescaleDB policies
 
@@ -11,7 +11,7 @@ CREATE EXTENSION IF NOT EXISTS pgcrypto;
 -- PostgreSQL database dump
 --
 
-\restrict p13kupdNK0oz9feePA3StL38bA8Z3Z1heO1p7fyFRAWNc2BzE4yFI1cOJMr8vMS
+\restrict CjhQsQkvblu09cieKcDDanZLVnyCemiJK77hdy37aTifaRLKc5rIiTbPpbb0SCG
 
 -- Dumped from database version 18.4
 -- Dumped by pg_dump version 18.4
@@ -64,9 +64,17 @@ CREATE TABLE battery_itops.activity_log (
     rows_rejected integer,
     ip text,
     detail jsonb,
+    error_code text,
     CONSTRAINT activity_log_kind_check CHECK ((kind = ANY (ARRAY['REQUEST'::text, 'AUTH'::text, 'LOAD'::text, 'KPI'::text, 'TRAINING'::text, 'ERROR'::text]))),
     CONSTRAINT activity_log_outcome_check CHECK ((outcome = ANY (ARRAY['success'::text, 'failed'::text])))
 );
+
+
+--
+-- Name: COLUMN activity_log.error_code; Type: COMMENT; Schema: battery_itops; Owner: -
+--
+
+COMMENT ON COLUMN battery_itops.activity_log.error_code IS 'error.code of a failed request (bess_common/errors.py)';
 
 
 --
@@ -123,7 +131,7 @@ CREATE INDEX ix_activity_user ON battery_itops.activity_log USING btree (user_em
 -- PostgreSQL database dump complete
 --
 
-\unrestrict p13kupdNK0oz9feePA3StL38bA8Z3Z1heO1p7fyFRAWNc2BzE4yFI1cOJMr8vMS
+\unrestrict CjhQsQkvblu09cieKcDDanZLVnyCemiJK77hdy37aTifaRLKc5rIiTbPpbb0SCG
 
 
 

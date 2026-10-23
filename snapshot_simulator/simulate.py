@@ -18,6 +18,7 @@ from sqlalchemy.orm import sessionmaker
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent))  # so the snapshot_simulator package imports when run as a script
 
+from bess_common.errors import EXIT_FAILED, EXIT_OK, run_main  # noqa: E402
 from snapshot_simulator.simulator import INBOX, SimulatorError, simulate, source_info  # noqa: E402
 
 PLANT_TZ = "Asia/Kolkata"
@@ -63,8 +64,8 @@ def main(argv=None) -> int:
             result = simulate(db, args.start, args.end, seed=args.seed, overwrite=args.overwrite,
                               source_from=args.source_from, source_to=args.source_to, inbox=args.inbox)
         except SimulatorError as exc:
-            print(f"ERROR: {exc}")
-            return 1
+            print(f"ERROR: {exc.public}")
+            return EXIT_FAILED
     finally:
         db.close()
 
@@ -76,8 +77,8 @@ def main(argv=None) -> int:
         print(f"  {day} replays {source}")
     for warning in result.warnings:
         print(f"  WARNING: {warning}")
-    return 0
+    return EXIT_OK
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(run_main("snapshot_simulate", main))

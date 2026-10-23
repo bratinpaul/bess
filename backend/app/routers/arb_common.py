@@ -6,7 +6,6 @@ from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import text
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -58,11 +57,9 @@ def system_code(db: Session, system_id: int) -> str:
 
 
 def commit_or_409(db: Session):
-    try:
-        db.commit()
-    except IntegrityError as exc:
-        db.rollback()
-        raise HTTPException(status_code=409, detail=str(exc.orig).splitlines()[0])
+    """Commit; a constraint violation reaches the shared handler (bess_common/errors.py), which answers 409 / 422 with
+    the constraint's catalog message - never the database text."""
+    db.commit()
 
 
 def sync_run_sequence(db: Session):

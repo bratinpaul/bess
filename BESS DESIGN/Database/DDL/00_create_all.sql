@@ -1,5 +1,5 @@
 -- BESS database DDL: battery_master, battery_users, battery_raw, battery_telemetry, battery_ml, battery_itops
--- Generated 2026-10-22 by db_docs/generate_ddl.py from database Battery
+-- Generated 2026-10-23 by db_docs/generate_ddl.py from database Battery
 -- Sections: extensions, pg_dump schema DDL, TimescaleDB hypertables + compression, continuous aggregates,
 --           views on continuous aggregates, TimescaleDB policies
 
@@ -11,7 +11,7 @@ CREATE EXTENSION IF NOT EXISTS pgcrypto;
 -- PostgreSQL database dump
 --
 
-\restrict V4Qqx9kMLZtwhCWEP9rKpwXFfWtGnxR0zFmG6gOJFw35ucW5nRsqwL0Ag1KLXOR
+\restrict mOnXqqUO2iMCOxotp9DsXQel3CTtl2fhl6EgRfU0iNbVHpQYqf1umN1AeGNf8kz
 
 -- Dumped from database version 18.4
 -- Dumped by pg_dump version 18.4
@@ -800,9 +800,17 @@ CREATE TABLE battery_itops.activity_log (
     rows_rejected integer,
     ip text,
     detail jsonb,
+    error_code text,
     CONSTRAINT activity_log_kind_check CHECK ((kind = ANY (ARRAY['REQUEST'::text, 'AUTH'::text, 'LOAD'::text, 'KPI'::text, 'TRAINING'::text, 'ERROR'::text]))),
     CONSTRAINT activity_log_outcome_check CHECK ((outcome = ANY (ARRAY['success'::text, 'failed'::text])))
 );
+
+
+--
+-- Name: COLUMN activity_log.error_code; Type: COMMENT; Schema: battery_itops; Owner: -
+--
+
+COMMENT ON COLUMN battery_itops.activity_log.error_code IS 'error.code of a failed request (bess_common/errors.py)';
 
 
 --
@@ -4659,6 +4667,8 @@ CREATE TABLE battery_raw.batchlog (
     host_name text,
     report jsonb,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
+    error_code text,
+    request_id text,
     CONSTRAINT batchlog_rows CHECK ((((rows_inserted + rows_updated) + rows_skipped) <= rows_total)),
     CONSTRAINT batchlog_status CHECK ((status = ANY (ARRAY['SUCCESS'::text, 'PARTIAL'::text, 'FAILED'::text]))),
     CONSTRAINT batchlog_times CHECK ((finished_at >= started_at))
@@ -4670,6 +4680,20 @@ CREATE TABLE battery_raw.batchlog (
 --
 
 COMMENT ON TABLE battery_raw.batchlog IS 'Load reports of the realtime snapshot batch: one row per input file processed';
+
+
+--
+-- Name: COLUMN batchlog.error_code; Type: COMMENT; Schema: battery_raw; Owner: -
+--
+
+COMMENT ON COLUMN battery_raw.batchlog.error_code IS 'Stable error code of a failed or partial run (bess_common/errors.py), e.g. API_UNAVAILABLE';
+
+
+--
+-- Name: COLUMN batchlog.request_id; Type: COMMENT; Schema: battery_raw; Owner: -
+--
+
+COMMENT ON COLUMN battery_raw.batchlog.request_id IS 'Run / request id the loader used for its API calls and log lines (X-Request-ID)';
 
 
 --
@@ -5109,8 +5133,16 @@ CREATE TABLE battery_users.app_user (
     locked_until timestamp with time zone,
     last_login_at timestamp with time zone,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    token_version integer DEFAULT 1 NOT NULL
 );
+
+
+--
+-- Name: COLUMN app_user.token_version; Type: COMMENT; Schema: battery_users; Owner: -
+--
+
+COMMENT ON COLUMN battery_users.app_user.token_version IS 'Bumped when the user''s role, tenant or status changes; tokens carry it (uv)';
 
 
 --
@@ -5154,8 +5186,27 @@ CREATE TABLE battery_users.privilege (
     action text NOT NULL,
     code text GENERATED ALWAYS AS (((resource || ':'::text) || action)) STORED,
     module_label text,
-    CONSTRAINT privilege_action_check CHECK ((action = ANY (ARRAY['read'::text, 'write'::text, 'delete'::text, 'execute'::text, 'approve'::text])))
+    source text DEFAULT 'system'::text NOT NULL,
+    enforced boolean DEFAULT true NOT NULL,
+    description text,
+    registered_by text[] DEFAULT '{}'::text[] NOT NULL,
+    CONSTRAINT privilege_action_check CHECK ((action = ANY (ARRAY['read'::text, 'write'::text, 'delete'::text, 'execute'::text, 'approve'::text]))),
+    CONSTRAINT privilege_source_check CHECK ((source = ANY (ARRAY['system'::text, 'custom'::text])))
 );
+
+
+--
+-- Name: COLUMN privilege.source; Type: COMMENT; Schema: battery_users; Owner: -
+--
+
+COMMENT ON COLUMN battery_users.privilege.source IS 'system = registered by the code that enforces it; custom = added by an admin';
+
+
+--
+-- Name: COLUMN privilege.enforced; Type: COMMENT; Schema: battery_users; Owner: -
+--
+
+COMMENT ON COLUMN battery_users.privilege.enforced IS 'true while at least one service (registered_by) checks this code';
 
 
 --
@@ -5164,6 +5215,45 @@ CREATE TABLE battery_users.privilege (
 
 ALTER TABLE battery_users.privilege ALTER COLUMN privilege_id ADD GENERATED ALWAYS AS IDENTITY (
     SEQUENCE NAME battery_users.privilege_privilege_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+--
+-- Name: rbac_change; Type: TABLE; Schema: battery_users; Owner: -
+--
+
+CREATE TABLE battery_users.rbac_change (
+    change_id bigint NOT NULL,
+    ts timestamp with time zone DEFAULT now() NOT NULL,
+    actor_email text NOT NULL,
+    request_id text,
+    entity text NOT NULL,
+    action text NOT NULL,
+    target text NOT NULL,
+    before jsonb,
+    after jsonb,
+    CONSTRAINT rbac_change_entity_check CHECK ((entity = ANY (ARRAY['role'::text, 'privilege'::text, 'role_privilege'::text, 'user'::text])))
+);
+
+
+--
+-- Name: TABLE rbac_change; Type: COMMENT; Schema: battery_users; Owner: -
+--
+
+COMMENT ON TABLE battery_users.rbac_change IS 'History of user-management changes (roles, privileges, grants, users) - who, when, before / after';
+
+
+--
+-- Name: rbac_change_change_id_seq; Type: SEQUENCE; Schema: battery_users; Owner: -
+--
+
+ALTER TABLE battery_users.rbac_change ALTER COLUMN change_id ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME battery_users.rbac_change_change_id_seq
     START WITH 1
     INCREMENT BY 1
     NO MINVALUE
@@ -5200,8 +5290,25 @@ CREATE TABLE battery_users.role (
     role_code text NOT NULL,
     role_name text NOT NULL,
     is_tenant_scoped boolean DEFAULT false NOT NULL,
-    description text
+    description text,
+    is_system boolean DEFAULT false NOT NULL,
+    version integer DEFAULT 1 NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
 );
+
+
+--
+-- Name: COLUMN role.is_system; Type: COMMENT; Schema: battery_users; Owner: -
+--
+
+COMMENT ON COLUMN battery_users.role.is_system IS 'ADMIN / BATCH_SERVICE: cannot be deleted; ADMIN always keeps admin:*';
+
+
+--
+-- Name: COLUMN role.version; Type: COMMENT; Schema: battery_users; Owner: -
+--
+
+COMMENT ON COLUMN battery_users.role.version IS 'Bumped on every change to the role or its grants; tokens carry it (rv) and stale tokens are refused';
 
 
 --
@@ -6653,6 +6760,14 @@ ALTER TABLE ONLY battery_users.privilege
 
 
 --
+-- Name: rbac_change rbac_change_pkey; Type: CONSTRAINT; Schema: battery_users; Owner: -
+--
+
+ALTER TABLE ONLY battery_users.rbac_change
+    ADD CONSTRAINT rbac_change_pkey PRIMARY KEY (change_id);
+
+
+--
 -- Name: refresh_token refresh_token_pkey; Type: CONSTRAINT; Schema: battery_users; Owner: -
 --
 
@@ -7377,6 +7492,13 @@ CREATE INDEX ix_access_request_status ON battery_users.access_request USING btre
 --
 
 CREATE INDEX ix_auth_audit_ts ON battery_users.auth_audit USING btree (ts DESC);
+
+
+--
+-- Name: ix_rbac_change_ts; Type: INDEX; Schema: battery_users; Owner: -
+--
+
+CREATE INDEX ix_rbac_change_ts ON battery_users.rbac_change USING btree (ts DESC);
 
 
 --
@@ -8589,7 +8711,7 @@ ALTER TABLE ONLY battery_users.role_privilege
 -- PostgreSQL database dump complete
 --
 
-\unrestrict V4Qqx9kMLZtwhCWEP9rKpwXFfWtGnxR0zFmG6gOJFw35ucW5nRsqwL0Ag1KLXOR
+\unrestrict mOnXqqUO2iMCOxotp9DsXQel3CTtl2fhl6EgRfU0iNbVHpQYqf1umN1AeGNf8kz
 
 
 

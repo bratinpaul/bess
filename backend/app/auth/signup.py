@@ -5,10 +5,15 @@ GET  /api/auth/access-requests?status=             admin:read  - requests (newes
 POST /api/auth/access-requests/{id}/approve        admin:write - role (+ tenant for tenant-scoped roles) -> app_user
 POST /api/auth/access-requests/{id}/reject         admin:write - optional note
 
+A new request e-mails the addresses in ACCESS_REQUEST_NOTIFY_TO (backend/.env; SMTP settings in
+app/services/mailer.py). The mail goes out after the response, so a mail problem never fails the sign-up.
+
 The requester chooses the password at sign-up (same policy as change-password); only its argon2 hash is stored and it
 becomes the account's password on approval, so nothing has to be sent to the user. Sign-up is rate-limited per IP and
 an e-mail that already has an account or an open request is refused.
 """
+import html
+import os
 import re
 import time
 import uuid
@@ -16,7 +21,7 @@ from collections import defaultdict, deque
 from datetime import datetime, timezone
 from typing import Literal, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -25,6 +30,7 @@ from app.auth.models import AccessRequest, Role, User, get_async_session
 from app.auth.security import Principal, require
 from app.auth.service import audit, password_problems
 from app.auth.users import password_helper
+from app.services.mailer import recipients, send_mail
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 NON_ASSIGNABLE = {"BATCH_SERVICE"}  # service accounts only
@@ -87,8 +93,27 @@ def _out(r: AccessRequest, roles: dict[int, Role]) -> dict:
             "user_id": str(r.user_id) if r.user_id else None}
 
 
+def notify_admins(full_name: str, email: str, organisation: Optional[str], reason: str, requested_at: datetime) -> bool:
+    """Tell the configured reviewers about a new access request (runs after the response; never raises)."""
+    to = recipients(os.getenv("ACCESS_REQUEST_NOTIFY_TO"))
+    link = os.getenv("APP_BASE_URL", "http://localhost:4300").rstrip("/") + "/admin/access-requests"
+    when = requested_at.astimezone().strftime("%Y-%m-%d %H:%M %Z")
+    org = organisation or "-"
+    text = (f"A new access request is waiting for review.\n\n"
+            f"Name:          {full_name}\nE-mail:        {email}\nOrganisation:  {org}\nRequested:     {when}\n\n"
+            f"Reason:\n{reason}\n\nReview it (assign a role, approve or reject): {link}\n")
+    e = html.escape
+    page = (f"<p>A new access request is waiting for review.</p><table cellpadding='4'>"
+            f"<tr><td><b>Name</b></td><td>{e(full_name)}</td></tr><tr><td><b>E-mail</b></td><td>{e(email)}</td></tr>"
+            f"<tr><td><b>Organisation</b></td><td>{e(org)}</td></tr><tr><td><b>Requested</b></td><td>{e(when)}</td></tr>"
+            f"</table><p><b>Reason</b><br>{e(reason).replace(chr(10), '<br>')}</p>"
+            f"<p><a href='{e(link)}'>Review the request</a> - assign a role, approve or reject.</p>")
+    return send_mail(to, f"BESS access request: {full_name}", text, page)
+
+
 @router.post("/signup", status_code=202)
-async def signup(body: SignupBody, request: Request, db: AsyncSession = Depends(get_async_session)):
+async def signup(body: SignupBody, request: Request, background: BackgroundTasks,
+                 db: AsyncSession = Depends(get_async_session)):
     ip = request.client.host if request.client else "?"
     email = body.email.strip().lower()
     problems = password_problems(body.password, email)
@@ -104,6 +129,7 @@ async def signup(body: SignupBody, request: Request, db: AsyncSession = Depends(
                          hashed_password=password_helper.hash(body.password), request_ip=ip))
     await audit(db, "SIGNUP_REQUESTED", True, email=email, ip=ip, agent=request.headers.get("user-agent"))
     await db.commit()
+    background.add_task(notify_admins, body.full_name, email, body.organisation, body.reason, _now())
     return {"message": "Request received. An administrator will review it; you can sign in once it is approved."}
 
 

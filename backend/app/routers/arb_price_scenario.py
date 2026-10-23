@@ -15,7 +15,7 @@ from app.models.arbitrage import PriceScenario
 from app.models.dam_price import DamPrice, PriceForecast, PriceNode
 from app.routers.arb_common import bulk_result, commit_or_409, fmt, in_days, local, resolvers
 from app.schemas.arbitrage import BulkResult, Page, PriceScenarioCreate, PriceScenarioOut, PriceScenarioUpdate, Stat
-from app.services.arbitrage_import import ArbitrageImportError, Col, num, parse_upload, ts_span, upsert, validate_rows
+from app.services.arbitrage_import import Col, num, parse_upload, ts_span, upsert, validate_rows
 
 router = APIRouter(prefix="/api/price-scenarios", tags=["dispatch"])
 
@@ -138,10 +138,7 @@ async def bulk_load(file: UploadFile = File(...), db: Session = Depends(get_db))
     content = await file.read()
     if not content:
         raise HTTPException(status_code=400, detail="Uploaded file is empty")
-    try:
-        records, errors, total, ignored = parse_upload(file.filename or "upload", content, COLS, resolvers(db))
-    except ArbitrageImportError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+    records, errors, total, ignored = parse_upload(file.filename or "upload", content, COLS, resolvers(db))
     valid = validate_rows(records, PriceScenarioCreate, errors,
                           key=lambda m: (m.node_id, local(m.issued_at), m.scenario_id, local(m.target_ts)))
     for r in valid:

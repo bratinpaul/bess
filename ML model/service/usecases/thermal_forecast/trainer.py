@@ -27,6 +27,7 @@ import numpy as np
 import pandas as pd
 from sqlalchemy.engine import Engine
 
+from core.base import UseCaseError
 from core.metrics import finite, shares
 from usecases.soc_forecast.features import schedule, schedule_grid  # the dispatch schedule (dispatch_event)
 from usecases.thermal_forecast import features as F
@@ -48,8 +49,9 @@ GBM_PARAMS = [
 STALE_LIMIT_MIN = 15
 
 
-class ThermalForecastError(Exception):
+class ThermalForecastError(UseCaseError):
     """Bad training / forecast input (the API answers 400)."""
+    code = "THERMAL_FORECAST_INPUT_REJECTED"
 
 
 @dataclass

@@ -23,6 +23,7 @@ from sqlalchemy import literal_column
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
+from bess_common.errors import FileFormatError
 from app import models, schemas
 
 MAX_ROWS = 300_000
@@ -32,7 +33,7 @@ CODE_HEADERS = ("metering_point_code", "mp_code", "metering_point")
 VALUE_FIELDS = ("gross_load_kw", "behind_meter_gen_kw", "net_load_kw", "load_reactive_kvar")
 
 
-class DemandTelemetryImportError(Exception):
+class DemandTelemetryImportError(FileFormatError):
     """File-level problems: bad format, missing columns, empty file."""
 
 
@@ -40,7 +41,8 @@ def _read_xlsx(content: bytes) -> tuple[list[str], list[list]]:
     try:
         wb = openpyxl.load_workbook(io.BytesIO(content), data_only=True, read_only=True)
     except Exception as exc:  # noqa: BLE001 - surfaced as a clean import error
-        raise DemandTelemetryImportError(f"Could not read Excel file: {exc}") from exc
+        raise DemandTelemetryImportError("Could not read the Excel file. Please upload a valid .xlsx workbook.",
+                                         log_message=f"xlsx not readable: {type(exc).__name__}: {exc}") from exc
     name = next((n for n in wb.sheetnames if n.strip().lower() in ("data", "demand", "demand_data")), wb.sheetnames[0])
     rows_iter = wb[name].iter_rows(values_only=True)
     try:
@@ -54,7 +56,8 @@ def _read_csv(content: bytes) -> tuple[list[str], list[list]]:
     try:
         text = content.decode("utf-8-sig")
     except UnicodeDecodeError as exc:
-        raise DemandTelemetryImportError(f"Could not read CSV file as UTF-8: {exc}") from exc
+        raise DemandTelemetryImportError("Could not read the CSV file. Please save it as UTF-8 and upload it again.",
+                                         log_message=f"csv not UTF-8: {exc}") from exc
     reader = csv.reader(io.StringIO(text))
     try:
         headers = [h.strip() for h in next(reader)]

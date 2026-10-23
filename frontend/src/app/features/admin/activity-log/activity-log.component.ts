@@ -55,7 +55,7 @@ export class ActivityLogComponent implements OnInit {
 
   readonly kinds = KINDS;
   services: string[] = [];
-  f = { kind: '', outcome: '', service: '', user: '', request_id: '', q: '', date_from: '', date_to: '' };
+  f = { kind: '', outcome: '', service: '', user: '', request_id: '', date_from: '', date_to: '' };
   page = 1;
   pageSize = 50;
   data: ActivityPage | null = null;
@@ -95,15 +95,8 @@ export class ActivityLogComponent implements OnInit {
   }
 
   reset(): void {
-    this.f = { kind: '', outcome: '', service: '', user: '', request_id: '', q: '', date_from: '', date_to: '' };
+    this.f = { kind: '', outcome: '', service: '', user: '', request_id: '', date_from: '', date_to: '' };
     this.load();
-  }
-
-  byRequest(rid: string | null): void {
-    if (rid) {
-      this.f = { ...this.f, request_id: rid, kind: '', outcome: '' };
-      this.load();
-    }
   }
 
   count(kind: string, outcome?: string): number {

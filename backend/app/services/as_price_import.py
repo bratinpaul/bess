@@ -16,6 +16,7 @@ from sqlalchemy import literal_column
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
+from bess_common.errors import AppError, FileFormatError
 from app.models.as_price import AsPrice, AsProduct
 from app.schemas.as_price import AsPriceCreate, BulkAsPriceRowError
 from app.services.dam_price_import import _num, _pick, first_last  # noqa: F401 - first_last re-exported
@@ -28,7 +29,7 @@ CAPACITY_HEADERS = ("capacity_price_mw", "capacity_price", "cap")
 PERFORMANCE_HEADERS = ("performance_price", "performance_price_mw", "perf")
 
 
-class AsPriceImportError(Exception):
+class AsPriceImportError(FileFormatError):
     """File-level problems: bad format, missing columns, unknown product, empty file."""
 
 
@@ -44,8 +45,11 @@ def parse_as_price_file(db: Session, filename: str, content: bytes, product_id: 
             raise AsPriceImportError("Unsupported file type. Please upload a .csv or .xlsx file.")
     except AsPriceImportError:
         raise
-    except Exception as exc:  # the shared readers raise their own error type
-        raise AsPriceImportError(str(exc)) from exc
+    except AppError as exc:  # a reader's own file-level error
+        raise AsPriceImportError(exc.public, log_message=exc.log_message) from exc
+    except Exception as exc:  # noqa: BLE001 - any other parser failure means an unreadable file
+        raise AsPriceImportError("The file could not be read. Please upload a valid .csv or .xlsx file.",
+                                     log_message=f"upload not readable: {type(exc).__name__}: {exc}") from exc
     if len(raw_rows) > MAX_ROWS:
         raise AsPriceImportError(f"File has {len(raw_rows)} rows, above the {MAX_ROWS} row limit.")
 

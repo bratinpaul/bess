@@ -7,6 +7,7 @@ from typing import Any, Literal, Optional
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
+from bess_common.errors import run_guard
 from core.auth import can_approve
 from core.db import engine
 from usecases.aux_forecast import features as F
@@ -71,10 +72,7 @@ def _run(model: str) -> tuple[dict, dict]:
     if not run:
         raise HTTPException(status_code=404, detail="No completed aux forecast model yet" if model == "active"
                             else f"Run {model} is not a completed aux forecast run")
-    try:
-        return run, store.load_artifact(run)
-    except FileNotFoundError as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
+    return run, store.load_artifact(run)
 
 
 @router.get("/options")
@@ -89,10 +87,7 @@ def options():
 
 @router.post("/runs")
 def train(request: Request, body: TrainRequest):
-    try:
-        gbm = T.clean_gbm(body.gbm_params)
-    except T.AuxForecastError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+    gbm = T.clean_gbm(body.gbm_params)
     params = {"gbm": gbm, "plan_source": body.plan_source, "ambient_source": body.ambient_source,
               "train_origin_step": body.train_origin_step, "steps_per_origin": body.steps_per_origin}
     run_id = store.start_run(engine, {
@@ -101,16 +96,10 @@ def train(request: Request, body: TrainRequest):
     cfg = T.RunConfig(F.Selection(body.ems_ids, body.date_from, body.date_to), body.horizon_hours, body.plan_source,
                       body.ambient_source, body.test_fraction, body.train_origin_step, body.steps_per_origin,
                       gbm_params=gbm)
-    try:
+    with run_guard(fail=lambda msg: store.fail_run(engine, run_id, msg), context={"run_id": run_id}):
         artifact, summary, points, daily, warnings = T.train(engine, cfg)
         path = store.save_artifact(run_id, artifact)
         store.complete_run(engine, run_id, summary, points, daily, warnings, path)
-    except (T.AuxForecastError, ValueError) as exc:
-        store.fail_run(engine, run_id, str(exc))
-        raise HTTPException(status_code=400, detail={"message": str(exc), "run_id": run_id})
-    except Exception as exc:  # noqa: BLE001 - keep a record of unexpected failures
-        store.fail_run(engine, run_id, f"{type(exc).__name__}: {exc}")
-        raise HTTPException(status_code=500, detail={"message": f"Training failed: {exc}", "run_id": run_id})
     if body.make_default and can_approve(request):
         store.set_default(engine, run_id)
     return _public(store.get_run(engine, run_id))
@@ -178,11 +167,8 @@ def predict(body: PredictRequest, model: str = "active"):
     {ts_target, horizon_min, aux_kw_p50, aux_kw_p10, aux_kw_p90} per 5-min step + aux_energy_kwh per interval and day,
     NULL with a staleness flag when inputs are stale / missing."""
     run, art = _run(model)
-    try:
-        out = T.predict_live(engine, art, body.ems_id, body.horizon_hours, body.plan_source, body.ambient_source,
-                             body.as_of, body.history_hours, body.max_data_age_min)
-    except T.AuxForecastError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+    out = T.predict_live(engine, art, body.ems_id, body.horizon_hours, body.plan_source, body.ambient_source,
+                         body.as_of, body.history_hours, body.max_data_age_min)
     return {"run_id": run["run_id"], **out}
 
 
@@ -190,9 +176,6 @@ def predict(body: PredictRequest, model: str = "active"):
 def predict_vector(body: VectorRequest, model: str = "active"):
     """Stateless: the forecast from a feature vector (no database read)."""
     run, art = _run(model)
-    try:
-        out = T.predict_vector(art, body.ems_id, body.inputs, body.horizon_hours, body.plan_kw, body.ambient_fc_c,
-                               body.aux_yesterday_kw, body.origin_ts)
-    except T.AuxForecastError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+    out = T.predict_vector(art, body.ems_id, body.inputs, body.horizon_hours, body.plan_kw, body.ambient_fc_c,
+                           body.aux_yesterday_kw, body.origin_ts)
     return {"run_id": run["run_id"], **out}

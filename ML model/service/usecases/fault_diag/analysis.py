@@ -18,6 +18,7 @@ import numpy as np
 import pandas as pd
 
 from usecases.fault_diag import data as D
+from bess_common.errors import BadRequest, NotFound
 
 BONES = ["Man", "Machine", "Method", "Material", "Measurement", "Environment"]
 BONE_HINT = {
@@ -111,7 +112,7 @@ def _explode(eps: pd.DataFrame, group_by: str) -> pd.DataFrame:
         e["key"] = e["all_alarms"].apply(lambda v: v or ["(no alarm)"])
         e = e.explode("key")
     else:
-        raise ValueError(group_by)
+        raise BadRequest(f"Unknown grouping '{group_by}'")
     return e
 
 
@@ -180,7 +181,7 @@ def fishbone(engine, effect: str = "ALL", date_from=None, date_to=None, system_i
         codes = {effect}
         r = cat[cat["fault_code"] == effect]
         if r.empty:
-            raise ValueError(f"Unknown fault {effect}")
+            raise NotFound(f"Unknown fault {effect}")
         title, subtitle = r["fault_name"].iat[0], f"{effect} · {r['subsystem'].iat[0]} · {r['category'].iat[0]}"
     e = eps[eps["fault_code"].isin(codes)]
     c = cat[cat["fault_code"].isin(codes)]

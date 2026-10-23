@@ -4,6 +4,7 @@ from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query, Request
 
+from bess_common.errors import NotFound, run_guard
 from core.auth import can_approve
 from core.db import engine
 from usecases.efficiency import cycles as C
@@ -38,10 +39,7 @@ def _model(model: str) -> tuple[dict, dict]:
     if not run:
         raise HTTPException(status_code=404, detail="No completed efficiency model yet" if model == "active"
                             else f"Run {model} is not a completed efficiency run")
-    try:
-        return run, store.load_artifact(run)
-    except FileNotFoundError as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
+    return run, store.load_artifact(run)
 
 
 @router.get("/options")
@@ -84,12 +82,9 @@ def preview(body: SelectionIn):
 def train(request: Request, body: TrainRequest):
     """Fit the grey-box, the GAM and the residual booster, extract the cycles and store the run."""
     sel = _selection(body)
-    try:
-        gb = clean_params(GreyBoxLossModel.param_specs, body.greybox_params, GreyBoxLossModel.label)
-        gam = clean_params(GamEfficiencyModel.param_specs, body.gam_params, GamEfficiencyModel.label)
-        bst = clean_params(BOOSTERS[body.booster].param_specs, body.booster_params, BOOSTERS[body.booster].label)
-    except EfficiencyError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+    gb = clean_params(GreyBoxLossModel.param_specs, body.greybox_params, GreyBoxLossModel.label)
+    gam = clean_params(GamEfficiencyModel.param_specs, body.gam_params, GamEfficiencyModel.label)
+    bst = clean_params(BOOSTERS[body.booster].param_specs, body.booster_params, BOOSTERS[body.booster].label)
     params = {"greybox": gb, "gam": gam, body.booster: bst, "major_share": body.major_share,
               "soc_tolerance_pct": body.soc_tolerance_pct, "exclude_snapshots": body.exclude_snapshots,
               "random_state": body.random_state}
@@ -99,16 +94,10 @@ def train(request: Request, body: TrainRequest):
         "feature_groups": sel.feature_groups, "booster": body.booster, "params": params})
     cfg = T.RunConfig(sel, body.split_method, body.test_fraction, body.random_state, gb, gam, body.booster, bst,
                       C.CycleOptions(major_share=body.major_share, soc_tolerance_pct=body.soc_tolerance_pct))
-    try:
+    with run_guard(fail=lambda msg: store.fail_run(engine, run_id, msg), context={"run_id": run_id}):
         result = T.train(engine, cfg)
         artifact = store.save_artifact(run_id, result.artifact)
         store.complete_run(engine, run_id, result.summary, result.cycles, result.warnings, artifact)
-    except (EfficiencyError, ValueError) as exc:
-        store.fail_run(engine, run_id, str(exc))
-        raise HTTPException(status_code=400, detail={"message": str(exc), "run_id": run_id})
-    except Exception as exc:  # noqa: BLE001 - keep a record of unexpected failures
-        store.fail_run(engine, run_id, f"{type(exc).__name__}: {exc}")
-        raise HTTPException(status_code=500, detail={"message": f"Training failed: {exc}", "run_id": run_id})
     if body.make_default and can_approve(request):
         store.set_default(engine, run_id)
     return _public(store.get_run(engine, run_id))
@@ -198,22 +187,16 @@ def sample(pcs_id: int, direction: Optional[str] = Query(None, pattern="^(charge
         # the newest reading the model was trained for (above its light-load cut)
         return E.sample_point(art, F.latest_point(engine, pcs_id, direction, art["min_load_frac"]), pcs_id)
     except EfficiencyError as exc:
-        raise HTTPException(status_code=404, detail=str(exc))
+        raise NotFound(exc.public) from exc
 
 
 @router.post("/predict")
 def predict(point: PointIn, model: str = "active"):
     run, art = _model(model)
-    try:
-        return {"run_id": run["run_id"], **E.predict_point(art, point)}
-    except EfficiencyError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+    return {"run_id": run["run_id"], **E.predict_point(art, point)}
 
 
 @router.post("/cycle")
 def cycle(body: CycleIn, model: str = "active"):
     run, art = _model(model)
-    try:
-        return {"run_id": run["run_id"], **E.predict_cycle(art, body)}
-    except EfficiencyError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+    return {"run_id": run["run_id"], **E.predict_cycle(art, body)}

@@ -5,14 +5,16 @@ from typing import ClassVar, Optional
 import numpy as np
 import pandas as pd
 
+from core.base import UseCaseError
 from usecases.price_forecast.features import Series
 
 QUANTILES = (0.1, 0.5, 0.9)
 OUT_COLS = ["ems_id", "origin_ts", "target_ts", "horizon", "p10", "p50", "p90", "mean", "spike_prob"]
 
 
-class ForecastError(Exception):
+class ForecastError(UseCaseError):
     """Bad training / forecast input (the API answers 400)."""
+    code = "PRICE_FORECAST_INPUT_REJECTED"
 
 
 @dataclass

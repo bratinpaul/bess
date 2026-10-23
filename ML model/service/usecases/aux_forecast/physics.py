@@ -20,6 +20,8 @@ from typing import Optional
 import numpy as np
 from scipy.optimize import lsq_linear
 
+from core.base import TrainingError
+
 COP_DEFAULT = (5.6, -0.058)
 COP_RANGE = (1.5, 8.0)
 
@@ -84,7 +86,7 @@ class AuxGreyBox:
         ok = np.isfinite(y) & np.isfinite(abs_p) & np.isfinite(amb) & np.isfinite(solar)
         idx = np.flatnonzero(ok)
         if len(idx) < 50:
-            raise ValueError("Too few readings to fit the grey-box aux model")
+            raise TrainingError("Too few readings to fit the grey-box aux model")
         cut = idx[int(len(idx) * 0.75)]
         fit_i, val_i = idx[idx < cut], idx[idx >= cut]
         lower, upper = [-np.inf, 0, 0, 0], [np.inf] * 4

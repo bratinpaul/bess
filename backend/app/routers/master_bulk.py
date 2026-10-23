@@ -21,10 +21,7 @@ async def bulk_load(entity: str, file: UploadFile = File(...), db: Session = Dep
     content = await file.read()
     if not content:
         raise HTTPException(status_code=400, detail="Uploaded file is empty")
-    try:
-        result = M.import_file(db, entity, file.filename or "upload.csv", content)
-    except M.MasterImportError as exc:
-        raise HTTPException(status_code=404 if exc.args[0].startswith("Unknown master data") else 400, detail=str(exc))
+    result = M.import_file(db, entity, file.filename or "upload.csv", content)  # MasterImportError: 400 / 404
     db.commit()
     return schemas.BulkMasterResult(
         entity=entity, filename=file.filename or "upload", total_rows=result.total_rows, valid_rows=result.valid_rows,

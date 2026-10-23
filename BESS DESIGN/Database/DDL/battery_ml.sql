@@ -1,5 +1,5 @@
 -- BESS database DDL: battery_ml
--- Generated 2026-10-22 by db_docs/generate_ddl.py from database Battery
+-- Generated 2026-10-23 by db_docs/generate_ddl.py from database Battery
 -- Sections: extensions, pg_dump schema DDL, TimescaleDB hypertables + compression, continuous aggregates,
 --           views on continuous aggregates, TimescaleDB policies
 
@@ -11,7 +11,7 @@ CREATE EXTENSION IF NOT EXISTS pgcrypto;
 -- PostgreSQL database dump
 --
 
-\restrict 3MyWi2WRgnbPRQq3Fdzdr3DroBJLwbbEj6HMjRA8f7Jw8AxNsd7cDVrK3JmXIju
+\restrict RLx9nhlGoyhvVx45ju1gGmBEQbkNU6U3kqeBLUTDFJ0Pvhg0uEXcQTfQtU9hyDn
 
 -- Dumped from database version 18.4
 -- Dumped by pg_dump version 18.4
@@ -3052,7 +3052,7 @@ ALTER TABLE ONLY battery_ml.thermal_forecast_score
 -- PostgreSQL database dump complete
 --
 
-\unrestrict 3MyWi2WRgnbPRQq3Fdzdr3DroBJLwbbEj6HMjRA8f7Jw8AxNsd7cDVrK3JmXIju
+\unrestrict RLx9nhlGoyhvVx45ju1gGmBEQbkNU6U3kqeBLUTDFJ0Pvhg0uEXcQTfQtU9hyDn
 
 
 

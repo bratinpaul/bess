@@ -1,5 +1,5 @@
 -- BESS database DDL: battery_telemetry
--- Generated 2026-10-22 by db_docs/generate_ddl.py from database Battery
+-- Generated 2026-10-23 by db_docs/generate_ddl.py from database Battery
 -- Sections: extensions, pg_dump schema DDL, TimescaleDB hypertables + compression, continuous aggregates,
 --           views on continuous aggregates, TimescaleDB policies
 
@@ -11,7 +11,7 @@ CREATE EXTENSION IF NOT EXISTS pgcrypto;
 -- PostgreSQL database dump
 --
 
-\restrict vmfFnUuFI0A1pshUIPda6OECQhyFl8VOjGpUFn2v5ARamRnFfOGbPh1sc8YZ6dE
+\restrict ilBNdFvvXHcech06yvBnLBYLVm8FCwLiRD1xuWSdA8rMlo9axpfDzoSGHcHYTr0
 
 -- Dumped from database version 18.4
 -- Dumped by pg_dump version 18.4
@@ -1162,7 +1162,7 @@ ALTER TABLE ONLY battery_telemetry.weather_forecast
 -- PostgreSQL database dump complete
 --
 
-\unrestrict vmfFnUuFI0A1pshUIPda6OECQhyFl8VOjGpUFn2v5ARamRnFfOGbPh1sc8YZ6dE
+\unrestrict ilBNdFvvXHcech06yvBnLBYLVm8FCwLiRD1xuWSdA8rMlo9axpfDzoSGHcHYTr0
 
 
 

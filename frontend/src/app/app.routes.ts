@@ -740,6 +740,22 @@ export const routes: Routes = [
         loadComponent: () => import('./features/ml/rul-model/rul-model.component').then((m) => m.RulModelComponent)
       },
       {
+        path: 'admin/users',
+        loadComponent: () => import('./features/admin/users/users.component').then((m) => m.UsersComponent)
+      },
+      {
+        path: 'admin/roles',
+        loadComponent: () => import('./features/admin/roles/roles.component').then((m) => m.RolesComponent)
+      },
+      {
+        path: 'admin/privileges',
+        loadComponent: () => import('./features/admin/privileges/privileges.component').then((m) => m.PrivilegesComponent)
+      },
+      {
+        path: 'admin/rbac',
+        loadComponent: () => import('./features/admin/rbac-matrix/rbac-matrix.component').then((m) => m.RbacMatrixComponent)
+      },
+      {
         path: 'admin/activity',
         loadComponent: () => import('./features/admin/activity-log/activity-log.component').then((m) => m.ActivityLogComponent)
       },

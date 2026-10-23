@@ -1,6 +1,6 @@
 """RUL capacity tests (battery_master.capacity_test): periodic RPT capacity / resistance checkpoints of the RUL fleet
 systems (battery_master.battery_system) - list / filter, read, edit and delete. Loaded from rul_capacity_tests.csv
-(migrations/2026_10_06_capacity_test_load.py)."""
+(one-off load)."""
 from datetime import date
 from typing import Literal, Optional
 

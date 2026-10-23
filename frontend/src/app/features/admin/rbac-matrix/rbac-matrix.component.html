@@ -1,0 +1,130 @@
+<div class="page-header">
+  <div>
+    <h2>RBAC Matrix</h2>
+    <p class="subtitle">Role to Privilege Mapping</p>
+  </div>
+</div>
+
+<div class="tabs" role="tablist">
+  <button type="button" role="tab" class="tab" [class.active]="tab === 'matrix'" (click)="show('matrix')">Matrix</button>
+  <button type="button" role="tab" class="tab" [class.active]="tab === 'preview'" (click)="show('preview')">Token preview</button>
+  @if (canAudit) { <button type="button" role="tab" class="tab" [class.active]="tab === 'history'" (click)="show('history')">Audit</button> }
+</div>
+
+@if (error) { <div class="ua-banner bad">{{ error }}</div> }
+@if (flash) { <div class="ua-banner ok">{{ flash }}</div> }
+
+@if (tab === 'matrix') {
+  @if (pendingCount) {
+    <div class="card ua-card rm-pending">
+      <b>{{ pendingCount }} pending change(s)</b>
+      @if (added.size) { <span class="ua-sub">Grant: {{ pendingList(added).join(', ') }}</span> }
+      @if (removed.size) { <span class="ua-sub">Revoke: {{ pendingList(removed).join(', ') }}</span> }
+      <div class="ua-actions">
+        <button type="button" class="btn btn-primary" [disabled]="busy" (click)="save()">{{ busy ? 'Saving…' : 'Save changes' }}</button>
+        <button type="button" class="btn btn-secondary" [disabled]="busy" (click)="discard()">Discard</button>
+      </div>
+    </div>
+  }
+
+  <div class="card ua-card">
+    <div class="ua-bar">
+      <div class="field grow"><label for="mf">Filter privileges</label><input id="mf" [(ngModel)]="filter" placeholder="e.g. ml. or telemetry" /></div>
+      <div class="field">
+        <label for="mr">Highlight role</label>
+        <select id="mr" [(ngModel)]="focusRole"><option value="">None</option>
+          @for (r of roles; track r.role_code) { <option [value]="r.role_code">{{ r.role_name }}</option> }
+        </select>
+      </div>
+    </div>
+    <div class="rm-scroll">
+      <table class="rm-grid">
+        <thead>
+          <tr>
+            <th class="rm-corner">Privilege</th>
+            @for (r of roles; track r.role_code) {
+              <th class="rm-role" [class.focus]="focusRole === r.role_code">
+                <span>{{ r.role_name }}</span>
+                <span class="ua-sub">{{ r.user_count }} user(s)</span>
+                @if (canWrite) {
+                  <span class="rm-colbtns"><button type="button" class="link-btn" title="Grant all shown" (click)="setColumn(r.role_code, true)">all</button><button type="button" class="link-btn" title="Revoke all shown" (click)="setColumn(r.role_code, false)">none</button></span>
+                }
+              </th>
+            }
+          </tr>
+        </thead>
+        <tbody>
+          @for (g of shownGroups(); track g.label) {
+            <tr class="rm-group"><td [attr.colspan]="roles.length + 1">{{ g.label }}</td></tr>
+            @for (p of g.privileges; track p.privilege_id) {
+              <tr>
+                <td class="rm-priv">
+                  <span class="mono">{{ p.code }}</span>
+                  @if (!p.enforced) { <span class="ua-badge warn" title="No service checks this code">not enforced</span> }
+                  @if (canWrite) {
+                    <span class="rm-rowbtns"><button type="button" class="link-btn" (click)="setRow(p, true)">all</button><button type="button" class="link-btn" (click)="setRow(p, false)">none</button></span>
+                  }
+                </td>
+                @for (r of roles; track r.role_code) {
+                  <td class="rm-cell" [class.focus]="focusRole === r.role_code" [class.pending]="isPending(r.role_code, p.code)">
+                    <input type="checkbox" [checked]="has(r.role_code, p.code)" [disabled]="!canWrite || isLocked(r.role_code, p.code)"
+                           [title]="isLocked(r.role_code, p.code) ? 'Admin always keeps its admin privileges' : r.role_name + ' / ' + p.code"
+                           (change)="toggle(r.role_code, p.code)" />
+                  </td>
+                }
+              </tr>
+            }
+          }
+        </tbody>
+      </table>
+    </div>
+  </div>
+}
+
+@if (tab === 'preview') {
+  <div class="card ua-card">
+    <div class="ua-bar">
+      <div class="field">
+        <label for="pr">Role</label>
+        <select id="pr" [(ngModel)]="previewRole" (ngModelChange)="loadPreview()">
+          @for (r of roles; track r.role_code) { <option [value]="r.role_code">{{ r.role_name }}</option> }
+        </select>
+      </div>
+    </div>
+    @if (preview) {
+      <p class="ua-sub">The RBAC part of the access token a {{ preview.role_name }} user receives ({{ preview.perms.length }} permissions). Read from the database; no token is issued.</p>
+      <pre class="rm-pre">{{ previewClaims(preview) }}</pre>
+    }
+  </div>
+}
+
+@if (tab === 'history') {
+  <div class="card ua-card">
+    <div class="ua-bar">
+      <div class="field">
+        <label for="he">Entity</label>
+        <select id="he" [(ngModel)]="changeEntity" (ngModelChange)="loadChanges()">
+          <option value="">All</option><option value="role_privilege">Grants</option><option value="role">Roles</option>
+          <option value="privilege">Privileges</option><option value="user">Users</option>
+        </select>
+      </div>
+      <span class="ua-sub">{{ changesTotal }} change(s)</span>
+    </div>
+    <div class="table-scroll">
+      <table class="data-table ua-table">
+        <thead><tr><th>When</th><th>Who</th><th>What</th><th>Target</th><th>Change</th></tr></thead>
+        <tbody>
+          @for (c of changes; track c.change_id) {
+            <tr>
+              <td class="mono">{{ c.ts | date: 'yyyy-MM-dd HH:mm:ss' }}</td>
+              <td>{{ c.actor_email }}</td>
+              <td><span class="ua-badge">{{ c.entity }}</span> {{ c.action }}</td>
+              <td class="mono">{{ c.target }}</td>
+              <td class="rm-diff">{{ diff(c) }}</td>
+            </tr>
+          } @empty { <tr><td colspan="5" class="ua-sub">No changes yet.</td></tr> }
+        </tbody>
+      </table>
+    </div>
+  </div>
+}

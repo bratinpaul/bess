@@ -5,6 +5,7 @@ from typing import Any, Literal, Optional
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
+from bess_common.errors import run_guard
 from core.auth import can_approve
 from core.db import engine
 from usecases.rul import features as F
@@ -60,10 +61,7 @@ def _run(model: str) -> tuple[dict, dict]:
     if not run:
         raise HTTPException(status_code=404, detail="No completed RUL model yet" if model == "active"
                             else f"Run {model} is not a completed RUL run")
-    try:
-        return run, store.load_artifact(run)
-    except FileNotFoundError as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
+    return run, store.load_artifact(run)
 
 
 @router.get("/options")
@@ -78,27 +76,18 @@ def options():
 
 @router.post("/runs")
 def train(request: Request, body: TrainRequest):
-    try:
-        params = {"physics": T.clean(T.PHYSICS_PARAMS, body.physics), "gbm": T.clean(T.GBM_PARAMS, body.gbm),
-                  "survival": T.clean(T.SURVIVAL_PARAMS, body.survival)}
-    except T.RulError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+    params = {"physics": T.clean(T.PHYSICS_PARAMS, body.physics), "gbm": T.clean(T.GBM_PARAMS, body.gbm),
+              "survival": T.clean(T.SURVIVAL_PARAMS, body.survival)}
     params.update({"feature_groups": body.feature_groups, "failures_as": body.failures_as, "arrhenius": body.arrhenius,
                    "knee": body.knee, "calibrate_bands": body.calibrate_bands})
     run_id = store.start_run(engine, {"run_name": body.run_name, "system_ids": body.system_ids or [],
                                       "methods": body.methods, "params": params})
     cfg = T.RunConfig(body.system_ids or None, body.methods, body.feature_groups, body.failures_as, body.arrhenius,
                       body.knee, body.calibrate_bands, params["physics"], params["gbm"], params["survival"])
-    try:
+    with run_guard(fail=lambda msg: store.fail_run(engine, run_id, msg), context={"run_id": run_id}):
         artifact, summary, bt, fc, warnings = T.train(engine, cfg)
         path = store.save_artifact(run_id, artifact)
         store.complete_run(engine, run_id, summary, bt, fc, warnings, path)
-    except (T.RulError, ValueError) as exc:
-        store.fail_run(engine, run_id, str(exc))
-        raise HTTPException(status_code=400, detail={"message": str(exc), "run_id": run_id})
-    except Exception as exc:  # noqa: BLE001 - keep a record of unexpected failures
-        store.fail_run(engine, run_id, f"{type(exc).__name__}: {exc}")
-        raise HTTPException(status_code=500, detail={"message": f"Training failed: {exc}", "run_id": run_id})
     if body.make_default and can_approve(request):
         store.set_default(engine, run_id)
     return _public(store.get_run(engine, run_id))
@@ -155,8 +144,5 @@ def predict(body: PredictRequest, model: str = "active"):
     """RUL of one unit at its latest snapshot - every method of the model - optionally under a what-if duty (EFC per
     day) and cell temperature, with the projected SOH / resistance paths and the survival curves."""
     run, art = _run(model)
-    try:
-        out = T.predict_unit(engine, art, body.system_id, body.cycles_per_day, body.temp_c)
-    except T.RulError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+    out = T.predict_unit(engine, art, body.system_id, body.cycles_per_day, body.temp_c)
     return {"run_id": run["run_id"], **out}

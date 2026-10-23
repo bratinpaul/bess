@@ -14,6 +14,7 @@ from typing import Any, Optional
 
 from fastapi import APIRouter, Body, HTTPException, Query
 
+from bess_common.errors import run_guard
 from core import registry
 from core.base import TrainingError
 from core.db import engine
@@ -219,10 +220,7 @@ def predict(payload: dict[str, Optional[float]] = Body(...), model: str = "activ
     if missing:
         raise HTTPException(status_code=422, detail=f"Missing feature(s): {', '.join(missing)}")
     values = {f: payload[f] for f in run["features"]}
-    try:
-        predicted = registry.predict(run, MODELS, values)
-    except (FileNotFoundError, ValueError) as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
+    predicted = registry.predict(run, MODELS, values)
     return SohEstimateResponse(
         predicted_soh_pct=round(predicted, 3), model_version=_run_version(run), model_key=str(run["run_id"]),
         run_id=run["run_id"], out_of_range=_out_of_range(values, run["feature_ranges"] or {}))
@@ -336,12 +334,9 @@ def train(request: TrainRequest):
     sel = _selection(request)
     system = _system(request.battery_system_id) if request.scope == "system" else None
     holdout = _system(request.holdout_system_id) if request.scope == "base" and request.holdout_system_id else None
-    try:
-        params = trainer.clean_params(model_type, request.params)
-        if parent and model_type == "lightgbm":
-            params["linear_tree"] = bool(parent["params"].get("linear_tree"))  # continued trees must match
-    except TrainingError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+    params = trainer.clean_params(model_type, request.params)
+    if parent and model_type == "lightgbm":
+        params["linear_tree"] = bool(parent["params"].get("linear_tree"))  # continued trees must match
     features = list(parent["features"]) if parent else sel.features
     run_id = registry.start_run(engine, USE_CASE, {
         "run_name": request.run_name, "model_type": model_type, "params": params, "grain": sel.grain,
@@ -354,7 +349,7 @@ def train(request: TrainRequest):
         "parent_run_id": parent["run_id"] if parent else None,
         "holdout_system_id": request.holdout_system_id if holdout else None,
     })
-    try:
+    with run_guard(fail=lambda msg: registry.fail_run(engine, run_id, msg), context={"run_id": run_id}):
         df = F.build_dataset(engine, sel)
         if system and df.empty:
             raise TrainingError(f"{system['system_name']} has no rows for this data selection")
@@ -379,12 +374,6 @@ def train(request: TrainRequest):
         artifact = registry.save_model(run_id, result.model)
         registry.complete_run(engine, run_id, result, params, artifact,
                               systems=sorted(int(x) for x in df["system_id"].unique()), holdout_metrics=holdout_metrics)
-    except (TrainingError, ValueError, FileNotFoundError) as exc:
-        registry.fail_run(engine, run_id, str(exc))
-        raise HTTPException(status_code=400, detail={"message": str(exc), "run_id": run_id})
-    except Exception as exc:  # noqa: BLE001 - keep a record of unexpected failures too
-        registry.fail_run(engine, run_id, f"{type(exc).__name__}: {exc}")
-        raise HTTPException(status_code=500, detail={"message": f"Training failed: {exc}", "run_id": run_id})
     return registry.get_run(engine, USE_CASE, run_id)
 
 
@@ -413,10 +402,7 @@ def delete_run(run_id: int):
 @router.post("/runs/{run_id}/activate")
 def activate(run_id: int):
     """Make this run the default of its scope: the base default, or its battery system's default."""
-    try:
-        registry.set_active(engine, USE_CASE, run_id)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+    registry.set_active(engine, USE_CASE, run_id)
     return {"active_run_id": run_id, "at": datetime.now().isoformat(timespec="seconds")}
 
 

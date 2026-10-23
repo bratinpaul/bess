@@ -8,7 +8,6 @@ from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from sqlalchemy import Integer, and_, case, cast, func
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -23,12 +22,7 @@ from app.schemas.price_forecast import (
     PriceForecastStats,
     PriceForecastUpdate,
 )
-from app.services.price_forecast_import import (
-    PriceForecastImportError,
-    parse_price_forecast_file,
-    target_range,
-    upsert_price_forecasts,
-)
+from app.services.price_forecast_import import parse_price_forecast_file, target_range, upsert_price_forecasts
 
 router = APIRouter(prefix="/api/price-forecasts", tags=["market data"])
 
@@ -149,11 +143,7 @@ def add_forecast(payload: PriceForecastCreate, db: Session = Depends(get_db)):
         raise HTTPException(status_code=409, detail=(f"{code} already has a forecast issued {issued.isoformat()} "
                                                      f"for {target.isoformat()}"))
     db.add(PF(**{**payload.model_dump(), "issued_at": issued, "target_ts": target}))
-    try:
-        db.commit()
-    except IntegrityError as exc:
-        db.rollback()
-        raise HTTPException(status_code=409, detail=str(exc.orig).splitlines()[0])
+    db.commit()
     return _out(*_get(db, payload.node_id, issued, target))
 
 
@@ -183,11 +173,8 @@ async def bulk_load(file: UploadFile = File(...), node_id: Optional[int] = Form(
     content = await file.read()
     if not content:
         raise HTTPException(status_code=400, detail="Uploaded file is empty")
-    try:
-        valid, errors, total, ignored, nodes = parse_price_forecast_file(db, file.filename or "upload", content,
-                                                                         node_id)
-    except PriceForecastImportError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+    valid, errors, total, ignored, nodes = parse_price_forecast_file(db, file.filename or "upload", content,
+                                                                     node_id)
     inserted, updated = upsert_price_forecasts(db, valid)
     db.commit()
     n_errors = len(errors)

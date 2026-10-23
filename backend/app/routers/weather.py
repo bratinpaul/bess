@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 
 from app import models, schemas
 from app.database import get_db
-from app.services.weather_import import WeatherImportError, parse_weather_file, upsert_weather_rows
+from app.services.weather_import import parse_weather_file, upsert_weather_rows
 from app.services.weather_series import get_weather_series
 
 router = APIRouter(prefix="/api/weather", tags=["weather"])
@@ -150,10 +150,7 @@ async def bulk_load(file: UploadFile = File(...), station_code: Optional[str] = 
     content = await file.read()
     if not content:
         raise HTTPException(status_code=400, detail="Uploaded file is empty")
-    try:
-        valid, errors, total, ignored, codes = parse_weather_file(file.filename or "upload", content, db, default_id)
-    except WeatherImportError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+    valid, errors, total, ignored, codes = parse_weather_file(file.filename or "upload", content, db, default_id)
     inserted, updated = upsert_weather_rows(db, valid)
     db.commit()
     n_errors = len(errors)

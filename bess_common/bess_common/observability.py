@@ -5,12 +5,16 @@
                                 logging.getLogger(__name__); uvicorn's loggers are routed through the same handlers
     request context             a contextvar holding request_id / user / role, added to every log line by a filter
     redaction                   keys such as password, token, authorization, cookie are masked; request / response
-                                bodies are never logged (only metadata and row counts)
+                                bodies are never logged (only metadata and row counts); scrub() masks credentials in
+                                free text - log messages, exception text / tracebacks and the activity log detail
+    security log                401 / 403 answers and tenant-scope refusals also go to the "bess.security" logger
     operation(kind, name)       context manager: <kind>.start / <kind>.end with duration_ms, outcome and counts
                                 (loads, KPI runs, training) - also written to the activity log
     RequestContextMiddleware    ASGI: accepts or creates X-Request-ID, returns it in the response header and in every
-                                4xx/5xx JSON body ("request_id"), logs one access line per request, logs start/end of
-                                loads / KPI runs / training recognised by path, and records changing or failed requests
+                                4xx/5xx JSON body ("request_id"), logs one access line per request (with the error code),
+                                logs start/end of loads / KPI runs / training recognised by path, and records changing or
+                                failed requests. Last line of defence: an unhandled exception, or a 5xx JSON body not
+                                built by bess_common.errors, is answered with the generic error body (never its text)
     activity log                battery_itops.activity_log, written by a background thread (never blocks a request);
                                 rows older than 90 days are purged once a day
 """
@@ -42,6 +46,19 @@ COUNT_KEYS = {
     "rows_rejected": ("rows_rejected", "rejected", "error_count", "invalid_rows", "skipped", "rows_skipped"),
 }
 
+# credentials in free text: URL user:password@, key=value / "key": "value" secrets, bearer tokens, JWTs, and the bound
+# parameters SQLAlchemy appends to its exception messages
+SCRUB_PATTERNS = [
+    (re.compile(r"(\b[a-z][a-z0-9+.-]*://[^:/\s@]*:)[^@\s]+@", re.I), r"\1***@"),
+    (re.compile(r"(\b(?:password|passwd|pwd|secret|client_secret|access_token|refresh_token|token|api[_-]?key)"
+                r"['\"]?\s*[=:]\s*['\"]?)[^\s'\",;&}]+", re.I), r"\1***"),
+    (re.compile(r"\bBearer\s+[A-Za-z0-9._~+/=-]+", re.I), "Bearer ***"),
+    (re.compile(r"\beyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]*"), "***jwt***"),
+    (re.compile(r"\[parameters: .*?\](?=\s*(?:\n|\(Background|$))", re.S), "[parameters: ***]"),
+]
+SCRUB_FIELDS = ("error", "message", "detail", "error_message")
+security_log = logging.getLogger("bess.security")
+
 _ctx: ContextVar[Optional[dict]] = ContextVar("bess_request_ctx", default=None)
 _op: ContextVar[Optional["Operation"]] = ContextVar("bess_operation", default=None)
 _service = "app"
@@ -70,6 +87,45 @@ def request_context(request_id: Optional[str] = None, **fields):
         _ctx.reset(token)
 
 
+def scrub(text: Any) -> Any:
+    """Mask credentials / tokens / SQL parameters in a string (anything else is returned unchanged)."""
+    if not isinstance(text, str) or not text:
+        return text
+    for pattern, repl in SCRUB_PATTERNS:
+        text = pattern.sub(repl, text)
+    return text
+
+
+
+def display_lines(lines: list[str]) -> list[str]:
+    """A process's output for a page: JSON log lines become "LEVEL message", stack traces are replaced by one line (the
+    details stay in the log file), credentials are scrubbed."""
+    out: list[str] = []
+    in_trace = False
+    for line in lines:
+        text_ = line.strip()
+        if not text_:
+            continue
+        if text_.startswith("{"):
+            try:
+                rec = json.loads(text_)
+            except ValueError:
+                rec = None
+            if isinstance(rec, dict) and "message" in rec:
+                in_trace = False
+                out.append(scrub(f"{rec.get('level') or ''} {rec['message']}".strip()))
+                continue
+        if text_.startswith("Traceback (most recent call last)"):
+            in_trace = True
+            out.append("ERROR the process stopped with an unexpected error - details are in its log file")
+            continue
+        if in_trace:
+            if not line.startswith((" ", "	")):
+                in_trace = False  # the final "SomeError: message" line ends the trace (and is dropped with it)
+            continue
+        out.append(scrub(text_))
+    return out
+
 def redact(value: Any) -> Any:
     if isinstance(value, dict):
         return {k: ("***" if str(k).lower() in SENSITIVE else redact(v)) for k, v in value.items()}
@@ -90,7 +146,25 @@ class _ContextFilter(logging.Filter):
                 record.__dict__[key] = "***"
             elif isinstance(record.__dict__[key], dict) and key not in ("args",):
                 record.__dict__[key] = redact(record.__dict__[key])
+            elif key in SCRUB_FIELDS and isinstance(record.__dict__[key], str):
+                record.__dict__[key] = scrub(record.__dict__[key])[:500]
+        if isinstance(record.msg, str):
+            try:
+                message = record.getMessage()
+            except Exception:  # noqa: BLE001 - a bad format string must not lose the line
+                message = str(record.msg)
+            record.msg, record.args = scrub(message), None
         return True
+
+
+class _ScrubbingJsonFormatter(JsonFormatter):
+    """Tracebacks and stack info pass through scrub() (exception messages can carry DSNs, tokens, SQL parameters)."""
+
+    def formatException(self, ei) -> str:
+        return scrub(super().formatException(ei))
+
+    def formatStack(self, stack_info: str) -> str:
+        return scrub(super().formatStack(stack_info))
 
 
 def setup_logging(service: str, level: Optional[str] = None, log_dir: Optional[Path] = None) -> None:
@@ -103,7 +177,7 @@ def setup_logging(service: str, level: Optional[str] = None, log_dir: Optional[P
         return
     for h in list(root.handlers):
         root.removeHandler(h)
-    fmt = JsonFormatter("{asctime}{levelname}{name}{message}", style="{",
+    fmt = _ScrubbingJsonFormatter("{asctime}{levelname}{name}{message}", style="{",
                         rename_fields={"asctime": "ts", "levelname": "level", "name": "logger"},
                         datefmt="%Y-%m-%dT%H:%M:%S%z", json_ensure_ascii=False)
     flt = _ContextFilter()
@@ -138,7 +212,8 @@ def setup_logging(service: str, level: Optional[str] = None, log_dir: Optional[P
 # ------------------------------------------------------------------ activity log (battery_itops.activity_log)
 class _ActivityWriter:
     COLUMNS = ("service", "kind", "event", "outcome", "request_id", "user_email", "role", "method", "path", "status_code",
-               "duration_ms", "operation", "rows_total", "rows_inserted", "rows_updated", "rows_rejected", "ip", "detail")
+               "duration_ms", "operation", "rows_total", "rows_inserted", "rows_updated", "rows_rejected", "ip", "detail",
+               "error_code")
 
     def __init__(self) -> None:
         self.engine = None
@@ -178,7 +253,8 @@ class _ActivityWriter:
                     batch.append(self.q.get_nowait())
             except queue.Empty:
                 pass
-            rows = [{c: (json.dumps(redact(r.get(c)), default=str) if c == "detail" and r.get(c) is not None else r.get(c))
+            rows = [{c: (scrub(json.dumps(redact(r.get(c)), default=str)) if c == "detail" and r.get(c) is not None
+                         else r.get(c))
                      for c in self.COLUMNS} for r in batch]
             try:
                 with self.engine.begin() as conn:
@@ -255,7 +331,9 @@ def operation(kind: str, name: str, logger: Optional[logging.Logger] = None, **f
         lg.exception(f"{kind} {name} failed", extra={"event": f"{kind}.end", "operation": name, "outcome": "failed",
                                                      "duration_ms": ms, "error": type(exc).__name__, **op.counts})
         record_activity(kind.upper(), f"{kind}.end", "failed", operation=name, duration_ms=ms, **op.counts,
-                        detail={"error": type(exc).__name__, "message": str(exc)[:300], **redact(op.fields)})
+                        error_code=getattr(exc, "code", None) if isinstance(getattr(exc, "code", None), str)
+                        else "INTERNAL_ERROR",
+                        detail={"error": type(exc).__name__, "message": scrub(str(exc))[:300], **redact(op.fields)})
         raise
     finally:
         _op.reset(op_token)
@@ -280,10 +358,27 @@ def engine_from_dsn(dsn: dict):
     from sqlalchemy.engine import URL
     url = URL.create("postgresql+psycopg2", username=dsn.get("user"), password=dsn.get("password"),
                      host=dsn.get("host"), port=dsn.get("port"), database=dsn.get("dbname"))
-    return create_engine(url, pool_size=1, max_overflow=1, pool_pre_ping=True)
+    return create_engine(url, pool_size=1, max_overflow=1, pool_pre_ping=True, hide_parameters=True)
 
 
 # ------------------------------------------------------------------ request middleware
+def _server_error_body(status: int, data: Any) -> dict:
+    """The generic error body for a 5xx (only whitelisted ids such as run_id survive from the original body)."""
+    from bess_common.errors import STATUS_DEFAULTS, _safe_context, error_body, generic_message
+    code, message = STATUS_DEFAULTS.get(status, ("INTERNAL_ERROR", None))
+    message = generic_message() if status == 500 or message is None else message
+    context = _safe_context(data.get("detail") if isinstance(data, dict) and isinstance(data.get("detail"), dict)
+                            else data)
+    body = error_body(code, message, status, context=context)
+    if context:
+        body["detail"] = {"message": message, **context}
+    return body
+
+
+def _error_code(body: Any) -> Optional[str]:
+    err = body.get("error") if isinstance(body, dict) else None
+    return err.get("code") if isinstance(err, dict) else None
+
 Classifier = Callable[[str, str], Optional[tuple[str, str]]]  # (method, path) -> (kind, operation name) or None
 
 
@@ -333,6 +428,8 @@ class RequestContextMiddleware:
                     data = json.loads(body) if body else None
                 except ValueError:
                     data = None
+                if state["status"] >= 500 and not (isinstance(data, dict) and isinstance(data.get("error"), dict)):
+                    data = _server_error_body(state["status"], data)  # a 5xx not built by bess_common.errors
                 state["body_json"] = data
                 if state["status"] >= 400 and isinstance(data, dict):
                     data["request_id"] = rid
@@ -353,7 +450,7 @@ class RequestContextMiddleware:
             error = exc
             state["status"] = 500
             if not state["started"]:
-                body = json.dumps({"detail": "Internal server error", "request_id": rid}).encode()
+                body = json.dumps({**_server_error_body(500, None), "request_id": rid}).encode()
                 await send({"type": "http.response.start", "status": 500,
                             "headers": [(b"content-type", b"application/json"), (b"content-length", str(len(body)).encode()),
                                         (b"x-request-id", rid.encode())]})
@@ -370,9 +467,16 @@ class RequestContextMiddleware:
             base = {"method": method, "path": path, "status_code": status, "duration_ms": ms, "ip": ip,
                     "user": user, "role": role}
             level = logging.ERROR if status >= 500 else logging.WARNING if status >= 400 else logging.INFO
+            error_code = _error_code(state["body_json"]) if status >= 400 else None
+            if error is not None:
+                error_code = "INTERNAL_ERROR"
             self.logger.log(level, f"{method} {path} {status} {ms}ms",
-                            extra={"event": "request", "outcome": outcome, "query_keys": query_keys or None, **base},
+                            extra={"event": "request", "outcome": outcome, "query_keys": query_keys or None,
+                                   "error_code": error_code, **base},
                             exc_info=error if error else None)
+            if status in (401, 403):
+                security_log.warning(f"access denied {method} {path} {status}",
+                                     extra={"event": "security.denied", "error_code": error_code, **base})
             kind, name, counts, detail = None, None, {}, None
             if op:
                 kind, name = op[0].upper(), op[1]
@@ -389,11 +493,12 @@ class RequestContextMiddleware:
             if kind and not (method == "GET" and status < 400):
                 if status >= 400 and isinstance(state["body_json"], dict):
                     d = state["body_json"].get("detail")
-                    detail = {**(detail or {}), "error": d if isinstance(d, str) else "validation" if d else None}
+                    message = d if isinstance(d, str) else d.get("message") if isinstance(d, dict) else None
+                    detail = {**(detail or {}), "error": message or ("validation" if d else None)}
                 if error is not None:
                     detail = {**(detail or {}), "error": type(error).__name__}
                 activity.put({"service": _service, "kind": kind, "event": f"{kind.lower()}.end" if op else "request",
                               "outcome": outcome, "request_id": rid, "user_email": user, "role": role, "method": method,
                               "path": path, "status_code": status, "duration_ms": ms, "operation": name, "ip": ip,
-                              "detail": detail, **counts})
+                              "detail": detail, "error_code": error_code, **counts})
             _ctx.reset(token)

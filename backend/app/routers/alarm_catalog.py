@@ -1,15 +1,10 @@
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app import models, schemas
 from app.database import get_db
 from app.models.alarm_catalog import ALARM_SOURCES
-from app.services.alarm_catalog_import import (
-    AlarmCatalogImportError,
-    parse_alarm_catalog_file,
-    upsert_alarm_catalog,
-)
+from app.services.alarm_catalog_import import parse_alarm_catalog_file, upsert_alarm_catalog
 
 router = APIRouter(prefix="/api/alarm-catalog", tags=["alarm-catalog"])
 
@@ -34,11 +29,7 @@ def _get(db: Session, alarm_catalog_id: int) -> Catalog:
 
 
 def _save(db: Session, row: Catalog) -> schemas.AlarmCatalogOut:
-    try:
-        db.commit()
-    except IntegrityError:
-        db.rollback()
-        raise HTTPException(status_code=409, detail=f"{row.source} already has an alarm with code '{row.alarm_code}'")
+    db.commit()
     db.refresh(row)
     return _out(row, _severity_names(db))
 
@@ -69,10 +60,7 @@ async def bulk_load_alarm_catalog(file: UploadFile = File(...), db: Session = De
     content = await file.read()
     if not content:
         raise HTTPException(status_code=400, detail="Uploaded file is empty")
-    try:
-        sheet, valid, errors, total, ignored = parse_alarm_catalog_file(file.filename or "upload", content, db)
-    except AlarmCatalogImportError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+    sheet, valid, errors, total, ignored = parse_alarm_catalog_file(file.filename or "upload", content, db)
     inserted, updated = upsert_alarm_catalog(db, valid)
     db.commit()
     return schemas.BulkAlarmCatalogResult(

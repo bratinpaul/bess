@@ -9,6 +9,7 @@ import pandas as pd
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
+from bess_common.errors import run_guard
 from core.auth import require, tenant_system_ids
 from core.db import engine
 from usecases.fault_diag import analysis as A
@@ -157,15 +158,9 @@ def create_run(body: TrainBody):
         raise HTTPException(status_code=400, detail="date_from must be on or before date_to")
     cfg = _config(body)
     run_id = store.start_run(engine, body.run_name, body.date_from, body.date_to, body.model_dump(mode="json"))
-    try:
+    with run_guard(fail=lambda msg: store.fail_run(engine, run_id, msg), context={"run_id": run_id}):
         result = R.train(engine, cfg, body.date_from, body.date_to)
         store.complete_run(engine, run_id, result)
-    except R.FaultDiagError as exc:
-        store.fail_run(engine, run_id, str(exc))
-        raise HTTPException(status_code=400, detail={"message": str(exc), "run_id": run_id})
-    except Exception as exc:  # noqa: BLE001
-        store.fail_run(engine, run_id, f"{type(exc).__name__}: {exc}")
-        raise HTTPException(status_code=500, detail={"message": f"Run failed: {exc}", "run_id": run_id})
     return store.get_run(engine, run_id)
 
 
@@ -271,13 +266,8 @@ def scan(run_id: int, body: ScanBody):
         raise HTTPException(status_code=400, detail="date_from must be on or before date_to")
     if (body.date_to - body.date_from).days > 62:
         raise HTTPException(status_code=400, detail="Scan at most 62 days at a time")
-    try:
-        art = store.artifact(r)
-        scores = R.score_windows(engine, art, body.system_id, body.date_from, body.date_to, body.step_min)
-    except R.FaultDiagError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
-    except FileNotFoundError as exc:
-        raise HTTPException(status_code=410, detail=str(exc))
+    art = store.artifact(r)
+    scores = R.score_windows(engine, art, body.system_id, body.date_from, body.date_to, body.step_min)
     events = R.candidates(scores, body.threshold, body.step_min)
     res = store.save_scan(engine, run_id, body.system_id, scores, events, D.episodes(engine),
                           D.system_name(engine, body.system_id))
@@ -379,11 +369,8 @@ def fishbone(request: Request, effect: str = "ALL", date_from: Optional[date] = 
         codes = set(cat["fault_code"]) - {R.NONE}
     else:
         codes = {effect}
-    try:
-        return A.fishbone(engine, effect, date_from, date_to, system_id, _model_insight(codes, run_id),
-                          systems=tenant_system_ids(request))
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+    return A.fishbone(engine, effect, date_from, date_to, system_id, _model_insight(codes, run_id),
+                      systems=tenant_system_ids(request))
 
 
 @router.get("/analytics/scoring", dependencies=READ)
